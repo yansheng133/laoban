@@ -1,0 +1,23 @@
+{{- if .Values.persistence.enabled }}
+# Audit-log spool. With local-path there are no volume snapshots and the data
+# lives on one node; the syslog target is the durable copy of the audit log.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "laoban.fullname" . }}-spool
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "laoban.labels" . | nindent 4 }}
+  annotations:
+    # Keep spooled audit records when the release is uninstalled.
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    {{- toYaml .Values.persistence.accessModes | nindent 4 }}
+  {{- with .Values.persistence.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.size }}
+{{- end }}

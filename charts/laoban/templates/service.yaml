@@ -1,0 +1,18 @@
+# ClusterIP only, no Ingress. The UI extension reaches this Service through
+# Rancher's Kubernetes API proxy (services/proxy subresource), see README.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "laoban.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "laoban.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "laoban.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP

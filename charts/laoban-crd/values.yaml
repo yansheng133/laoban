@@ -1,0 +1,5 @@
+# Keep the CRDs (and therefore every ProjectPolicy, ChangeRequest and
+# ArchitectureVersion object) when this release is uninstalled.
+# Set to false only when you really want `helm uninstall laoban-crd` to delete
+# all laoban data in the cluster.
+keepOnUninstall: true
