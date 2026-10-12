@@ -39,3 +39,4 @@ laoban is a Rancher UI extension that lets users describe what they want in natu
 laoban is a community open source project and is not supported by SUSE. Please file issues on GitHub.
 
 Licensed under the Apache License 2.0.
+
