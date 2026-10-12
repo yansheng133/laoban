@@ -1,0 +1,16 @@
+[package]
+name = "laoban-server"
+description = "laoban backend: minimal HTTP server exposing health and version endpoints"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+signal-hook = { version = "0.4", default-features = false, features = ["iterator"] }
+
+[dev-dependencies]
+# Already in the dependency tree via signal-hook; used to send SIGTERM in tests.
+libc = "0.2"
