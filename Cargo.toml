@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/laoban-audit",
     "crates/laoban-mask",
     "crates/laoban-policy",
 ]

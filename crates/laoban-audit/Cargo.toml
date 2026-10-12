@@ -1,0 +1,12 @@
+[package]
+name = "laoban-audit"
+description = "Audit records for laoban: masked RFC 5424 syslog messages, RFC 5425 framing and a rotating local file sink"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+laoban-mask = { path = "../laoban-mask" }
+thiserror.workspace = true
