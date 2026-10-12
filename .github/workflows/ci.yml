@@ -15,11 +15,13 @@ jobs:
         # Only x86-64 and ARM64 are supported targets.
         os: [ubuntu-24.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.os }}
+    # Build and test inside SUSE BCI rather than on the Ubuntu host.
+    container: registry.suse.com/bci/rust:1.98
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+      - run: |
+          grep PRETTY_NAME /etc/os-release
+          cargo --version && cargo fmt --version && cargo clippy --version
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
