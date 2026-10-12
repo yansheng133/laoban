@@ -26,6 +26,14 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
 
+  viewer:
+    runs-on: ubuntu-24.04
+    container: registry.suse.com/bci/nodejs:22
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - run: node --version
+      - run: node --test web/viewer-prototype/*.test.mjs
+
   secrets:
     runs-on: ubuntu-24.04
     steps:
