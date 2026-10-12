@@ -124,3 +124,21 @@ jobs:
         run: k3s kubectl apply --dry-run=server -f rendered/laoban.yaml
         env:
           KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+  extension:
+    runs-on: ubuntu-24.04
+    # @rancher/shell 3.0.13 requires Node.js >= 24 (package.json "engines").
+    container: registry.suse.com/bci/nodejs:24
+    defaults:
+      run:
+        working-directory: extension
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - run: |
+          grep PRETTY_NAME /etc/os-release
+          node --version && npm --version
+      # Rancher extension docs install Yarn 1 globally with npm; pin the
+      # version @rancher/shell 3.0.13 itself depends on.
+      - run: npm install -g yarn@1.22.22
+      - run: yarn install --frozen-lockfile
+      - run: yarn build-pkg laoban-ext

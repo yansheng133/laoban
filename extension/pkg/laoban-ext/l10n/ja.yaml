@@ -1,0 +1,22 @@
+product:
+  laoban: laoban
+
+laoban:
+  nav:
+    dashboard: 概要
+  dashboard:
+    title: laoban
+    description: やりたいことを自然言語で伝えると、laoban がまず計画とアーキテクチャビューを提示し、確認後にコードを作成します。デプロイ前には自動チェックと人によるレビューを行います。現在は開発プレビュー版で、バックエンドサービスには接続していません。
+    cards:
+      requests:
+        title: 要件の対話
+        emptyTitle: 対話はまだありません
+        emptyDescription: ここでやりたいことを自然言語で伝えると、laoban が確認用の計画を返します。
+      architecture:
+        title: アーキテクチャビュー
+        emptyTitle: アーキテクチャビューはまだありません
+        emptyDescription: 計画の確認後、変更前後のアーキテクチャがここに表示されます。
+      review:
+        title: 変更レビュー
+        emptyTitle: レビュー待ちの変更はありません
+        emptyDescription: 人によるレビューが必要な変更がここに表示され、承認後にデプロイされます。
