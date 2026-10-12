@@ -12,6 +12,7 @@ laoban（老闆）是一個 Rancher UI extension：使用者用自然語言描�
 
 | 路徑 | 說明 |
 |---|---|
+| `crates/laoban-audit` | 稽核紀錄：遮蔽後輸出 RFC 5424 syslog 訊息、RFC 5425 封框，以及依大小輪替的本機檔案 |
 | `crates/laoban-mask` | 敏感資料遮蔽引擎：送給 AI 之前與寫入稽核紀錄之前都用同一套規則 |
 | `crates/laoban-policy` | 部署審查政策引擎：決定一次變更能不能直接部署、要不要人工審查、由誰審 |
 
