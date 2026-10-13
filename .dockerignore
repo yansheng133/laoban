@@ -1,0 +1,6 @@
+# Build context for Containerfile: only the Rust workspace is needed.
+*
+!Cargo.toml
+!Cargo.lock
+!crates/
+crates/**/target/
