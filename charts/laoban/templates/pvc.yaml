@@ -14,9 +14,7 @@ metadata:
 spec:
   accessModes:
     {{- toYaml .Values.persistence.accessModes | nindent 4 }}
-  {{- with .Values.persistence.storageClass }}
-  storageClassName: {{ . | quote }}
-  {{- end }}
+  storageClassName: {{ required "persistence.storageClass is required: name the StorageClass explicitly (for example local-path or longhorn); do not rely on a cluster default" .Values.persistence.storageClass | quote }}
   resources:
     requests:
       storage: {{ .Values.persistence.size }}

@@ -84,10 +84,11 @@ containerSecurityContext:
 # Audit-log spool: records wait here until the syslog target accepts them.
 persistence:
   enabled: true
-  # Empty = cluster default StorageClass (for example local-path). The PVC stays
-  # Pending if the cluster has no default StorageClass. local-path has no
-  # snapshots and is tied to one node; syslog is the durable copy.
-  storageClass: ""
+  # Required: always name the StorageClass. Relying on the cluster default is
+  # not safe because some clusters have none (the PoC downstream cluster does
+  # not), and the PVC would stay Pending. local-path has no snapshots and is
+  # tied to one node; syslog is the durable copy of the audit log.
+  storageClass: local-path
   size: 1Gi
   accessModes:
     - ReadWriteOnce
