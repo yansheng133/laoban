@@ -1,4 +1,7 @@
 # Values used only by CI (helm lint / helm template / kubeconform).
+# This file turns on everything the M0 install leaves off (impersonation RBAC,
+# CRD requirement, audit spool PVC, syslog over mTLS) so those templates stay
+# rendered and validated; ci/m0-values.yaml covers the M0 install itself.
 # The digest is a dummy (sha256 of the empty string); the ".invalid" TLD is
 # reserved (RFC 2606), so this image can never be pulled by accident.
 image:
@@ -7,6 +10,18 @@ image:
   tag: ci
 anthropic:
   existingSecret: laoban-anthropic
+github:
+  repo: example/laoban-apps
+  existingSecret: laoban-github
+config:
+  model: ci-model
+impersonation:
+  enabled: true
+crds:
+  required: true
+persistence:
+  enabled: true
+  storageClass: local-path
 syslog:
   enabled: true
   host: syslog.example.invalid

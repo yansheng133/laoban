@@ -1,5 +1,11 @@
 {{- include "laoban.crdCheck" . }}
 {{- $anthropicSecret := required "anthropic.existingSecret is required: name of an existing Secret holding the Anthropic API key (the key itself never goes in values)" .Values.anthropic.existingSecret }}
+{{- $githubSecret := required "github.existingSecret is required: name of an existing Secret holding the GitHub fine-grained token (the token itself never goes in values)" .Values.github.existingSecret }}
+{{- $githubRepo := required "github.repo is required: the <owner>/<repo> the generated apps are committed to" .Values.github.repo }}
+{{- if not (regexMatch "^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$" $githubRepo) }}
+{{- fail (printf "github.repo must look like <owner>/<repo>, got %q" $githubRepo) }}
+{{- end }}
+{{- $model := required "config.model is required: the Anthropic model ID (LAOBAN_MODEL)" .Values.config.model }}
 {{- if and .Values.syslog.enabled (not .Values.syslog.host) }}
 {{- fail "syslog.host is required when syslog.enabled is true" }}
 {{- end }}
@@ -40,8 +46,13 @@ spec:
       {{- end }}
     spec:
       serviceAccountName: {{ include "laoban.serviceAccountName" . }}
-      # The backend calls the Kubernetes API (with impersonation headers), so it needs its token.
+      {{- if .Values.impersonation.enabled }}
+      # Phase 1: the backend calls the Kubernetes API with impersonation headers, so it needs its token.
       automountServiceAccountToken: true
+      {{- else }}
+      # M0: the backend calls no Kubernetes API and has no RBAC; no token in the pod.
+      automountServiceAccountToken: false
+      {{- end }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -59,7 +70,7 @@ spec:
               containerPort: {{ .Values.containerPort }}
               protocol: TCP
           env:
-            # Contract with the (not yet written) Rust server. Keep in sync with its config.
+            # Contract with the Rust server (docs/m0-design.md). Keep in sync with its config.
             - name: LAOBAN_LISTEN_ADDR
               value: {{ printf "0.0.0.0:%d" (int .Values.containerPort) | quote }}
             - name: LAOBAN_POD_NAMESPACE
@@ -73,6 +84,22 @@ spec:
                 secretKeyRef:
                   name: {{ $anthropicSecret }}
                   key: {{ .Values.anthropic.secretKey }}
+            - name: LAOBAN_MODEL
+              value: {{ $model | quote }}
+            # int64 first: Helm reads numbers as float64 and would print 2e+06.
+            - name: LAOBAN_TOKEN_CAP
+              value: {{ int64 .Values.config.tokenCap | toString | quote }}
+            - name: LAOBAN_GITHUB_REPO
+              value: {{ $githubRepo | quote }}
+            - name: LAOBAN_GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $githubSecret }}
+                  key: {{ .Values.github.secretKey }}
+            - name: LAOBAN_TARGET_NAMESPACE
+              value: {{ .Values.config.targetNamespace | quote }}
+            - name: LAOBAN_CLUSTER_ID
+              value: {{ .Values.config.clusterId | quote }}
             {{- if .Values.syslog.enabled }}
             - name: LAOBAN_SYSLOG_HOST
               value: {{ .Values.syslog.host | quote }}

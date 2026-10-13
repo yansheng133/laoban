@@ -1,0 +1,51 @@
+# CI fixture: the pod shape of a generated app (docs/m0-design.md, "產生的應用").
+# Must be ADMITTED in namespace laoban-dev (PodSecurity enforce=restricted).
+# Server-side dry run only; never deployed.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: psa-restricted-ok
+  namespace: laoban-dev
+spec:
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: web
+      image: registry.suse.com/bci/python:3.13
+      command: ["python3", "/app/server.py"]
+      ports:
+        - containerPort: 8080
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: RuntimeDefault
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 200m
+          memory: 128Mi
+      volumeMounts:
+        - name: files
+          mountPath: /app
+          readOnly: true
+        - name: tmp
+          mountPath: /tmp
+  volumes:
+    - name: files
+      configMap:
+        name: example-web-files
+    - name: tmp
+      emptyDir:
+        sizeLimit: 16Mi

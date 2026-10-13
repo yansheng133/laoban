@@ -6,14 +6,16 @@
 replicaCount: 1
 
 image:
-  # Replace with the real repository. Rendering fails while the placeholder is set.
-  repository: docker.io/REPLACE_ME/laoban-server
+  # Public GitHub Container Registry package published by .github/workflows/image.yml.
+  # Use docker.io/<namespace>/laoban-server for the optional Docker Hub copy.
+  repository: ghcr.io/yansheng133/laoban-server
   # Required. Images are always pulled by digest, e.g. "sha256:<64 hex chars>".
   digest: ""
   # Informational only (shown in labels); never used to pull.
   tag: ""
   pullPolicy: IfNotPresent
 
+# Needed only while the GHCR package is still private (see build/README.md).
 imagePullSecrets: []
 
 nameOverride: ""
@@ -24,9 +26,12 @@ serviceAccount:
   name: ""
   annotations: {}
 
-# Identity delegation: the backend acts as the signed-in Rancher user through
-# Kubernetes impersonation. These are the only permissions the ServiceAccount gets.
+# Identity delegation (phase 1, not M0): the backend acts as the signed-in
+# Rancher user through Kubernetes impersonation. When disabled (M0 default) the
+# chart renders no RBAC objects at all and the pod gets no ServiceAccount token:
+# the backend does not call any Kubernetes API.
 impersonation:
+  enabled: false
   # Rancher sets these extras on its own impersonation service accounts
   # (principal ID and username). Keep both so audit records match Rancher's.
   userExtras:
@@ -82,11 +87,12 @@ containerSecurityContext:
     type: RuntimeDefault
 
 # Audit-log spool: records wait here until the syslog target accepts them.
+# M0 default: disabled (emptyDir), M0 does not forward audit records.
 persistence:
-  enabled: true
-  # Required: always name the StorageClass. Relying on the cluster default is
-  # not safe because some clusters have none (the PoC downstream cluster does
-  # not), and the PVC would stay Pending. local-path has no snapshots and is
+  enabled: false
+  # Required when enabled: always name the StorageClass. Relying on the cluster
+  # default is not safe because some clusters have none (the rke2 downstream
+  # cluster does not), and the PVC would stay Pending. local-path has no snapshots and is
   # tied to one node; syslog is the durable copy of the audit log.
   storageClass: local-path
   size: 1Gi
@@ -100,6 +106,27 @@ anthropic:
   existingSecret: ""
   # Key inside that Secret.
   secretKey: api-key
+
+# M0 backend settings (environment variables, see docs/m0-design.md).
+config:
+  # Required. Anthropic model ID (LAOBAN_MODEL), never hard-coded in the backend.
+  model: ""
+  # Monthly token cap enforced by laoban itself (LAOBAN_TOKEN_CAP).
+  tokenCap: 2000000
+  # Namespace the generated apps are deployed to by Fleet (LAOBAN_TARGET_NAMESPACE).
+  targetNamespace: laoban-dev
+  # Rancher cluster ID of the target cluster, used to build app URLs (LAOBAN_CLUSTER_ID).
+  clusterId: c-m-26kbxk5f
+
+# GitHub repository the generated apps are committed to.
+github:
+  # Required. "<owner>/<repo>" (LAOBAN_GITHUB_REPO).
+  repo: ""
+  # Required. Existing Secret in the release namespace holding a fine-grained
+  # personal access token (Contents: read and write on that one repository).
+  # Injected as LAOBAN_GITHUB_TOKEN. Never put the token here.
+  existingSecret: ""
+  secretKey: token
 
 # Audit-log forwarding over syslog (TLS).
 syslog:
@@ -115,10 +142,11 @@ syslog:
     # Leave empty when the syslog server does not require a client certificate.
     clientCertSecret: ""
 
-# Fail rendering when the laoban CRDs are not installed (checked through
-# .Capabilities.APIVersions). Pass --api-versions to `helm template` when rendering offline.
-crdCheck:
-  enabled: true
+# The laoban CRDs (laoban-crd chart) are not used in M0. When required is true,
+# rendering fails unless the CRDs are installed (checked through
+# .Capabilities.APIVersions; pass --api-versions to `helm template` offline).
+crds:
+  required: false
 
 podAnnotations: {}
 podLabels: {}

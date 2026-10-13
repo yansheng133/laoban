@@ -12,17 +12,32 @@ So this ClusterRole grants ONLY the "impersonate" verb on users, groups and the
 userextras that Rancher sets (principalid, username). There is deliberately no
 get/list/watch/create on any resource, and no "serviceaccounts" or "uids".
 
-Known risk: impersonate on users/groups without resourceNames lets this
-ServiceAccount impersonate any user or group, including privileged ones.
-Users and groups cannot be enumerated in advance, so they cannot be pinned
-with resourceNames. Treat the ServiceAccount token as cluster-admin-equivalent
-on the local cluster and keep the namespace locked down. Kubernetes'
-ConstrainedImpersonation feature is a candidate to narrow this later.
+Known risk: this ClusterRole has no resourceNames, so the ServiceAccount can
+impersonate any user or group, including privileged ones (system:masters).
+RBAC does support resourceNames on the impersonate verb (e.g. only user
+"jane.doe@example.com", only group "developers"), so impersonation CAN be
+limited to named users and groups; this chart does not do it yet because the
+set of laoban users is not fixed. Until it does, treat the ServiceAccount token
+as cluster-admin-equivalent and keep the namespace locked down. Kubernetes'
+ConstrainedImpersonation feature is another candidate to narrow this.
+
+Where the permission must live: when the backend goes through Rancher's
+/k8s/clusters/<cluster ID> proxy, Rancher checks the impersonation headers
+itself with a SubjectAccessReview against the LOCAL (management) cluster, not
+the downstream cluster (Rancher v2.15.2, pkg/auth/requests/impersonate.go and
+pkg/auth/requests/sar/sar.go; confirmed in our test). So for phase 1 the
+impersonate permission must be granted on the local cluster to the identity
+the backend authenticates to Rancher with. This chart's ClusterRole only
+covers calls made directly to the API server of the cluster it is installed in.
+
+Disabled in M0 (impersonation.enabled=false): no RBAC objects are rendered.
 
 Docs:
   https://kubernetes.io/docs/reference/access-authn-authz/user-impersonation/
   https://ranchermanager.docs.rancher.com/reference-guides/rancher-manager-architecture/communicating-with-downstream-user-clusters
+  https://github.com/rancher/rancher/blob/v2.15.2/pkg/auth/requests/impersonate.go
 */ -}}
+{{- if .Values.impersonation.enabled }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -56,3 +71,4 @@ subjects:
   - kind: ServiceAccount
     name: {{ include "laoban.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
+{{- end }}

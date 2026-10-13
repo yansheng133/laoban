@@ -1,13 +1,15 @@
 # laoban backend Helm chart
 
-laoban 後端服務的 Helm chart，部署在 Rancher 的 local 叢集（管理叢集）。開發初期，尚未發行。
+laoban 後端服務的 Helm chart。開發初期，尚未發行。
+
+試吃版（M0，見 `docs/m0-design.md`）的部署位置是**下游叢集 `rke2`**（Rancher 叢集 ID `c-m-26kbxk5f`）的 namespace `laoban-system`，不是 Rancher local 叢集。M0 的後端不呼叫任何 Kubernetes API、不寫入任何叢集，所以 chart 預設**不建立任何 RBAC**、Pod 也不掛 ServiceAccount token；產生的應用由 Fleet 部署（`deploy/m0/`）。身分模擬（impersonation）、CRD、稽核紀錄暫存卷都留到第一階段，chart 裡保留對應的範本，預設關閉。
 
 ## 三個 chart 的分工
 
 | Chart | 位置 | 內容 | 誰產生 |
 |---|---|---|---|
-| `laoban` | `charts/laoban` | 後端 Deployment、Service、ServiceAccount、RBAC、PVC | 手寫（本目錄） |
-| `laoban-crd` | `charts/laoban-crd` | CRD：`ProjectPolicy`、`ChangeRequest`、`ArchitectureVersion` | 手寫 |
+| `laoban` | `charts/laoban` | 後端 Deployment、Service、ServiceAccount；第一階段才開的 RBAC（`impersonation.enabled`）與 PVC（`persistence.enabled`） | 手寫（本目錄） |
+| `laoban-crd` | `charts/laoban-crd` | CRD：`ProjectPolicy`、`ChangeRequest`、`ArchitectureVersion`（M0 不使用） | 手寫 |
 | `laoban-ext` | 不在 repo 內 | UI extension 本體 | **由 extension 建置工具產生，不手寫** |
 
 UI extension 的 Helm chart 由 `yarn publish-pkgs`（或官方可重用的 GitHub workflow `build-extension-charts.yml`）依 `pkg/<extension>/package.json` 產生，產出 `assets/`、`charts/`、`extensions/` 與 `index.yaml`［1］。所以 `laoban-ext` 不在這裡手寫，相容性 annotation 寫在 extension 的 `package.json` 的 `rancher.annotations`：
@@ -15,47 +17,60 @@ UI extension 的 Helm chart 由 `yarn publish-pkgs`（或官方可重用的 GitH
 - `catalog.cattle.io/ui-extensions-version`：Rancher 2.10 起（Extensions API v3、Shell 3.x［15］）必須 `>= 3.0.0`，官方建議上限 `< 4.0.0`，也就是 `">= 3.0.0 < 4.0.0"`［2］。
 - `catalog.cattle.io/rancher-version`、`catalog.cattle.io/kube-version`：semver 範圍，分別判斷 Rancher 版本與 Kubernetes 版本是否相容［3］。
 
-## 安裝
+## M0 安裝
 
-固定 namespace `laoban-system`、release 名稱 `laoban`（`Chart.yaml` 的 `catalog.cattle.io/namespace`、`catalog.cattle.io/release-name`［4］）。UI extension 用固定的 Service 位址呼叫後端，所以這兩個值不給改。
+固定 namespace `laoban-system`、release 名稱 `laoban`（`Chart.yaml` 的 `catalog.cattle.io/namespace`、`catalog.cattle.io/release-name`［4］）。UI extension 用固定的 Service 位址呼叫後端，所以這兩個值不給改。`charts/laoban/ci/m0-values.yaml` 就是 M0 的設定，CI 也用它做 lint、template 與 kubeconform。
 
 ```bash
-# 1. CRD（Rancher Apps 會因為 catalog.cattle.io/auto-install 先自動裝這個）
-helm install laoban-crd charts/laoban-crd -n laoban-system --create-namespace
+# 以下都對下游叢集 rke2 操作
+kubectl --context rke2 create namespace laoban-system
+# 選用：後端 Pod 符合 restricted，可以讓 namespace 也強制 restricted
+kubectl --context rke2 label namespace laoban-system pod-security.kubernetes.io/enforce=restricted
 
-# 2. 事先建好 Secret（金鑰不放 values）
-kubectl -n laoban-system create secret generic laoban-anthropic --from-file=api-key=./anthropic-api-key
+# 1. 事先建好兩個 Secret（金鑰與 token 都不放 values，也不要留在 shell history）
+kubectl --context rke2 -n laoban-system create secret generic laoban-anthropic --from-file=api-key=./anthropic-api-key
+kubectl --context rke2 -n laoban-system create secret generic laoban-github --from-file=token=./github-token
 
-# 3. 後端
-helm install laoban charts/laoban -n laoban-system \
-  --set image.repository=<registry>/<namespace>/laoban-server \
-  --set image.digest=sha256:<64 hex> \
-  --set anthropic.existingSecret=laoban-anthropic
+# 2. 後端（digest 從 image workflow 的 job summary 複製，見 build/README.md）
+helm --kube-context rke2 install laoban charts/laoban -n laoban-system \
+  -f charts/laoban/ci/m0-values.yaml \
+  --set image.digest=sha256:<manifest list digest>
 ```
+
+- **不必先裝 `laoban-crd`**：`crds.required` 預設 `false`。`Chart.yaml` 也拿掉了 `catalog.cattle.io/auto-install: laoban-crd=match`，從 Rancher Apps 安裝時不會連帶裝 CRD chart；第一階段要用 CRD 時再加回來並設 `crds.required=true`。
+- GHCR 套件若還是私有，要先依 `build/README.md` 改成公開，或在 `laoban-system` 建 `kubernetes.io/dockerconfigjson` Secret 並設 `imagePullSecrets`。
+- GitHub token：fine-grained personal access token，Repository access 只選 `laoban-apps` 那一個 repo，Repository permissions 只給 **Contents: Read and write**（Metadata: Read-only 會自動帶上）。後端用 Git Data API 建 blob、tree、commit 並更新 ref，這些都屬於 Contents 權限。
 
 ### 必填值
 
 | 值 | 說明 |
 |---|---|
-| `image.repository` | 預設是佔位字串 `docker.io/REPLACE_ME/laoban-server`，沒改就無法 render |
+| `image.repository` | 預設 `ghcr.io/yansheng133/laoban-server`；用 Docker Hub 副本時改成 `docker.io/<namespace>/laoban-server` |
 | `image.digest` | 一律用 digest 拉映像檔，格式 `sha256:<64 個小寫十六進位>`；沒填或格式不對 render 失敗。`image.tag` 只當資訊顯示 |
-| `anthropic.existingSecret` | 既有 Secret 名稱，key 預設 `api-key`。金鑰永遠不放在 values |
+| `anthropic.existingSecret` | 既有 Secret 名稱，key 預設 `api-key`，注入成 `ANTHROPIC_API_KEY` |
+| `github.existingSecret` | 既有 Secret 名稱，key 預設 `token`，注入成 `LAOBAN_GITHUB_TOKEN` |
+| `github.repo` | `<owner>/<repo>`，例如 `yansheng133/laoban-apps`，注入成 `LAOBAN_GITHUB_REPO` |
+| `config.model` | Anthropic 模型 ID，注入成 `LAOBAN_MODEL`。後端不寫死模型 |
 
-`replicaCount` 只允許 1（PoC 一律單一副本）。稽核暫存區是 ReadWriteOnce 卷，多副本要先改暫存設計，HA 留到之後。更新策略用 `Recreate`，避免新舊 Pod 同時掛同一個 RWO 卷而卡住。
+金鑰與 token 永遠不放在 values，只填既有 Secret 的名稱。
+
+`replicaCount` 只允許 1：M0 的計畫存在後端記憶體，稽核暫存區開啟時也是 ReadWriteOnce 卷，多副本要先改設計，HA 留到之後。更新策略用 `Recreate`，避免新舊 Pod 同時掛同一個 RWO 卷而卡住。
 
 ## 存取方式：沒有 Ingress
 
-Service 只有 ClusterIP，不建 Ingress。UI extension 經由 Rancher 的 Kubernetes API proxy 呼叫後端：
+Service 只有 ClusterIP，不建 Ingress。UI extension 經由 Rancher 的 Kubernetes API proxy 呼叫後端，M0 的位址是：
 
 ```
-/k8s/clusters/local/api/v1/namespaces/laoban-system/services/http:laoban:8080/proxy/<path>
+/k8s/clusters/c-m-26kbxk5f/api/v1/namespaces/laoban-system/services/http:laoban:8080/proxy/<path>
 ```
 
 - 後半段 `/api/v1/namespaces/<ns>/services/[https:]<name>[:<port>]/proxy` 是 Kubernetes API server proxy 的標準格式；預設走 HTTP，要 HTTPS 就在 Service 名稱前加 `https:`［5］。
-- 前綴 `/k8s/clusters/<cluster ID>` 把請求送進 Rancher 對該叢集的 Kubernetes API proxy（local 叢集的 ID 是 `local`）。這個前綴在 Rancher 官方文件裡沒找到明文說明，目前的依據是 Rancher 論壇上的說明［6］與 Rancher 官方文件中「monitoring-ui-view 讓使用者經 Rancher proxy 存取 Prometheus／Grafana UI」的描述［7］。**上線前要在 Rancher 2.15.2 實測。**
-- 使用者要對這個 Service 的 `services/proxy` 子資源有權限才走得通：HTTP GET 對應 `get`、POST 對應 `create`、PUT 對應 `update`［8］；RBAC 用 `services/proxy` 表示子資源，可以用 `resourceNames` 限定到這個 Service［9］。**本 chart 不授予這個權限**，由管理者依專案需求綁定。
+- 前綴 `/k8s/clusters/<cluster ID>` 把請求送進 Rancher 對該叢集的 Kubernetes API proxy（local 叢集的 ID 是 `local`，M0 用 `rke2` 的 ID `c-m-26kbxk5f`，由 `config.clusterId` 設定）。這個前綴在 Rancher 官方文件裡沒找到明文說明，目前的依據是 Rancher 論壇上的說明［6］與 Rancher 官方文件中「monitoring-ui-view 讓使用者經 Rancher proxy 存取 Prometheus／Grafana UI」的描述［7］。
+- 使用者要對這個 Service 的 `services/proxy` 子資源有權限才走得通：HTTP GET 對應 `get`、POST 對應 `create`、PUT 對應 `update`［8］；RBAC 用 `services/proxy` 表示子資源，可以用 `resourceNames` 限定到這個 Service［9］。**本 chart 不授予這個權限**，由管理者在 `rke2` 上依需求綁定（M0 只有 Sam 一個使用者）。
 
-## 身分委派模型
+## 身分委派模型（第一階段，M0 關閉）
+
+`impersonation.enabled` 預設 `false`：不 render ClusterRole、ClusterRoleBinding，ServiceAccount 與 Pod 都設 `automountServiceAccountToken: false`。以下是第一階段打開後的設計。
 
 後端自己沒有任何資源權限。它代表使用者呼叫 Kubernetes API 時一律帶 impersonation header（`Impersonate-User`、`Impersonate-Group`、`Impersonate-Extra-*`），API server 依「該使用者」的 RBAC 授權，稽核紀錄同時留下後端與使用者兩個身分［10］。
 
@@ -76,25 +91,36 @@ ServiceAccount 只綁一個 ClusterRole（`laoban-impersonator-<namespace>-<full
 - 冒用 `system:serviceaccount:kube-system:default`：拒絕（沒有 `serviceaccounts` 權限）。
 - **冒用群組 `system:masters`：成功。**
 
+### 權限要給在哪個叢集：Rancher local 叢集
+
+經 Rancher 的 `/k8s/clusters/<cluster ID>` proxy 送出的 impersonation header，是由 **Rancher 自己**先檢查：Rancher 以 SubjectAccessReview 確認呼叫者能不能 `impersonate` 那個使用者、群組與 extra，而這個 SubjectAccessReview 是送到 **local（管理）叢集**，不是下游叢集（Rancher v2.15.2 `pkg/auth/requests/impersonate.go`、`pkg/auth/requests/sar/sar.go`［17］；我們的實測結果相同）。所以第一階段若後端經 Rancher proxy 冒用使用者，`impersonate` 權限要授予在 local 叢集、給後端向 Rancher 驗證時所用的身分；本 chart 的 ClusterRole 只對「直接打本叢集 API server」的呼叫有效。
+
 ### 已知風險
 
-`users`、`groups` 的 `impersonate` 沒有 `resourceNames` 限制，等於可以冒用任何使用者與群組，包括 `system:masters`。使用者與群組無法事先列舉，所以沒辦法用 `resourceNames` 鎖住；Kubernetes 文件也寫明一般的 impersonate 動詞無法限縮到特定動作或資源［10］。實務上這個 ServiceAccount 的 token 等同 local 叢集的 cluster-admin：
+目前的 ClusterRole 對 `users`、`groups` 的 `impersonate` 沒有加 `resourceNames`，等於可以冒用任何使用者與群組，包括 `system:masters`。
+
+- Kubernetes RBAC **可以**用 `resourceNames` 把 impersonation 限定到指定的使用者、群組、extra 值與 UID（例如只能冒用 `jane.doe@example.com`、只能帶群組 `developers`）［10］。Rancher 的檢查也帶了被冒用的名稱（SubjectAccessReview 的 `resourceAttributes.name`），所以在 local 叢集授權時同樣可以用 `resourceNames` 限定［17］。本 chart 還沒這樣做，是因為 laoban 的使用者名單還沒固定；第一階段要依實際使用者（Rancher 的 `u-xxxxx` 名稱）收斂。
+- 另外，`impersonate` 動詞本身無法限縮到「只能做哪些動作、碰哪些資源」；Kubernetes 的 ConstrainedImpersonation 功能（feature gate）可以做到這一點［10］，目前未評估在 Rancher 2.15 支援的 Kubernetes 版本上是否可用。
+
+在收斂之前，這個 ServiceAccount 的 token 等同所在叢集的 cluster-admin：
 
 - `laoban-system` namespace 只給平台管理者存取（能讀 Secret、能 exec 進 Pod 的人都拿得到 token）。
 - 後端程式只能冒用「已通過 Rancher 驗證的當前使用者」，不能接受前端傳來的任意身分。
-- Kubernetes 的 ConstrainedImpersonation 功能可以把 impersonation 限縮到特定動作與資源［10］，是之後收斂權限的方向；目前未評估在 Rancher 2.15 支援的 Kubernetes 版本上是否可用。
 
 ## 安全設定
 
-- `runAsNonRoot`（UID／GID 65532）、`readOnlyRootFilesystem`、`allowPrivilegeEscalation: false`、`capabilities.drop: [ALL]`、`seccompProfile: RuntimeDefault`。
+- `runAsNonRoot`（UID／GID 65532）、`readOnlyRootFilesystem`、`allowPrivilegeEscalation: false`、`capabilities.drop: [ALL]`、`seccompProfile: RuntimeDefault`。這組設定符合 Pod Security Standards 的 `restricted`，`laoban-system` 可以強制 restricted。
+- M0 不掛 ServiceAccount token（`automountServiceAccountToken: false`）。
 - 根檔案系統唯讀，所以另外掛 `/tmp`（emptyDir，上限 64Mi）。
 - 資源預設：requests 50m／64Mi，limits 500m／256Mi。
-- liveness／readiness 都打 `GET /healthz`（port 8080）。**這是假設**：後端（Rust，尚未撰寫）必須在 8080 提供不需驗證的 `/healthz`；路徑可用 `probes.path` 改。
+- liveness／readiness 都打 `GET /healthz`（port 8080，後端已提供）；路徑可用 `probes.path` 改。
 
 ## 持久化：稽核紀錄暫存區
 
+M0 預設 `persistence.enabled: false`：M0 不外送稽核紀錄（只寫後端自己的 log），暫存區用 emptyDir，Pod 刪除就消失。第一階段打開後：
+
 - PVC `<fullname>-spool`，預設 1Gi、ReadWriteOnce，掛在 `/var/spool/laoban`。稽核紀錄先寫這裡，syslog 收到後才清掉。
-- `persistence.storageClass` 必填，預設 `local-path`。不依賴叢集預設 StorageClass：PoC 的下游叢集就沒有預設值，PVC 會一直停在 Pending。需要快照時改用 `longhorn`。
+- 打開時 `persistence.storageClass` 必填，預設 `local-path`。不依賴叢集預設 StorageClass：`rke2` 沒有預設值，PVC 會一直停在 Pending。需要快照時改用 `longhorn`。
 - local-path 沒有快照、資料綁在單一節點；syslog 才是稽核紀錄的正本。
 - PVC 加了 `helm.sh/resource-policy: keep`，`helm uninstall` 不會刪掉未送出的紀錄。
 
@@ -102,20 +128,30 @@ ServiceAccount 只綁一個 ClusterRole（`laoban-impersonator-<namespace>-<full
 
 不放任何秘密在 values；只引用既有 Secret／ConfigMap 的名稱。
 
-| 值 | 說明 |
-|---|---|
-| `anthropic.existingSecret`／`secretKey` | 以 `ANTHROPIC_API_KEY` 環境變數注入 |
-| `syslog.enabled`／`host`／`port` | 稽核紀錄送往的 syslog 伺服器，預設 port 6514（syslog over TLS） |
-| `syslog.tls.caConfigMap`／`caKey` | 簽發 syslog 伺服器憑證的 CA（ConfigMap） |
-| `syslog.tls.clientCertSecret` | mTLS 用戶端憑證，`kubernetes.io/tls` 型別的既有 Secret；伺服器不要求就留空 |
+| 值 | 環境變數 | 說明 |
+|---|---|---|
+| `containerPort` | `LAOBAN_LISTEN_ADDR` | 預設 `0.0.0.0:8080` |
+| `anthropic.existingSecret`／`secretKey` | `ANTHROPIC_API_KEY` | 從 Secret 注入 |
+| `config.model` | `LAOBAN_MODEL` | 必填，Anthropic 模型 ID |
+| `config.tokenCap` | `LAOBAN_TOKEN_CAP` | 每月 token 上限，預設 2000000 |
+| `github.repo` | `LAOBAN_GITHUB_REPO` | 必填，`<owner>/<repo>` |
+| `github.existingSecret`／`secretKey` | `LAOBAN_GITHUB_TOKEN` | 必填，從 Secret 注入 |
+| `config.targetNamespace` | `LAOBAN_TARGET_NAMESPACE` | 預設 `laoban-dev` |
+| `config.clusterId` | `LAOBAN_CLUSTER_ID` | 預設 `c-m-26kbxk5f`，用來組應用網址 |
+| `persistence.mountPath` | `LAOBAN_SPOOL_DIR` | 稽核暫存區路徑 |
+| `syslog.enabled`／`host`／`port` | `LAOBAN_SYSLOG_*` | 稽核紀錄送往的 syslog 伺服器，預設 port 6514（syslog over TLS）；M0 關閉 |
+| `syslog.tls.caConfigMap`／`caKey` | `LAOBAN_SYSLOG_CA_FILE` | 簽發 syslog 伺服器憑證的 CA（ConfigMap） |
+| `syslog.tls.clientCertSecret` | `LAOBAN_SYSLOG_CLIENT_*` | mTLS 用戶端憑證，`kubernetes.io/tls` 型別的既有 Secret；伺服器不要求就留空 |
+| `crds.required` | — | `true` 時沒裝 `laoban-crd` 就無法 render；M0 預設 `false` |
+| `impersonation.enabled` | — | 第一階段的身分模擬 RBAC；M0 預設 `false` |
 
-後端讀取的環境變數（`LAOBAN_LISTEN_ADDR`、`LAOBAN_SPOOL_DIR`、`LAOBAN_SYSLOG_*`、`ANTHROPIC_API_KEY`）是 chart 與後端之間的約定，寫後端時要對齊。
+環境變數是 chart 與後端之間的約定（`docs/m0-design.md`「設定」），寫後端時要對齊。
 
 ## CRD（`laoban-crd` chart）
 
 ### 為什麼獨立成一個 chart
 
-Rancher charts 的慣例：CRD chart 是「唯一目的就是在主 chart 之前把 CRD 裝進叢集」的 chart，用來處理 CRD 的自動升級，以及讓使用者能用另一個 release 乾淨地移除 CRD［12］。Helm 文件明寫目前不支援用 Helm 升級或刪除 `crds/` 目錄裡的 CRD，並把「CRD 與使用它的資源分成兩個 chart」列為做法之一［16］。laoban 的 CRD 會隨版本演進，所以獨立成 `laoban-crd`，CRD 放在 `templates/` 讓 `helm upgrade` 能更新。主 chart 用 `catalog.cattle.io/auto-install: laoban-crd=match` 讓 Rancher 先裝相同版本的 CRD chart［4］，render 時也會檢查 API 是否存在（`crdCheck.enabled`）。
+Rancher charts 的慣例：CRD chart 是「唯一目的就是在主 chart 之前把 CRD 裝進叢集」的 chart，用來處理 CRD 的自動升級，以及讓使用者能用另一個 release 乾淨地移除 CRD［12］。Helm 文件明寫目前不支援用 Helm 升級或刪除 `crds/` 目錄裡的 CRD，並把「CRD 與使用它的資源分成兩個 chart」列為做法之一［16］。laoban 的 CRD 會隨版本演進，所以獨立成 `laoban-crd`，CRD 放在 `templates/` 讓 `helm upgrade` 能更新。M0 不使用 CRD：主 chart 預設 `crds.required: false`，`Chart.yaml` 也暫時拿掉 `catalog.cattle.io/auto-install: laoban-crd=match`。第一階段用到 CRD 時，把這個 annotation 加回來讓 Rancher 先裝相同版本的 CRD chart［4］，並設 `crds.required: true`，render 時就會檢查 API 是否存在。
 
 CRD 預設加 `helm.sh/resource-policy: keep`（`keepOnUninstall: true`）：刪掉 CRD 會連同所有 ProjectPolicy、ChangeRequest、ArchitectureVersion 一起刪除。
 
@@ -139,12 +175,13 @@ CRD 的 group 應該是自己能控制的網域。`laoban.io` 與 `laoban.dev` �
 
 CI（`.github/workflows/ci.yml` 的 `chart` job）：
 
-1. `helm lint`（兩個 chart，`--kube-version 1.34.0`）。
-2. `helm template`，並確認缺 `image.digest`、缺 `anthropic.existingSecret`、沒裝 CRD 時會以明確訊息失敗。
-3. `kubeconform -strict -kubernetes-version 1.34.0` 驗證後端 manifest。kubeconform 預設的 schema 集沒有 `CustomResourceDefinition` 本身的 schema，所以 CRD 不走這一步。
-4. 啟動 k3s（v1.34，只有 API server、不跑 agent），用 `charts/laoban-crd/ci/test-crds.sh` 套用 CRD 與範例物件：結構化 schema、預設值、列舉、CEL 規則、spec 不可修改、status 規則都由真正的 API server 檢查；後端 manifest 再做一次 server-side dry run。
+1. `helm lint`：`laoban` 用兩組 values 各跑一次——`ci/ci-values.yaml`（把 M0 關掉的功能全部打開：impersonation RBAC、CRD 檢查、PVC、syslog mTLS，讓這些範本持續被檢查）與 `ci/m0-values.yaml`（M0 實際安裝的設定）；再加上 `laoban-crd`。全部 `--kube-version 1.34.0`。
+2. `helm template` 兩組 values，並確認缺必填值時會以明確訊息失敗：`image.digest`（兩組都測）、`anthropic.existingSecret`、`github.existingSecret`、`github.repo`、`config.model`；`crds.required` 為 `true` 而沒裝 CRD（`ci-values.yaml`，以及 M0 打開 `crds.required` 時）；`persistence.enabled` 為 `true` 而 `storageClass` 空白（兩組都測）。
+3. 確認 M0 的 render 沒有任何 ClusterRole、ClusterRoleBinding、Role、RoleBinding、PVC，ServiceAccount 與 Pod 都是 `automountServiceAccountToken: false`，M0 的環境變數都在、`LAOBAN_TOKEN_CAP` 是 `"2000000"`（不是 `2e+06`）；同時確認 `ci-values.yaml` 的 render 仍有 ClusterRole、ClusterRoleBinding、PVC。
+4. `kubeconform -strict -kubernetes-version 1.34.0` 驗證兩份後端 manifest 與 `deploy/m0`。kubeconform 預設的 schema 集沒有 `CustomResourceDefinition` 本身與 Fleet 物件的 schema，這些改由下一步的 API server 檢查。
+5. 啟動 k3s（v1.34，只有 API server、不跑 agent）：`charts/laoban-crd/ci/test-crds.sh` 套用 CRD 與範例物件（結構化 schema、預設值、列舉、CEL 規則、spec 不可修改、status 規則）；兩份後端 manifest 做 server-side dry run；`deploy/m0/ci/test-m0.sh` 檢查 Fleet 物件與 `laoban-dev` 的 restricted（見 `deploy/m0/README.md`）。
 
-Rancher Prime 2.15.2 的 local 叢集支援 Kubernetes v1.34～v1.36［14］，所以用最低的 1.34 驗證。
+Rancher Prime 2.15.2 支援 Kubernetes v1.34～v1.36［14］，所以用最低的 1.34 驗證。`Chart.yaml` 的 `kubeVersion: ">= 1.34.0-0"` 現在套用在 `rke2` 叢集上：`rke2` 低於 1.34 時 `helm install` 會拒絕。
 
 ## 來源
 
@@ -164,3 +201,4 @@ Rancher Prime 2.15.2 的 local 叢集支援 Kubernetes v1.34～v1.36［14］，�
 14. Rancher Manager v2.15.2 support matrix — https://www.suse.com/suse-rancher/support-matrix/all-supported-versions/rancher-v2-15-2/
 15. Extensions support matrix（Shell 3.0.0 對應 Rancher 2.10.x 以後）— https://extensions.rancher.io/extensions/next/support-matrix
 16. Helm「Custom Resource Definitions」best practices — https://helm.sh/docs/chart_best_practices/custom_resource_definitions/
+17. Rancher v2.15.2 impersonation 檢查程式（以 SubjectAccessReview 檢查，`resourceAttributes.name` 帶被冒用的名稱）— https://github.com/rancher/rancher/blob/v2.15.2/pkg/auth/requests/impersonate.go 、https://github.com/rancher/rancher/blob/v2.15.2/pkg/auth/requests/sar/sar.go
