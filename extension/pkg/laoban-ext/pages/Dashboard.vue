@@ -13,9 +13,10 @@ import {
 import { useStore } from 'vuex';
 import { useI18n } from '@shell/composables/useI18n';
 import ArchitectureView from '../components/ArchitectureView.vue';
+import AppList from '../components/AppList.vue';
 import {
-  getConfig, createPlan, applyPlan, listBundles, resolveAppUrl, safeHttpsUrl, aiRequestTimeoutMs,
-  RequestError, ConfigResponse, PlanResponse, ApplyResponse
+  getConfig, createPlan, applyPlan, listBundles, resolveAppUrl, safeHttpsUrl, aiRequestTimeoutMs, getApp,
+  RequestError, ConfigResponse, PlanResponse, ApplyResponse, AppDetail
 } from '../utils/backend';
 import { bundleReadiness, Readiness } from '../utils/bundle';
 import {
@@ -27,7 +28,7 @@ type Phase = 'idle' | 'planning' | 'planned' | 'applying' | 'deploying' | 'ready
 export default defineComponent({
   name: 'LaobanDashboard',
 
-  components: { ArchitectureView },
+  components: { ArchitectureView, AppList },
 
   setup() {
     const store = useStore();
@@ -45,6 +46,11 @@ export default defineComponent({
     const readiness = ref<Readiness | null>(null);
     const pollError = ref(false);
     const elapsed = ref(0);
+    // Set while an existing app is being changed ("編輯" in the app list).
+    const editing = ref<AppDetail | null>(null);
+    const loadingApp = ref('');
+    const appList = ref<{ refresh: () => Promise<void> } | null>(null);
+    const workArea = ref<HTMLElement | null>(null);
 
     let elapsedTimer: ReturnType<typeof setInterval> | null = null;
     let pollTimer: ReturnType<typeof setTimeout> | null = null;
@@ -52,8 +58,11 @@ export default defineComponent({
     let pollGeneration = 0;
     let unmounted = false;
 
-    const busy = computed(() => phase.value === 'planning' || phase.value === 'applying');
-    const appNameInvalid = computed(() => !!appName.value.trim() && !APP_NAME_PATTERN.test(appName.value.trim()));
+    const busy = computed(() => phase.value === 'planning' || phase.value === 'applying' || !!loadingApp.value);
+    const appNameInvalid = computed(() => !editing.value && !!appName.value.trim() && !APP_NAME_PATTERN.test(appName.value.trim()));
+    // The 3D view shows the new plan, or the app being edited before there is one.
+    const shownArchitecture = computed(() => plan.value?.architecture || editing.value?.architecture || null);
+    const recentHistory = computed(() => (editing.value?.history || []).slice(0, 5));
     const canPlan = computed(() => !busy.value && !!prompt.value.trim() && !appNameInvalid.value);
     const canApply = computed(() => !busy.value && !!plan.value && !applied.value);
     const commitLink = computed(() => safeHttpsUrl(applied.value?.commitUrl));
@@ -133,6 +142,7 @@ export default defineComponent({
       if (readiness.value?.state === 'ready' || readiness.value?.state === 'modified') {
         phase.value = 'ready';
         stopElapsed();
+        appList.value?.refresh();
 
         return;
       }
@@ -155,6 +165,50 @@ export default defineComponent({
       poll(pollGeneration);
     }
 
+    function formatTime(at: string): string {
+      const d = new Date(at);
+
+      return Number.isNaN(d.getTime()) ? at : d.toLocaleString();
+    }
+
+    function resetWork() {
+      stopPolling();
+      stopElapsed();
+      errorText.value = '';
+      plan.value = null;
+      applied.value = null;
+      readiness.value = null;
+      phase.value = 'idle';
+    }
+
+    async function startEdit(name: string) {
+      if (busy.value) {
+        return;
+      }
+      resetWork();
+      loadingApp.value = name;
+      try {
+        editing.value = await getApp(store, name);
+        appName.value = editing.value.appName;
+        prompt.value = '';
+        workArea.value?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+      } catch (e) {
+        errorText.value = messageFor(e);
+      } finally {
+        loadingApp.value = '';
+      }
+    }
+
+    function cancelEdit() {
+      if (busy.value) {
+        return;
+      }
+      resetWork();
+      editing.value = null;
+      appName.value = '';
+      prompt.value = '';
+    }
+
     async function generatePlan() {
       if (!canPlan.value) {
         return;
@@ -167,7 +221,13 @@ export default defineComponent({
       phase.value = 'planning';
       startElapsed();
       try {
-        plan.value = await createPlan(store, prompt.value.trim(), appName.value.trim() || undefined, aiRequestTimeoutMs(config.value));
+        plan.value = await createPlan(
+          store,
+          prompt.value.trim(),
+          appName.value.trim() || undefined,
+          aiRequestTimeoutMs(config.value),
+          editing.value?.appName
+        );
         phase.value = 'planned';
       } catch (e) {
         errorText.value = messageFor(e);
@@ -196,6 +256,7 @@ export default defineComponent({
       } finally {
         loadConfig();
       }
+      appList.value?.refresh();
       startPolling();
     }
 
@@ -262,6 +323,15 @@ export default defineComponent({
       formatNumber,
       generatePlan,
       confirmAndDeploy,
+      editing,
+      loadingApp,
+      appList,
+      workArea,
+      shownArchitecture,
+      recentHistory,
+      formatTime,
+      startEdit,
+      cancelEdit,
     };
   },
 });
@@ -298,46 +368,80 @@ export default defineComponent({
       </p>
     </header>
 
-    <div class="laoban-work">
+    <div
+      ref="workArea"
+      class="laoban-work"
+    >
       <section
         class="laoban-panel laoban-chat"
         :aria-label="t('laoban.dashboard.chat.title')"
       >
-        <h2>{{ t('laoban.dashboard.chat.title') }}</h2>
+        <h2>{{ editing ? t('laoban.edit.title', { appName: editing.appName }) : t('laoban.dashboard.chat.title') }}</h2>
+        <div
+          v-if="editing"
+          class="laoban-editing"
+          data-testid="laoban-editing"
+        >
+          <p class="laoban-text">
+            {{ editing.summary }}
+          </p>
+          <template v-if="recentHistory.length">
+            <h4>{{ t('laoban.edit.history') }}</h4>
+            <ul class="laoban-history">
+              <li
+                v-for="(h, i) in recentHistory"
+                :key="i"
+              >
+                <span class="text-muted">{{ formatTime(h.at) }} · {{ h.kind === 'edit' ? t('laoban.edit.kindEdit') : t('laoban.edit.kindCreate') }}</span>
+                <span class="laoban-text">{{ h.request }}</span>
+              </li>
+            </ul>
+          </template>
+          <button
+            type="button"
+            class="btn btn-sm role-secondary"
+            :disabled="busy"
+            @click="cancelEdit"
+          >
+            {{ t('laoban.edit.cancel') }}
+          </button>
+        </div>
         <form @submit.prevent="generatePlan">
           <label
             for="laoban-prompt"
             class="laoban-label"
-          >{{ t('laoban.dashboard.chat.promptLabel') }}</label>
+          >{{ editing ? t('laoban.edit.promptLabel') : t('laoban.dashboard.chat.promptLabel') }}</label>
           <textarea
             id="laoban-prompt"
             v-model="prompt"
             rows="5"
             maxlength="4000"
-            :placeholder="t('laoban.dashboard.chat.promptPlaceholder')"
+            :placeholder="editing ? t('laoban.edit.promptPlaceholder') : t('laoban.dashboard.chat.promptPlaceholder')"
             :disabled="busy"
           />
-          <label
-            for="laoban-app-name"
-            class="laoban-label"
-          >{{ t('laoban.dashboard.chat.appNameLabel') }}</label>
-          <input
-            id="laoban-app-name"
-            v-model="appName"
-            type="text"
-            maxlength="31"
-            autocomplete="off"
-            spellcheck="false"
-            :placeholder="t('laoban.dashboard.chat.appNamePlaceholder')"
-            :disabled="busy"
-            :aria-invalid="appNameInvalid"
-          >
-          <p
-            class="laoban-hint"
-            :class="{ 'text-error': appNameInvalid, 'text-muted': !appNameInvalid }"
-          >
-            {{ t('laoban.dashboard.chat.appNameHint') }}
-          </p>
+          <template v-if="!editing">
+            <label
+              for="laoban-app-name"
+              class="laoban-label"
+            >{{ t('laoban.dashboard.chat.appNameLabel') }}</label>
+            <input
+              id="laoban-app-name"
+              v-model="appName"
+              type="text"
+              maxlength="31"
+              autocomplete="off"
+              spellcheck="false"
+              :placeholder="t('laoban.dashboard.chat.appNamePlaceholder')"
+              :disabled="busy"
+              :aria-invalid="appNameInvalid"
+            >
+            <p
+              class="laoban-hint"
+              :class="{ 'text-error': appNameInvalid, 'text-muted': !appNameInvalid }"
+            >
+              {{ t('laoban.dashboard.chat.appNameHint') }}
+            </p>
+          </template>
           <button
             type="submit"
             class="btn role-primary"
@@ -348,7 +452,7 @@ export default defineComponent({
               class="icon icon-spinner icon-spin"
               aria-hidden="true"
             />
-            {{ t('laoban.dashboard.chat.generate') }}
+            {{ editing ? t('laoban.edit.generate') : t('laoban.dashboard.chat.generate') }}
           </button>
         </form>
 
@@ -365,7 +469,7 @@ export default defineComponent({
           class="laoban-plan"
           data-testid="laoban-plan"
         >
-          <h3>{{ t('laoban.dashboard.plan.title', { appName: plan.appName }) }}</h3>
+          <h3>{{ plan.mode === 'edit' ? t('laoban.edit.planTitle', { appName: plan.appName }) : t('laoban.dashboard.plan.title', { appName: plan.appName }) }}</h3>
           <p class="laoban-text">
             {{ plan.summary }}
           </p>
@@ -443,9 +547,15 @@ export default defineComponent({
         :aria-label="t('laoban.dashboard.arch.title')"
       >
         <h2>{{ t('laoban.dashboard.arch.title') }}</h2>
+        <p
+          v-if="editing && !plan"
+          class="text-muted laoban-hint"
+        >
+          {{ t('laoban.edit.currentArch') }}
+        </p>
         <ArchitectureView
-          v-if="plan"
-          :architecture="plan.architecture"
+          v-if="shownArchitecture"
+          :architecture="shownArchitecture"
         />
         <p
           v-else
@@ -455,6 +565,13 @@ export default defineComponent({
         </p>
       </section>
     </div>
+
+    <AppList
+      ref="appList"
+      :editing-app="editing ? editing.appName : null"
+      :busy="busy"
+      @edit="startEdit"
+    />
 
     <footer
       class="laoban-status"
@@ -558,6 +675,30 @@ export default defineComponent({
 
 .laoban-label {
   font-weight: bold;
+}
+
+.laoban-editing {
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border-left: 3px solid var(--primary);
+  background: var(--sortable-table-accent-bg, transparent);
+
+  h4 {
+    margin: 8px 0 4px;
+  }
+}
+
+.laoban-history {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 8px;
+  font-size: 12px;
+
+  li {
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 4px;
+  }
 }
 
 .laoban-hint {

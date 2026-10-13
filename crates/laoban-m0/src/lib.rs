@@ -14,6 +14,7 @@
 pub mod codegen;
 pub mod config;
 pub mod github;
+pub mod meta;
 pub mod plan;
 pub mod render;
 pub mod service;

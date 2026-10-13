@@ -111,6 +111,7 @@ fn rendered_manifests_round_trip_through_a_yaml_parser() {
         masked_summary: "摘要",
         model: "model-a-test",
         generated_at: "2026-10-13T00:00:00Z",
+        meta_json: "{}\n",
     });
     let dir = temp_dir("yaml");
     for f in &rendered {

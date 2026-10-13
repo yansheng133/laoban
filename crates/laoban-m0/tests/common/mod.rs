@@ -50,9 +50,48 @@ pub enum RefUpdate {
 
 /// Mock GitHub implementing the Git Data API calls the committer makes.
 pub fn github_mock(update: RefUpdate) -> MockServer {
+    github_mock_with(update, Vec::new())
+}
+
+/// Like [`github_mock`], with existing app directories under `apps/`:
+/// `(name, Some(laoban.json content))`, or `None` for a directory without
+/// one (an app made before laoban.json existed).
+pub fn github_mock_with(update: RefUpdate, apps: Vec<(String, Option<String>)>) -> MockServer {
     let blobs = Arc::new(AtomicUsize::new(0));
     MockServer::start(move |r: &Recorded| {
         let p = r.path.as_str();
+        let contents = "/repos/example-owner/laoban-apps/contents/";
+        if let Some(rest) = p.strip_prefix(contents) {
+            if r.method != "GET" {
+                return Reply::json(405, r#"{"message":"no"}"#);
+            }
+            let Some(path) = rest.strip_suffix("?ref=main") else {
+                return Reply::json(400, r#"{"message":"missing ref"}"#);
+            };
+            if path == "apps" {
+                if apps.is_empty() {
+                    return Reply::json(404, r#"{"message":"Not Found"}"#);
+                }
+                let mut list: Vec<serde_json::Value> = apps
+                    .iter()
+                    .map(|(n, _)| json!({"name": n, "path": format!("apps/{n}"), "type": "dir"}))
+                    .collect();
+                list.push(json!({"name": ".gitkeep", "path": "apps/.gitkeep", "type": "file"}));
+                return Reply::json(200, serde_json::Value::Array(list).to_string());
+            }
+            for (n, meta) in &apps {
+                if path == format!("apps/{n}/laoban.json") {
+                    if r.header("accept") != Some("application/vnd.github.raw+json") {
+                        return Reply::json(415, r#"{"message":"want raw"}"#);
+                    }
+                    return match meta {
+                        Some(m) => Reply::json(200, m.clone()),
+                        None => Reply::json(404, r#"{"message":"Not Found"}"#),
+                    };
+                }
+            }
+            return Reply::json(404, r#"{"message":"Not Found"}"#);
+        }
         let base = "/repos/example-owner/laoban-apps/git";
         match (r.method.as_str(), p.strip_prefix(base).unwrap_or("")) {
             ("GET", "/ref/heads/main") => Reply::json(
@@ -145,8 +184,17 @@ pub struct Harness {
 }
 
 pub fn harness(provider: MockProvider, update: RefUpdate, token_cap: u64) -> Harness {
+    harness_with(provider, update, token_cap, Vec::new())
+}
+
+pub fn harness_with(
+    provider: MockProvider,
+    update: RefUpdate,
+    token_cap: u64,
+    apps: Vec<(String, Option<String>)>,
+) -> Harness {
     let provider = Arc::new(provider);
-    let github = github_mock(update);
+    let github = github_mock_with(update, apps);
     let service = M0Service::new(
         settings(token_cap),
         Box::new(Arc::clone(&provider)),
@@ -158,6 +206,15 @@ pub fn harness(provider: MockProvider, update: RefUpdate, token_cap: u64) -> Har
         provider,
         github,
     }
+}
+
+/// Requests that would change the repository.
+pub fn writes(github: &MockServer) -> usize {
+    github
+        .requests()
+        .iter()
+        .filter(|r| r.method != "GET")
+        .count()
 }
 
 /// Decoded blob contents by request order (blobs are created in file order).

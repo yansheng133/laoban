@@ -16,6 +16,8 @@ export interface StoreLike {
 
 export interface PlanResponse {
   planId: string;
+  // 'edit' when the plan changes an existing app (baseApp).
+  mode?: 'create' | 'edit';
   appName: string;
   summary: string;
   steps: string[];
@@ -25,11 +27,49 @@ export interface PlanResponse {
 }
 
 export interface ApplyResponse {
+  mode?: 'create' | 'edit';
+  appName?: string;
   commit: string;
   commitUrl: string;
   path: string;
   appUrl: string;
   fleet: { workspace: string; gitRepo: string; bundlePrefix: string };
+}
+
+export interface FleetRef { workspace: string; gitRepo: string; bundlePrefix: string }
+
+// One entry of GET /api/apps. `editable` is false for apps without a
+// laoban.json (made before it existed); those have no summary or date.
+export interface AppSummary {
+  appName: string;
+  editable: boolean;
+  summary: string;
+  updatedAt: string;
+  revisions: number;
+  appUrl: string;
+  path: string;
+  fleet: FleetRef;
+}
+
+export interface AppHistoryEntry {
+  at: string;
+  kind: 'create' | 'edit' | string;
+  request: string;
+  summary: string;
+  model: string;
+}
+
+// GET /api/apps/<name>
+export interface AppDetail {
+  appName: string;
+  summary: string;
+  steps: string[];
+  architecture: Architecture;
+  updatedAt: string;
+  history: AppHistoryEntry[];
+  appUrl: string;
+  path: string;
+  fleet: FleetRef;
 }
 
 export interface ConfigResponse {
@@ -172,10 +212,24 @@ export function getConfig(store: StoreLike): Promise<ConfigResponse> {
   return requestJson<ConfigResponse>(store, backendUrl('/api/config'));
 }
 
-export function createPlan(store: StoreLike, prompt: string, appName: string | undefined, timeoutMs: number): Promise<PlanResponse> {
+export function listApps(store: StoreLike): Promise<{ apps: AppSummary[] }> {
+  return requestJson<{ apps: AppSummary[] }>(store, backendUrl('/api/apps'));
+}
+
+export function getApp(store: StoreLike, name: string): Promise<AppDetail> {
+  return requestJson<AppDetail>(store, backendUrl(`/api/apps/${ encodeURIComponent(name) }`));
+}
+
+/**
+ * New app: `appName` optional. Change an existing app: pass `baseApp`
+ * (the backend keeps its name).
+ */
+export function createPlan(store: StoreLike, prompt: string, appName: string | undefined, timeoutMs: number, baseApp?: string): Promise<PlanResponse> {
   const body: Record<string, string> = { prompt };
 
-  if (appName) {
+  if (baseApp) {
+    body.baseApp = baseApp;
+  } else if (appName) {
     body.appName = appName;
   }
 

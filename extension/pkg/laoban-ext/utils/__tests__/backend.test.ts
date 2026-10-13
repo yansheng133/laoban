@@ -1,6 +1,9 @@
-import { describe, it, expect } from '@jest/globals';
 import {
-  parseBackendError, resolveAppUrl, safeHttpsUrl, backendUrl, aiRequestTimeoutMs, ConfigResponse
+  describe, it, expect, afterEach, jest
+} from '@jest/globals';
+import {
+  parseBackendError, resolveAppUrl, safeHttpsUrl, backendUrl, aiRequestTimeoutMs, ConfigResponse,
+  createPlan, getApp, listApps
 } from '../backend';
 import { AI_REQUEST_TIMEOUT_MS } from '../../config/backend';
 
@@ -68,5 +71,53 @@ describe('aiRequestTimeoutMs', () => {
 
   it('caps absurd values at the backend maximum', () => {
     expect(aiRequestTimeoutMs({ ...base, aiTimeoutSeconds: 1e9 })).toBe(1860 * 1000);
+  });
+});
+
+describe('apps and plan requests', () => {
+  const realFetch = globalThis.fetch;
+  const store = { getters: {} };
+  let calls: { url: string; init: RequestInit }[] = [];
+
+  function mockFetch(status: number, body: unknown) {
+    calls = [];
+    globalThis.fetch = jest.fn(async(url: unknown, init: unknown) => {
+      calls.push({ url: String(url), init: init as RequestInit });
+
+      return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+    }) as unknown as typeof fetch;
+  }
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  it('sends baseApp, not appName, when changing an app', async() => {
+    mockFetch(200, { planId: 'p-1', appName: 'todo' });
+    await createPlan(store, '加上刪除', 'ignored', 1000, 'todo');
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ prompt: '加上刪除', baseApp: 'todo' });
+    expect(calls[0].url).toBe(backendUrl('/api/plan'));
+  });
+
+  it('sends appName for a new app', async() => {
+    mockFetch(200, { planId: 'p-1', appName: 'shop' });
+    await createPlan(store, 'x', 'shop', 1000);
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ prompt: 'x', appName: 'shop' });
+  });
+
+  it('reads the app list and one app', async() => {
+    mockFetch(200, { apps: [] });
+    expect(await listApps(store)).toEqual({ apps: [] });
+    expect(calls[0].url).toBe(backendUrl('/api/apps'));
+    expect(calls[0].init.method).toBe('GET');
+
+    mockFetch(200, { appName: 'a b' });
+    await getApp(store, 'a b');
+    expect(calls[0].url).toBe(backendUrl('/api/apps/a%20b'));
+  });
+
+  it('surfaces the backend message for app errors', async() => {
+    mockFetch(409, { error: { code: 'not_editable', message: '無法編輯。' } });
+    await expect(getApp(store, 'old')).rejects.toMatchObject({ code: 'not_editable', userMessage: '無法編輯。', status: 409 });
   });
 });
