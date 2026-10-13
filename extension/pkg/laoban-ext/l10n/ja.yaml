@@ -4,10 +4,14 @@ product:
 laoban:
   nav:
     dashboard: 概要
+    apps: アプリ
   # M0: the dashboard strings below are English placeholders; Japanese
   # translation is not done yet.
   apps:
     title: アプリ一覧
+    description: laoban が作成したアプリ（最近変更した順）。名前を開くと内容・変更履歴・構成図を確認でき、一文で変更できます。
+    create: 新しいアプリ
+    details: 詳細
     refresh: 再読み込み
     empty: まだアプリがありません。上で要件を入力し、デプロイするとここに表示されます。
     loadFailed: アプリ一覧を読み込めませんでした。しばらくしてから再試行してください。
@@ -29,19 +33,25 @@ laoban:
       missing: Fleet 未取得
       unknown: "-"
   edit:
-    title: "編集：{appName}"
-    history: 最近の変更
     kindCreate: 作成
     kindEdit: 変更
-    cancel: 編集をやめて新しいアプリを作成
     promptLabel: どう変更しますか
     promptPlaceholder: 例：飲み物を追加し、注文にメモを付けられるようにする
     generate: 変更計画を作成
     planTitle: "変更計画：{appName}"
     currentArch: 現在の構成です。変更計画ができると変更後の構成に置き換わります。
+  detail:
+    back: ← アプリ
+    source: コード（GitHub）
+    loading: 読み込み中…
+    changeTitle: このアプリを変更
+    currentSteps: 現在の構築手順
+    history: "変更履歴（{count}）"
+    archPlanned: 変更計画の構成です。デプロイ後に現在の構成になります。
   dashboard:
     title: laoban
     description: Describe what you need in one sentence. laoban proposes a plan and an architecture view first; only after you confirm does it generate code, commit it to GitHub and let Fleet deploy it. This is the M0 preview.
+    toApps: これまでに作成したアプリを見る →
     config:
       model: Model
       targetNamespace: Target
@@ -64,6 +74,7 @@ laoban:
       usage: "This used {input} input tokens and {output} output tokens."
       apply: Confirm and deploy
     result:
+      viewApp: アプリページで見る
       committed: "Committed to GitHub:"
       openApp: Open app
       badAppUrl: The app URL returned by the backend is not valid, so no link is shown.

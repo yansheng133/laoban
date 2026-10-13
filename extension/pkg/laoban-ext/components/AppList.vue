@@ -1,36 +1,20 @@
 <script lang="ts">
 // The apps laoban has made (GET /api/apps), newest change first, with each
-// app's Fleet state, a link to open it and an "edit" action that hands the
-// app name to the page (emit 'edit').
+// app's Fleet state, a link to open it and a link to its detail page (where
+// it is changed).
 //
 // Summaries come from AI output: rendered with {{ }} only, never v-html.
-import {
-  defineComponent, ref, onMounted, PropType
-} from 'vue';
+import { defineComponent, ref, onMounted } from 'vue';
 import { useStore } from 'vuex';
 import { useI18n } from '@shell/composables/useI18n';
 import {
   listApps, listBundles, resolveAppUrl, RequestError, AppSummary
 } from '../utils/backend';
 import { bundleReadiness, Bundle, ReadinessState } from '../utils/bundle';
+import { appDetailRoute } from '../config/laoban';
 
 export default defineComponent({
   name: 'LaobanAppList',
-
-  props: {
-    // App currently loaded into the editor above, highlighted in the list.
-    editingApp: {
-      type:    String as PropType<string | null>,
-      default: null,
-    },
-    // Disable "edit" while a plan or apply is running.
-    busy: {
-      type:    Boolean,
-      default: false,
-    },
-  },
-
-  emits: ['edit'],
 
   setup(_props, { expose }) {
     const store = useStore();
@@ -108,7 +92,7 @@ export default defineComponent({
     expose({ refresh });
 
     return {
-      t, apps, loading, loaded, errorText, refresh, openUrl, formatTime, stateLabel, stateClass
+      t, apps, loading, loaded, errorText, refresh, openUrl, formatTime, stateLabel, stateClass, appDetailRoute
     };
   },
 });
@@ -116,12 +100,12 @@ export default defineComponent({
 
 <template>
   <section
-    class="laoban-panel laoban-apps"
+    class="laoban-apps"
     :aria-label="t('laoban.apps.title')"
     data-testid="laoban-apps"
   >
     <div class="laoban-apps-head">
-      <h2>{{ t('laoban.apps.title') }}</h2>
+      <slot name="actions" />
       <button
         type="button"
         class="btn btn-sm role-secondary"
@@ -169,10 +153,11 @@ export default defineComponent({
           <tr
             v-for="app in apps"
             :key="app.appName"
-            :class="{ 'laoban-apps-current': app.appName === editingApp }"
           >
             <td class="laoban-apps-name">
-              {{ app.appName }}
+              <router-link :to="appDetailRoute(app.appName)">
+                {{ app.appName }}
+              </router-link>
             </td>
             <td class="laoban-text">
               <span v-if="app.editable">{{ app.summary }}</span>
@@ -199,15 +184,12 @@ export default defineComponent({
                 rel="noopener noreferrer"
                 class="btn btn-sm role-secondary"
               >{{ t('laoban.apps.open') }}</a>
-              <button
-                type="button"
+              <router-link
+                :to="appDetailRoute(app.appName)"
                 class="btn btn-sm role-primary"
-                :disabled="!app.editable || busy"
-                :title="app.editable ? '' : t('laoban.apps.legacy')"
-                @click="$emit('edit', app.appName)"
               >
-                {{ t('laoban.apps.edit') }}
-              </button>
+                {{ app.editable ? t('laoban.apps.edit') : t('laoban.apps.details') }}
+              </router-link>
             </td>
           </tr>
         </tbody>
@@ -220,13 +202,9 @@ export default defineComponent({
 .laoban-apps-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  justify-content: flex-end;
+  gap: 8px;
   margin-bottom: 8px;
-
-  h2 {
-    margin: 0;
-  }
 }
 
 .laoban-apps-scroll {
@@ -250,10 +228,6 @@ export default defineComponent({
     color: var(--muted);
     font-weight: normal;
   }
-}
-
-.laoban-apps-current {
-  background: var(--sortable-table-selected-bg, var(--accent-btn));
 }
 
 .laoban-apps-name {

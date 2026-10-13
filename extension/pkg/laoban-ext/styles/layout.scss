@@ -1,0 +1,90 @@
+// Layout shared by the laoban pages (imported into each page's scoped style).
+
+.laoban-m0 {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 100%;
+}
+
+.laoban-header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px 24px;
+
+  h1 {
+    margin-bottom: 4px;
+  }
+}
+
+.laoban-work {
+  display: grid;
+  grid-template-columns: minmax(280px, 2fr) minmax(0, 3fr);
+  gap: 16px;
+  flex: 1 1 auto;
+  min-height: 0;
+
+  @media (max-width: 960px) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.laoban-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--border-radius);
+  background: var(--body-bg);
+  padding: 16px;
+  min-width: 0;
+
+  h2 {
+    margin: 0 0 12px;
+  }
+}
+
+.laoban-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+
+  textarea {
+    resize: vertical;
+    min-height: 100px;
+  }
+
+  .btn {
+    align-self: flex-start;
+    margin-top: 6px;
+  }
+}
+
+.laoban-label {
+  font-weight: bold;
+}
+
+.laoban-hint {
+  font-size: 12px;
+  margin: 0;
+}
+
+.laoban-error {
+  margin-top: 12px;
+}
+
+.laoban-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.laoban-view {
+  display: flex;
+  flex-direction: column;
+  min-height: 460px;
+}
+
+.laoban-empty {
+  margin: auto;
+  text-align: center;
+  padding: 24px;
+}

@@ -4,8 +4,12 @@ product:
 laoban:
   nav:
     dashboard: Overview
+    apps: Apps
   apps:
     title: Apps
+    description: Apps laoban has made, most recently changed first. Open one to see what it does, its history and architecture, and change it with a sentence.
+    create: New app
+    details: Details
     refresh: Refresh
     empty: No apps yet. Describe one above; it appears here once deployed.
     loadFailed: Could not load the app list. Try again later.
@@ -27,19 +31,25 @@ laoban:
       missing: Not picked up by Fleet yet
       unknown: "-"
   edit:
-    title: "Edit: {appName}"
-    history: Recent changes
     kindCreate: Created
     kindEdit: Changed
-    cancel: Stop editing and create a new app instead
     promptLabel: What should change
     promptPlaceholder: "For example: add drinks, and let orders carry a note"
     generate: Plan the change
     planTitle: "Change plan: {appName}"
     currentArch: Current architecture. It is replaced by the changed one once the plan is ready.
+  detail:
+    back: ← Apps
+    source: Code (GitHub)
+    loading: Loading…
+    changeTitle: Change this app
+    currentSteps: Current build steps
+    history: "History ({count})"
+    archPlanned: Architecture of the change plan. It becomes the current one once deployed.
   dashboard:
     title: laoban
     description: Describe what you need in one sentence. laoban proposes a plan and an architecture view first; only after you confirm does it generate code, commit it to GitHub and let Fleet deploy it. This is the M0 preview.
+    toApps: See the apps made so far →
     config:
       model: Model
       targetNamespace: Target
@@ -62,6 +72,7 @@ laoban:
       usage: "This used {input} input tokens and {output} output tokens."
       apply: Confirm and deploy
     result:
+      viewApp: View in Apps
       committed: "Committed to GitHub:"
       openApp: Open app
       badAppUrl: The app URL returned by the backend is not valid, so no link is shown.

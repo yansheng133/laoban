@@ -1,6 +1,6 @@
 import { IPlugin } from '@shell/core/types';
 import {
-  PRODUCT_NAME, BLANK_CLUSTER, DASHBOARD_PAGE, DASHBOARD_ROUTE_NAME
+  PRODUCT_NAME, BLANK_CLUSTER, DASHBOARD_PAGE, DASHBOARD_ROUTE_NAME, APPS_PAGE, APPS_ROUTE_NAME
 } from './config/laoban';
 
 // Top-level product, following
@@ -34,5 +34,17 @@ export function init($plugin: IPlugin, store: any) {
     }
   });
 
-  basicType([DASHBOARD_PAGE]);
+  virtualType({
+    labelKey: 'laoban.nav.apps',
+    name:     APPS_PAGE,
+    route:    {
+      name:   APPS_ROUTE_NAME,
+      params: {
+        product: PRODUCT_NAME,
+        cluster: BLANK_CLUSTER
+      }
+    }
+  });
+
+  basicType([DASHBOARD_PAGE, APPS_PAGE]);
 }

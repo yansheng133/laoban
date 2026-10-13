@@ -4,8 +4,12 @@ product:
 laoban:
   nav:
     dashboard: 總覽
+    apps: 應用
   apps:
     title: 應用清單
+    description: laoban 做過的應用，最近修改的在前。點名稱可以看內容、修改紀錄和架構圖，並用一句話修改。
+    create: 新增應用
+    details: 詳細
     refresh: 重新整理
     empty: 還沒有任何應用。在上方輸入需求，部署後就會出現在這裡。
     loadFailed: 無法讀取應用清單，請稍後再試。
@@ -27,19 +31,25 @@ laoban:
       missing: Fleet 尚未讀到
       unknown: "-"
   edit:
-    title: "編輯：{appName}"
-    history: 最近的修改
     kindCreate: 建立
     kindEdit: 修改
-    cancel: 取消編輯，改成新增應用
     promptLabel: 要怎麼修改
     promptPlaceholder: 例如：加上飲料選項，訂單要能填備註
     generate: 產生修改計畫
     planTitle: "修改計畫：{appName}"
     currentArch: 目前的架構。產生修改計畫後會換成修改後的樣子。
+  detail:
+    back: ← 應用
+    source: 程式碼（GitHub）
+    loading: 讀取中…
+    changeTitle: 修改這個應用
+    currentSteps: 目前的建置步驟
+    history: "修改紀錄（{count}）"
+    archPlanned: 修改計畫的架構。部署完成後會成為目前的架構。
   dashboard:
     title: laoban
     description: 用一句話描述需求，laoban 會先提出計畫與架構圖；確認後才產生程式、寫進 GitHub，再由 Fleet 部署。這是試吃版（M0）。
+    toApps: 查看已經做過的應用 →
     config:
       model: 模型
       targetNamespace: 部署目標
@@ -62,6 +72,7 @@ laoban:
       usage: "這次用了 {input} 個輸入 token、{output} 個輸出 token。"
       apply: 確認並部署
     result:
+      viewApp: 到應用頁查看
       committed: 已寫進 GitHub：
       openApp: 打開應用
       badAppUrl: 後端回傳的應用網址格式不正確，無法顯示連結。
