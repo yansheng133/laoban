@@ -3,7 +3,7 @@
   "title": "laoban backend chart values",
   "type": "object",
   "additionalProperties": false,
-  "required": ["image", "anthropic", "service", "persistence"],
+  "required": ["image", "anthropic", "github", "config", "service", "persistence"],
   "definitions": {
     "name": {
       "description": "Kubernetes object name (DNS-1123 subdomain) or empty.",
@@ -25,7 +25,7 @@
   },
   "properties": {
     "replicaCount": {
-      "description": "PoC: exactly one replica (the audit spool is ReadWriteOnce). HA is a later phase.",
+      "description": "PoC: exactly one replica (in-memory plans, ReadWriteOnce audit spool). HA is a later phase.",
       "type": "integer",
       "minimum": 1,
       "maximum": 1
@@ -67,6 +67,10 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "enabled": {
+          "description": "Phase 1 only. When false (M0) no RBAC objects are rendered and no ServiceAccount token is mounted.",
+          "type": "boolean"
+        },
         "userExtras": {
           "description": "Extra keys the backend may set with Impersonate-Extra-<key>.",
           "type": "array",
@@ -121,6 +125,49 @@
         "secretKey": { "type": "string", "minLength": 1 }
       }
     },
+    "github": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repo": {
+          "description": "Required at render time. <owner>/<repo> the generated apps are committed to (LAOBAN_GITHUB_REPO).",
+          "type": "string",
+          "pattern": "^$|^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$"
+        },
+        "existingSecret": {
+          "description": "Required at render time. Name of an existing Secret with the GitHub fine-grained token (LAOBAN_GITHUB_TOKEN).",
+          "$ref": "#/definitions/name"
+        },
+        "secretKey": { "type": "string", "minLength": 1 }
+      }
+    },
+    "config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "model": {
+          "description": "Required at render time. Anthropic model ID (LAOBAN_MODEL).",
+          "type": "string"
+        },
+        "tokenCap": {
+          "description": "Monthly token cap enforced by laoban (LAOBAN_TOKEN_CAP).",
+          "type": "integer",
+          "minimum": 1
+        },
+        "targetNamespace": {
+          "description": "Namespace of the generated apps (LAOBAN_TARGET_NAMESPACE).",
+          "type": "string",
+          "maxLength": 63,
+          "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+        },
+        "clusterId": {
+          "description": "Rancher cluster ID of the target cluster (LAOBAN_CLUSTER_ID), e.g. c-m-26kbxk5f.",
+          "type": "string",
+          "maxLength": 63,
+          "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+        }
+      }
+    },
     "syslog": {
       "type": "object",
       "additionalProperties": false,
@@ -140,10 +187,15 @@
         }
       }
     },
-    "crdCheck": {
+    "crds": {
       "type": "object",
       "additionalProperties": false,
-      "properties": { "enabled": { "type": "boolean" } }
+      "properties": {
+        "required": {
+          "description": "Fail rendering unless the laoban CRDs (laoban-crd chart) are installed. Not needed in M0.",
+          "type": "boolean"
+        }
+      }
     },
     "podAnnotations": { "type": "object", "additionalProperties": { "type": "string" } },
     "podLabels": { "type": "object", "additionalProperties": { "type": "string" } },

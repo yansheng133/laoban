@@ -6,7 +6,11 @@
     "node": ">=24"
   },
   "dependencies": {
-    "@rancher/shell": "3.0.13"
+    "@rancher/shell": "3.0.13",
+    "three": "0.160.0"
+  },
+  "devDependencies": {
+    "@types/three": "0.160.0"
   },
   "resolutions": {
     "@types/node": "~25.3.0",
@@ -19,6 +23,8 @@
     "build-pkg": "./node_modules/@rancher/shell/scripts/build-pkg.sh",
     "serve-pkgs": "./node_modules/@rancher/shell/scripts/serve-pkgs",
     "publish-pkgs": "./node_modules/@rancher/shell/scripts/extension/publish",
-    "parse-tag-name": "./node_modules/@rancher/shell/scripts/extension/parse-tag-name"
+    "parse-tag-name": "./node_modules/@rancher/shell/scripts/extension/parse-tag-name",
+    "lint": "./node_modules/@rancher/shell/scripts/lint --ext .js,.ts,.vue pkg",
+    "test": "./node_modules/.bin/jest"
   }
 }

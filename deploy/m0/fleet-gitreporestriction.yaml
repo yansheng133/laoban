@@ -1,0 +1,22 @@
+# Limits what GitRepos in workspace fleet-default may deploy: their
+# targetNamespace must be set and must be laoban-dev, and cluster-scoped
+# resources are rejected.
+#
+# WARNING: a GitRepoRestriction applies to EVERY GitRepo in its namespace
+# (workspace), not only to laoban-apps. Any other GitRepo in fleet-default
+# without targetNamespace: laoban-dev stops deploying. See README.md.
+#
+# Fields are top-level (there is no spec), per Fleet v0.16.2:
+#   https://fleet.rancher.io/explanations/namespaces
+#   https://github.com/rancher/fleet/blob/v0.16.2/pkg/apis/fleet.cattle.io/v1alpha1/gitreporestriction_types.go
+# Fleet documents GitRepoRestriction as deprecated in favour of the Policy
+# resource (policies.fleet.cattle.io, also present in v0.16.2).
+apiVersion: fleet.cattle.io/v1alpha1
+kind: GitRepoRestriction
+metadata:
+  name: laoban-apps
+  namespace: fleet-default
+  labels:
+    app.kubernetes.io/part-of: laoban
+allowedTargetNamespaces:
+  - laoban-dev

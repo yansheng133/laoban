@@ -1,0 +1,40 @@
+# Fleet GitRepo that deploys the generated apps (apps/<appName>/ in the
+# laoban-apps repository) to namespace laoban-dev on the downstream cluster rke2.
+# Apply once to the Rancher local cluster (Fleet manager):
+#
+#   kubectl --context local apply -f deploy/m0/fleet-gitreporestriction.yaml
+#   kubectl --context local apply -f deploy/m0/fleet-gitrepo.yaml
+#
+# Fields checked against Fleet v0.16.2 (the Fleet version Rancher v2.15.2
+# ships, rancher/rancher build.yaml fleetVersion 110.0.2+up0.16.2):
+#   https://fleet.rancher.io/reference/ref-gitrepo
+#   https://fleet.rancher.io/how-tos-for-users/gitrepo-targets
+#   https://github.com/rancher/fleet/blob/v0.16.2/pkg/apis/fleet.cattle.io/v1alpha1/gitrepo_types.go
+apiVersion: fleet.cattle.io/v1alpha1
+kind: GitRepo
+metadata:
+  name: laoban-apps
+  # Rancher puts every downstream cluster it registers into workspace fleet-default.
+  namespace: fleet-default
+  labels:
+    app.kubernetes.io/part-of: laoban
+spec:
+  # Replace <owner>. For a private repository also set clientSecretName to a
+  # kubernetes.io/basic-auth Secret in fleet-default (username + a read-only
+  # fine-grained token as password); see README.md.
+  repo: https://github.com/<owner>/laoban-apps
+  branch: main
+  # Every directory under apps/ that has a fleet.yaml becomes its own bundle
+  # (laoban-apps-apps-<appName>).
+  paths:
+    - apps
+  # Required by the GitRepoRestriction (allowedTargetNamespaces): all
+  # resources go to this namespace and cluster-scoped resources are rejected.
+  targetNamespace: laoban-dev
+  # clientSecretName: laoban-apps-git
+  targets:
+    - name: rke2
+      # Name of the clusters.fleet.cattle.io object in fleet-default, not the
+      # Rancher cluster ID (c-m-26kbxk5f). Check with:
+      #   kubectl --context local -n fleet-default get clusters.fleet.cattle.io
+      clusterName: rke2

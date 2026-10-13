@@ -1,11 +1,11 @@
 apiVersion: v2
 name: laoban
-description: laoban backend service for the laoban Rancher UI extension (runs in the Rancher local cluster).
+description: laoban backend service for the laoban Rancher UI extension (M0 runs in a downstream cluster).
 type: application
 # Chart version and app version. Not released yet.
 version: 0.1.0
 appVersion: "0.1.0"
-# Rancher Prime 2.15.2 supports Kubernetes v1.34 to v1.36 for the local cluster:
+# Rancher Prime 2.15.2 supports Kubernetes v1.34 to v1.36:
 # https://www.suse.com/suse-rancher/support-matrix/all-supported-versions/rancher-v2-15-2/
 kubeVersion: ">= 1.34.0-0"
 home: https://github.com/yansheng133/laoban
@@ -19,8 +19,9 @@ annotations:
   # Rancher Apps & Marketplace annotations:
   # https://ranchermanager.docs.rancher.com/how-to-guides/new-user-guides/helm-charts-in-rancher/create-apps
   catalog.cattle.io/display-name: laoban
-  # Install the CRD chart first (separate chart, see charts/laoban-crd).
-  catalog.cattle.io/auto-install: laoban-crd=match
+  # No catalog.cattle.io/auto-install of laoban-crd: M0 does not use the CRDs
+  # (crds.required=false). Add "catalog.cattle.io/auto-install: laoban-crd=match"
+  # back when the CRDs become required (phase 1).
   # The UI extension reaches the backend through a fixed Service address, so the
   # namespace and release name are fixed when installed from the Rancher UI.
   catalog.cattle.io/namespace: laoban-system

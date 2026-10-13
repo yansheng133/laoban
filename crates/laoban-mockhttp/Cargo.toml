@@ -1,0 +1,11 @@
+[package]
+name = "laoban-mockhttp"
+description = "Test-only HTTP/1.1 mock server on a local std TcpListener (no network access)"
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]

@@ -1,7 +1,8 @@
 //! AI orchestration for laoban.
 //!
 //! * [`provider`]: provider-neutral [`Provider`] trait and a scripted
-//!   [`MockProvider`]. No HTTP client yet.
+//!   [`MockProvider`].
+//! * `anthropic` (feature `http`): blocking Anthropic Messages API client.
 //! * [`error`]: [`ProviderError`] and the HTTP error [`classify`]er.
 //! * [`retry`]: retry policy with a pure [`backoff_delay`] and an injected
 //!   [`Sleeper`].
@@ -12,6 +13,8 @@
 //! * [`audit`]: [`AiAuditSink`] hook.
 //! * [`orchestrator`]: ties it together; owns the masker.
 
+#[cfg(feature = "http")]
+pub mod anthropic;
 pub mod audit;
 pub mod budget;
 pub mod error;
@@ -29,7 +32,8 @@ pub use budget::{
 pub use error::{classify, ApiErrorInfo, ProviderError, SpendLimitKind};
 pub use model::{resolve_model, ModelError, ModelSelection};
 pub use orchestrator::{
-    AiError, ContextItem, Dependencies, Orchestrator, OrchestratorConfig, PlanOutcome, PlanRequest,
+    AiError, Completion, CompletionRequest, ContextItem, Dependencies, Orchestrator,
+    OrchestratorConfig, PlanOutcome, PlanRequest, UntrustedBlock,
 };
 pub use plan::{
     parse_plan, validate_plan, FileAction, FileChange, Plan, PlanError, PlanPolicy, ResourceAction,

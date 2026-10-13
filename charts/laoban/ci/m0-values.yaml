@@ -1,0 +1,27 @@
+# The M0 install (docs/m0-design.md): backend in the downstream cluster rke2
+# (Rancher cluster ID c-m-26kbxk5f), namespace laoban-system, release laoban:
+#
+#   helm install laoban charts/laoban -n laoban-system -f charts/laoban/ci/m0-values.yaml \
+#     --set image.digest=sha256:<manifest list digest from the image workflow>
+#
+# CI renders it with a dummy digest (sha256 of the empty string). Everything
+# not set here keeps the chart default: no impersonation RBAC, no ServiceAccount
+# token, CRDs not required, audit spool on emptyDir, syslog off.
+image:
+  repository: ghcr.io/yansheng133/laoban-server
+  digest: sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+anthropic:
+  # kubectl -n laoban-system create secret generic laoban-anthropic --from-file=api-key=<file>
+  existingSecret: laoban-anthropic
+  secretKey: api-key
+github:
+  repo: yansheng133/laoban-apps
+  # kubectl -n laoban-system create secret generic laoban-github --from-file=token=<file>
+  existingSecret: laoban-github
+  secretKey: token
+config:
+  # Anthropic model ID; change here, not in the backend.
+  model: claude-sonnet-5-5
+  tokenCap: 2000000
+  targetNamespace: laoban-dev
+  clusterId: c-m-26kbxk5f

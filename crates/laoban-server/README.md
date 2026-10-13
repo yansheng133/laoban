@@ -1,0 +1,48 @@
+# laoban-server
+
+laoban 後端的 HTTP 伺服器。只用標準函式庫：每個連線一個執行緒、同時最多 64 個連線、每個回應都 `Connection: close`。收到 SIGTERM／SIGINT 時停止接受新連線，最多等 25 秒讓進行中的請求結束（低於 Kubernetes 預設的 30 秒寬限期）。
+
+## 路由
+
+| 方法與路徑 | 說明 |
+|---|---|
+| `GET /healthz` | `200 ok`，給 liveness／readiness probe |
+| `GET /version` | 名稱、版本、git SHA |
+| `POST /api/plan` | 試吃版計畫，見 `laoban-m0` 與 `docs/m0-design.md` |
+| `POST /api/apply` | 產生程式並 commit 到 GitHub |
+| `GET /api/config` | 模型、目標 namespace、repo、token 用量（不含任何秘密） |
+
+`/api/*` 的規則：
+
+- `POST` 必須帶 `Content-Type: application/json`（也順便擋掉不能自訂標頭的跨站表單送出），主體以 `Content-Length` 為準，上限 64 KiB；不支援 chunked。
+- 錯誤一律是 `{"error": {"code": "…", "message": "…"}}`，`message` 是繁體中文。代碼與狀態碼見 `crates/laoban-m0/README.md`。規格之外的三種情況沿用 `bad_request` 代碼、改用較精確的狀態碼：主體過大 413、方法不對 405（附 `Allow`）、沒有這個 API 404。
+- 必要的環境變數沒設定或格式不對時，伺服器照常啟動，`/healthz`、`/version` 正常；`/api/*` 回 `500 internal`，訊息寫出缺少的變數名稱（不寫值）。啟動 log 也會寫一行 `/api disabled: …`。
+
+## 逾時
+
+- 讀取請求（標頭與主體）時，每次 socket 讀取最多等 5 秒；探測端點的回應寫入也是 5 秒。
+- 這些是**每次 socket 操作**的逾時，不是整個請求的期限。`/api/plan`、`/api/apply` 等 AI 與 GitHub 的時候 socket 沒有讀寫，不會觸發；這段時間由各用戶端自己的逾時限制（Anthropic 整個呼叫 300 秒、GitHub 每次呼叫 30 秒）。`/api/*` 的回應寫入逾時是 30 秒。
+- 前面的 Rancher 代理與瀏覽器若有更短的逾時，要在那一層調整。
+
+## Log
+
+每個請求一行寫到 stderr：
+
+```
+laoban-server: POST /api/plan 200 18342ms planId=p-20261013-1a2b3c
+laoban-server: POST /api/apply 409 3ms planId=p-20261013-1a2b3c error=already_applied
+```
+
+只有方法、路徑（不含查詢字串，控制字元換成 `?`）、狀態碼、耗時、計畫 ID（apply 時只記符合格式的 ID）與錯誤代碼。**不記錄**請求主體、需求、產生的程式、token 或金鑰。
+
+## 環境變數
+
+`LAOBAN_LISTEN_ADDR`（預設 `0.0.0.0:8080`），其餘見 `crates/laoban-m0/README.md` 的「設定」。`laoban-server --help` 會列出全部。
+
+## 測試
+
+```bash
+cargo test -p laoban-server
+```
+
+`tests/api.rs` 以模擬 provider 與模擬 GitHub 走真正的 socket：plan → apply → 重複 apply、錯誤格式、請求檢查、花費上限與預算、AI 呼叫超過 socket 逾時仍成功、未設定時的行為，以及實際執行檔的 log 不含金鑰與查詢字串。

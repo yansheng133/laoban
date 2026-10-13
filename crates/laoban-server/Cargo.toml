@@ -1,6 +1,6 @@
 [package]
 name = "laoban-server"
-description = "laoban backend: minimal HTTP server exposing health and version endpoints"
+description = "laoban backend: std-only HTTP server for health, version and the M0 plan/apply API"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,9 +8,12 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+laoban-ai = { path = "../laoban-ai", features = ["http"] }
+laoban-m0 = { path = "../laoban-m0" }
 serde_json.workspace = true
 signal-hook = { version = "0.4", default-features = false, features = ["iterator"] }
 
 [dev-dependencies]
 # Already in the dependency tree via signal-hook; used to send SIGTERM in tests.
 libc = "0.2"
+laoban-mockhttp = { path = "../laoban-mockhttp" }

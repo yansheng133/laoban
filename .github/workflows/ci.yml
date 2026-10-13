@@ -50,9 +50,13 @@ jobs:
   chart:
     runs-on: ubuntu-24.04
     env:
-      # Rancher Prime 2.15.2 supports Kubernetes v1.34 to v1.36 for the local cluster;
+      # Rancher Prime 2.15.2 supports Kubernetes v1.34 to v1.36;
       # validate against the lowest supported minor.
       KUBE_VERSION: 1.34.0
+      # Fleet version shipped with Rancher v2.15.2 (rancher/rancher build.yaml
+      # fleetVersion 110.0.2+up0.16.2); checksum of its fleet-crd crds.yaml.
+      FLEET_VERSION: v0.16.2
+      FLEET_CRDS_SHA256: 537a2f9e675a530715f2c4814e8f0b5069b5cfb931ba2defed8f4458e32e54dd
       KUBECONFORM_VERSION: v0.8.0
       KUBECONFORM_SHA256: 9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883
       K3S_VERSION: v1.34.12+k3s1
@@ -72,11 +76,14 @@ jobs:
           helm version
           kubeconform -v
       - name: helm lint
-        # crdCheck looks up the laoban API in the cluster's capabilities, which
-        # lint cannot fake; the template step below covers it with --api-versions.
+        # ci-values.yaml requires the CRDs, which lint cannot fake in the
+        # cluster's capabilities; the template step below covers it with
+        # --api-versions. m0-values.yaml is the M0 install (no CRDs needed).
         run: |
           helm lint charts/laoban -f charts/laoban/ci/ci-values.yaml \
-            --kube-version "${KUBE_VERSION}" --set crdCheck.enabled=false
+            --kube-version "${KUBE_VERSION}" --set crds.required=false
+          helm lint charts/laoban -f charts/laoban/ci/m0-values.yaml \
+            --kube-version "${KUBE_VERSION}"
           helm lint charts/laoban-crd --kube-version "${KUBE_VERSION}"
       - name: helm template
         run: |
@@ -84,6 +91,9 @@ jobs:
           helm template laoban charts/laoban -n laoban-system \
             -f charts/laoban/ci/ci-values.yaml \
             --kube-version "${KUBE_VERSION}" --api-versions "${LAOBAN_API}" > rendered/laoban.yaml
+          helm template laoban charts/laoban -n laoban-system \
+            -f charts/laoban/ci/m0-values.yaml \
+            --kube-version "${KUBE_VERSION}" > rendered/laoban-m0.yaml
           helm template laoban-crd charts/laoban-crd -n laoban-system \
             --kube-version "${KUBE_VERSION}" > rendered/laoban-crd.yaml
       - name: Rendering fails without required values
@@ -95,14 +105,45 @@ jobs:
             fi
             grep -qF "$want" <<< "$out" || { echo "expected '$want', got:"; echo "$out"; exit 1; }
           }
-          check "image.digest is required" -f charts/laoban/ci/ci-values.yaml --api-versions "${LAOBAN_API}" --set image.digest=
-          check "anthropic.existingSecret is required" -f charts/laoban/ci/ci-values.yaml --api-versions "${LAOBAN_API}" --set anthropic.existingSecret=
+          ci=(-f charts/laoban/ci/ci-values.yaml --api-versions "${LAOBAN_API}")
+          m0=(-f charts/laoban/ci/m0-values.yaml)
+          check "image.digest is required" "${ci[@]}" --set image.digest=
+          check "image.digest is required" "${m0[@]}" --set image.digest=
+          check "anthropic.existingSecret is required" "${m0[@]}" --set anthropic.existingSecret=
+          check "github.existingSecret is required" "${m0[@]}" --set github.existingSecret=
+          check "github.repo is required" "${m0[@]}" --set github.repo=
+          check "config.model is required" "${m0[@]}" --set config.model=
+          # CRDs: required by ci-values.yaml, and by M0 only when switched on.
           check "install the laoban-crd chart first" -f charts/laoban/ci/ci-values.yaml
-          check "persistence.storageClass is required" -f charts/laoban/ci/ci-values.yaml --api-versions "${LAOBAN_API}" --set persistence.storageClass=
-      - name: kubeconform (backend chart)
+          check "install the laoban-crd chart first" "${m0[@]}" --set crds.required=true
+          check "persistence.storageClass is required" "${ci[@]}" --set persistence.storageClass=
+          check "persistence.storageClass is required" "${m0[@]}" --set persistence.enabled=true --set persistence.storageClass=
+      - name: M0 render has no RBAC, no PVC and no ServiceAccount token
+        run: |
+          kinds() { grep -E '^kind: ' "$1" | sort | uniq -c; }
+          echo "M0:"; kinds rendered/laoban-m0.yaml
+          echo "ci:"; kinds rendered/laoban.yaml
+          if grep -qE '^kind: (ClusterRole|ClusterRoleBinding|Role|RoleBinding|PersistentVolumeClaim)$' rendered/laoban-m0.yaml; then
+            echo "M0 render must not contain RBAC objects or a PVC"; exit 1
+          fi
+          [ "$(grep -c 'automountServiceAccountToken: false' rendered/laoban-m0.yaml)" -eq 2 ] \
+            || { echo "M0: expected automountServiceAccountToken: false on the ServiceAccount and the pod"; exit 1; }
+          for v in ANTHROPIC_API_KEY LAOBAN_MODEL LAOBAN_TOKEN_CAP LAOBAN_GITHUB_REPO LAOBAN_GITHUB_TOKEN LAOBAN_TARGET_NAMESPACE LAOBAN_CLUSTER_ID; do
+            grep -q "name: ${v}$" rendered/laoban-m0.yaml || { echo "M0: env ${v} missing"; exit 1; }
+          done
+          grep -A1 'name: LAOBAN_TOKEN_CAP$' rendered/laoban-m0.yaml | grep -q 'value: "2000000"' \
+            || { echo "M0: LAOBAN_TOKEN_CAP must render as \"2000000\""; exit 1; }
+          # The full-featured render must still contain what M0 leaves out.
+          for k in ClusterRole ClusterRoleBinding PersistentVolumeClaim; do
+            grep -q "^kind: ${k}$" rendered/laoban.yaml || { echo "ci render: ${k} missing"; exit 1; }
+          done
+      - name: kubeconform (backend chart, deploy/m0)
         # The upstream schema set has no schema for CustomResourceDefinition
-        # itself, so the CRD chart is checked against a real API server below.
-        run: kubeconform -strict -summary -kubernetes-version "${KUBE_VERSION}" rendered/laoban.yaml
+        # itself or for Fleet's kinds, so the CRD chart and the Fleet objects
+        # are checked against a real API server below.
+        run: |
+          kubeconform -strict -summary -kubernetes-version "${KUBE_VERSION}" rendered/laoban.yaml rendered/laoban-m0.yaml
+          kubeconform -strict -summary -kubernetes-version "${KUBE_VERSION}" -skip GitRepo,GitRepoRestriction deploy/m0
       - name: Start k3s API server
         run: |
           curl -fsSL -o /tmp/k3s "https://github.com/k3s-io/k3s/releases/download/${K3S_VERSION/+/%2B}/k3s"
@@ -122,8 +163,20 @@ jobs:
           KUBECTL: k3s kubectl
           KUBECONFIG: /etc/rancher/k3s/k3s.yaml
       - name: Backend manifests server-side dry run
-        run: k3s kubectl apply --dry-run=server -f rendered/laoban.yaml
+        run: |
+          k3s kubectl apply --dry-run=server -f rendered/laoban.yaml
+          k3s kubectl apply --dry-run=server -f rendered/laoban-m0.yaml
         env:
+          KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      - name: deploy/m0 against a real API server
+        # Fleet CRDs of the Fleet version Rancher v2.15.2 ships (v0.16.2).
+        run: |
+          curl -fsSL -o /tmp/fleet-crds.yaml \
+            "https://raw.githubusercontent.com/rancher/fleet/${FLEET_VERSION}/charts/fleet-crd/templates/crds.yaml"
+          echo "${FLEET_CRDS_SHA256}  /tmp/fleet-crds.yaml" | sha256sum -c -
+          deploy/m0/ci/test-m0.sh /tmp/fleet-crds.yaml
+        env:
+          KUBECTL: k3s kubectl
           KUBECONFIG: /etc/rancher/k3s/k3s.yaml
 
   extension:
@@ -143,3 +196,4 @@ jobs:
       - run: npm install -g yarn@1.22.22
       - run: yarn install --frozen-lockfile
       - run: yarn build-pkg laoban-ext
+      - run: yarn test

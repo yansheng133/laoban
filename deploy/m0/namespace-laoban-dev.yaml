@@ -1,0 +1,21 @@
+# Target namespace of the apps laoban generates (docs/m0-design.md, "Fleet").
+# Apply once to the downstream cluster rke2, before the GitRepo:
+#
+#   kubectl --context rke2 apply -f deploy/m0/namespace-laoban-dev.yaml
+#
+# Pod Security Admission "restricted" is enforced: pods that do not run as
+# non-root with seccomp RuntimeDefault, all capabilities dropped and no
+# privilege escalation are rejected. audit/warn report the same level so
+# `kubectl apply` of a Deployment prints a warning instead of failing silently
+# at the ReplicaSet. No *-version label: the policy follows the cluster's
+# Kubernetes version ("latest").
+# https://kubernetes.io/docs/concepts/security/pod-security-admission/
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: laoban-dev
+  labels:
+    app.kubernetes.io/part-of: laoban
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted

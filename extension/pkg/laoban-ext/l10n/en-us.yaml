@@ -6,17 +6,54 @@ laoban:
     dashboard: Overview
   dashboard:
     title: laoban
-    description: Describe what you need in natural language. laoban proposes a plan and an architecture view first, writes code only after you confirm, and runs automated checks and human review before deploying. This is a development preview and is not connected to any backend service yet.
-    cards:
-      requests:
-        title: Requests
-        emptyTitle: No requests yet
-        emptyDescription: Describe what you want in natural language here. laoban will reply with a plan for you to confirm.
-      architecture:
-        title: Architecture view
-        emptyTitle: No architecture view yet
-        emptyDescription: Once a plan is confirmed, the before and after architecture will be shown here.
-      review:
-        title: Change review
-        emptyTitle: No changes waiting for review
-        emptyDescription: Changes that need human review will be listed here and deployed only after approval.
+    description: Describe what you need in one sentence. laoban proposes a plan and an architecture view first; only after you confirm does it generate code, commit it to GitHub and let Fleet deploy it. This is the M0 preview.
+    config:
+      model: Model
+      targetNamespace: Target
+      repo: Repository
+      tokenBudget: Token usage
+      tokenUsage: "{used} / {cap}"
+      unavailable: Could not read the laoban backend settings.
+    chat:
+      title: Request
+      promptLabel: What do you want to build
+      promptPlaceholder: "For example: a breakfast shop ordering page where people pick items and submit an order"
+      appNameLabel: App name (optional)
+      appNamePlaceholder: breakfast
+      appNameHint: Starts with a lowercase letter; lowercase letters, digits and hyphens only; 2 to 31 characters. Leave empty to let the AI choose.
+      generate: Generate plan
+    plan:
+      title: "Plan: {appName}"
+      steps: Steps
+      masked: "{count} possibly sensitive items were masked before sending to the AI."
+      usage: "This used {input} input tokens and {output} output tokens."
+      apply: Confirm and deploy
+    result:
+      committed: "Committed to GitHub:"
+      openApp: Open app
+      badAppUrl: The app URL returned by the backend is not valid, so no link is shown.
+    arch:
+      title: Architecture view
+      empty: The 3D architecture of the app appears here after a plan is generated.
+      hint: Drag to rotate, scroll or pinch to zoom.
+      noWebgl: WebGL is not available in this browser, so the 3D view cannot be shown. See the component list below.
+      ariaLabel: "3D architecture view with {count} components"
+      listTitle: "Components ({count})"
+      layers:
+        network: Network
+        code: Code
+        data: Data
+    status:
+      idle: Enter a request and select Generate plan.
+      planning: "The AI is generating a plan. This usually takes 30 to 60 seconds ({seconds} s so far)…"
+      planned: Plan ready. Review it, then select Confirm and deploy.
+      applying: "The AI is generating code and committing it to GitHub. This usually takes 30 to 60 seconds ({seconds} s so far)…"
+      waitingBundle: "Committed. Waiting for Fleet to pick up the change ({seconds} s so far)…"
+      deploying: "Fleet is deploying: {ready} / {desired} ready…"
+      bundleError: "Fleet reports a deployment error ({ready} / {desired} ready). Still checking…"
+      ready: Deployed. You can open the app.
+      timeout: "Not ready after {minutes} minutes, stopped checking. Check the bundle status in the {workspace} workspace under Continuous Delivery."
+      pollFailed: Could not read the Fleet status this time. Retrying in 5 seconds.
+    errors:
+      generic: Could not reach the laoban backend. Please try again later.
+      timeout: The laoban backend did not respond in time. Please try again later.

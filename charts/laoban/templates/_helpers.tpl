@@ -67,13 +67,14 @@ Image reference, always by digest. The tag is informational and never used.
 {{- end }}
 
 {{/*
-CRD presence check. The CRDs ship in the separate laoban-crd chart.
+CRD presence check. The CRDs ship in the separate laoban-crd chart and are
+not used in M0, so the check only runs when crds.required is true.
 */}}
 {{- define "laoban.crdCheck" -}}
-{{- if .Values.crdCheck.enabled }}
+{{- if .Values.crds.required }}
 {{- $gv := "laoban.yansheng133.github.io/v1alpha1" }}
 {{- if not (.Capabilities.APIVersions.Has $gv) }}
-{{- fail (printf "API %s not found: install the laoban-crd chart first (or set crdCheck.enabled=false / pass --api-versions %s when rendering offline)" $gv $gv) }}
+{{- fail (printf "API %s not found: install the laoban-crd chart first (or set crds.required=false / pass --api-versions %s when rendering offline)" $gv $gv) }}
 {{- end }}
 {{- end }}
 {{- end }}

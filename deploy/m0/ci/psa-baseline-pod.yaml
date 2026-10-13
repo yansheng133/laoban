@@ -1,0 +1,14 @@
+# CI fixture: a pod without the restricted settings (no seccomp profile,
+# capabilities not dropped, privilege escalation allowed). Must be REJECTED in
+# namespace laoban-dev; proves the PodSecurity labels are actually enforced.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: psa-restricted-violation
+  namespace: laoban-dev
+spec:
+  automountServiceAccountToken: false
+  containers:
+    - name: web
+      image: registry.suse.com/bci/python:3.13
+      command: ["python3", "/app/server.py"]

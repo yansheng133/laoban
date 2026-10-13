@@ -1,0 +1,359 @@
+//! `/api/*` over real sockets, with a mock provider and a mock GitHub.
+//! All data is synthetic; no network beyond loopback.
+
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{SocketAddr, TcpStream};
+use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
+
+use laoban_ai::{
+    MockProvider, Provider, ProviderError, ProviderRequest, ProviderResponse, SpendLimitKind,
+    StopReason,
+};
+use laoban_m0::{GithubCommitter, GithubConfig, GithubToken, M0Service, M0Settings};
+use laoban_mockhttp::{MockServer, Recorded, Reply};
+use laoban_server::{ApiState, Server, ShutdownHandle, IO_TIMEOUT};
+use serde_json::{json, Value};
+
+const COMMIT: &str = "4444444444444444444444444444444444444444";
+
+fn github_mock() -> MockServer {
+    let n = Arc::new(AtomicUsize::new(0));
+    MockServer::start(move |r: &Recorded| {
+        let i = n.fetch_add(1, Ordering::SeqCst);
+        let sha = if r.path.ends_with("/git/commits") {
+            COMMIT.to_string()
+        } else {
+            format!("{:040x}", i + 1)
+        };
+        let body = match (r.method.as_str(), r.path.as_str()) {
+            ("GET", p) if p.ends_with("/git/ref/heads/main") => json!({"object": {"sha": sha}}),
+            ("GET", _) => json!({"tree": {"sha": sha}}),
+            _ => json!({"sha": sha}),
+        };
+        Reply::json(200, body.to_string())
+    })
+}
+
+fn settings(cap: u64) -> M0Settings {
+    M0Settings {
+        model: "model-a-test".into(),
+        token_cap: cap,
+        repo_owner: "example-owner".into(),
+        repo_name: "laoban-apps".into(),
+        target_namespace: "laoban-dev".into(),
+        cluster_id: "c-m-test0001".into(),
+    }
+}
+
+fn ok(content: &str) -> Result<ProviderResponse, ProviderError> {
+    Ok(ProviderResponse {
+        content: content.into(),
+        input_tokens: 10,
+        output_tokens: 20,
+        stop_reason: StopReason::EndTurn,
+    })
+}
+
+fn plan_json() -> String {
+    json!({
+        "appName": "breakfast", "summary": "早餐店點餐", "steps": ["建立頁面"],
+        "components": {"web": {"modules": []}, "api": {"modules": [], "endpoints": [{"method": "GET", "path": "/menu", "purpose": "菜單"}]}},
+        "notes": ""
+    })
+    .to_string()
+}
+
+fn files_json() -> String {
+    json!({
+        "web": {"index.html": "<p>hi</p>\n", "app.js": "fetch(\"api/menu\");\n", "style.css": "p{}\n"},
+        "api": {"handler.py": "def handle(m, p, b):\n    return 200, {}\n"}
+    })
+    .to_string()
+}
+
+struct Running {
+    addr: SocketAddr,
+    handle: ShutdownHandle,
+    thread: Option<thread::JoinHandle<std::io::Result<()>>>,
+    _github: Option<MockServer>,
+}
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        self.handle.shutdown();
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+    }
+}
+
+fn start(provider: Box<dyn Provider>, cap: u64) -> Running {
+    let github = github_mock();
+    let mut cfg = GithubConfig::new("example-owner", "laoban-apps");
+    cfg.api_base = github.url();
+    let committer = GithubCommitter::new(cfg, GithubToken::new("github_pat_test_0001").unwrap());
+    let service = M0Service::new(settings(cap), provider, committer).unwrap();
+    start_with(ApiState::Ready(Arc::new(service)), Some(github))
+}
+
+fn start_with(api: ApiState, github: Option<MockServer>) -> Running {
+    let server = Server::bind_with_api("127.0.0.1:0", api).unwrap();
+    let addr = server.local_addr();
+    let handle = server.shutdown_handle();
+    let thread = Some(thread::spawn(move || server.run()));
+    Running {
+        addr,
+        handle,
+        thread,
+        _github: github,
+    }
+}
+
+fn raw(addr: SocketAddr, req: &[u8]) -> (u16, String, String) {
+    let mut s = TcpStream::connect_timeout(&addr, Duration::from_secs(5)).unwrap();
+    s.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
+    s.write_all(req).unwrap();
+    let mut out = String::new();
+    s.read_to_string(&mut out).unwrap();
+    let (head, body) = out.split_once("\r\n\r\n").expect("response head");
+    let status = head.split(' ').nth(1).unwrap().parse().unwrap();
+    (status, head.to_string(), body.to_string())
+}
+
+fn post(addr: SocketAddr, path: &str, body: &str) -> (u16, Value) {
+    let req = format!(
+        "POST {path} HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    );
+    let (status, head, body) = raw(addr, req.as_bytes());
+    assert!(head.contains("Content-Type: application/json"), "{head}");
+    (status, serde_json::from_str(&body).unwrap())
+}
+
+fn get(addr: SocketAddr, path: &str) -> (u16, String) {
+    let (status, _, body) = raw(
+        addr,
+        format!("GET {path} HTTP/1.1\r\nHost: x\r\n\r\n").as_bytes(),
+    );
+    (status, body)
+}
+
+fn assert_error(v: &Value, code: &str) {
+    assert_eq!(v["error"]["code"], code, "{v}");
+    let msg = v["error"]["message"].as_str().unwrap();
+    assert!(!msg.is_empty());
+    // Traditional Chinese message: at least one CJK character.
+    assert!(
+        msg.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)),
+        "{msg}"
+    );
+    assert_eq!(v.as_object().unwrap().len(), 1);
+}
+
+#[test]
+fn plan_apply_and_errors_over_http() {
+    let provider = MockProvider::new()
+        .then(ok(&plan_json()))
+        .then(ok(&files_json()));
+    let r = start(Box::new(provider), 1_000_000);
+
+    let (status, body) = get(r.addr, "/api/config");
+    assert_eq!(status, 200);
+    let cfg: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(cfg["repo"], "example-owner/laoban-apps");
+    assert_eq!(cfg["tokenBudget"]["used"], 0);
+
+    let (status, plan) = post(r.addr, "/api/plan", r#"{"prompt":"做一個早餐店點餐頁面"}"#);
+    assert_eq!(status, 200, "{plan}");
+    let id = plan["planId"].as_str().unwrap().to_string();
+    assert_eq!(plan["appName"], "breakfast");
+
+    let apply_body = json!({ "planId": id }).to_string();
+    let (status, applied) = post(r.addr, "/api/apply", &apply_body);
+    assert_eq!(status, 200, "{applied}");
+    assert_eq!(applied["commit"], COMMIT);
+    assert_eq!(
+        applied["appUrl"],
+        "/k8s/clusters/c-m-test0001/api/v1/namespaces/laoban-dev/services/http:breakfast-web:8080/proxy/"
+    );
+
+    let (status, err) = post(r.addr, "/api/apply", &apply_body);
+    assert_eq!(status, 409);
+    assert_error(&err, "already_applied");
+
+    let (status, err) = post(r.addr, "/api/apply", r#"{"planId":"p-20260101-000000"}"#);
+    assert_eq!(status, 404);
+    assert_error(&err, "plan_not_found");
+
+    // Token usage is visible after the calls.
+    let cfg: Value = serde_json::from_str(&get(r.addr, "/api/config").1).unwrap();
+    assert_eq!(cfg["tokenBudget"]["used"], 60);
+
+    // Probes still behave as before.
+    assert_eq!(get(r.addr, "/healthz"), (200, "ok".to_string()));
+}
+
+#[test]
+fn request_validation() {
+    let r = start(Box::new(MockProvider::new()), 1_000_000);
+    for body in [
+        "not json",
+        r#"{"prompt": 1}"#,
+        r#"{"prompt":"x","extra":1}"#,
+        "",
+    ] {
+        let (status, err) = post(r.addr, "/api/plan", body);
+        assert_eq!(status, 400, "{body}");
+        assert_error(&err, "bad_request");
+    }
+    // Missing JSON content type.
+    let (status, _, body) = raw(
+        r.addr,
+        b"POST /api/plan HTTP/1.1\r\nContent-Type: text/plain\r\nContent-Length: 14\r\n\r\n{\"prompt\":\"x\"}",
+    );
+    assert_eq!(status, 400);
+    assert_error(&serde_json::from_str(&body).unwrap(), "bad_request");
+    // Too large.
+    let big = format!(r#"{{"prompt":"{}"}}"#, "a".repeat(70 * 1024));
+    let (status, err) = post(r.addr, "/api/plan", &big);
+    assert_eq!(status, 413);
+    assert_error(&err, "bad_request");
+    // Chunked bodies are refused.
+    let (status, _, _) = raw(
+        r.addr,
+        b"POST /api/plan HTTP/1.1\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
+    );
+    assert_eq!(status, 400);
+    // Wrong method and unknown path.
+    let (status, head, _) = raw(r.addr, b"GET /api/plan HTTP/1.1\r\n\r\n");
+    assert_eq!(status, 405);
+    assert!(head.contains("Allow: POST"));
+    assert_eq!(get(r.addr, "/api/nope").0, 404);
+}
+
+#[test]
+fn ai_errors_map_to_spec_codes() {
+    // Spend limit: 402, provider called exactly once.
+    let provider = Arc::new(
+        MockProvider::new().then(Err(ProviderError::SpendLimitReached {
+            kind: SpendLimitKind::TierCap,
+            message: "You have reached your API usage limits".into(),
+        })),
+    );
+    let r = start(Box::new(Arc::clone(&provider)), 1_000_000);
+    let (status, err) = post(r.addr, "/api/plan", r#"{"prompt":"x"}"#);
+    assert_eq!(status, 402);
+    assert_error(&err, "spend_limit");
+    assert_eq!(provider.call_count(), 1);
+    drop(r);
+
+    // Budget: 429, provider never called.
+    let provider = Arc::new(MockProvider::new().then(ok(&plan_json())));
+    let r = start(Box::new(Arc::clone(&provider)), 50);
+    let (status, err) = post(r.addr, "/api/plan", r#"{"prompt":"x"}"#);
+    assert_eq!(status, 429);
+    assert_error(&err, "budget_exceeded");
+    assert_eq!(provider.call_count(), 0);
+    drop(r);
+
+    // Invalid output: 502.
+    let r = start(
+        Box::new(MockProvider::new().then(ok("no json here"))),
+        1_000_000,
+    );
+    let (status, err) = post(r.addr, "/api/plan", r#"{"prompt":"x"}"#);
+    assert_eq!(status, 502);
+    assert_error(&err, "ai_invalid_output");
+}
+
+/// Provider that takes longer than the socket I/O timeout.
+struct SlowProvider(MockProvider, Duration);
+
+impl Provider for SlowProvider {
+    fn send(&self, req: &ProviderRequest) -> Result<ProviderResponse, ProviderError> {
+        thread::sleep(self.1);
+        self.0.send(req)
+    }
+}
+
+#[test]
+fn slow_ai_calls_are_not_cut_by_socket_timeouts() {
+    let slow = SlowProvider(
+        MockProvider::new().then(ok(&plan_json())),
+        IO_TIMEOUT + Duration::from_secs(1),
+    );
+    let r = start(Box::new(slow), 1_000_000);
+    let (status, plan) = post(r.addr, "/api/plan", r#"{"prompt":"x"}"#);
+    assert_eq!(status, 200, "{plan}");
+}
+
+#[test]
+fn unconfigured_api_still_serves_probes() {
+    let r = start_with(
+        ApiState::Unconfigured("後端設定不完整：缺少環境變數 LAOBAN_MODEL。".into()),
+        None,
+    );
+    assert_eq!(get(r.addr, "/healthz"), (200, "ok".to_string()));
+    let (status, body) = get(r.addr, "/api/config");
+    assert_eq!(status, 500);
+    let v: Value = serde_json::from_str(&body).unwrap();
+    assert_error(&v, "internal");
+    assert!(v["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("LAOBAN_MODEL"));
+    let (status, _) = post(r.addr, "/api/plan", r#"{"prompt":"x"}"#);
+    assert_eq!(status, 500);
+}
+
+#[test]
+fn binary_without_config_names_missing_variables_and_logs_requests() {
+    let secret = "sk-test-should-never-be-logged-0001";
+    let mut child = Command::new(env!("CARGO_BIN_EXE_laoban-server"))
+        .env("LAOBAN_LISTEN_ADDR", "127.0.0.1:0")
+        .env("ANTHROPIC_API_KEY", secret)
+        .env_remove("LAOBAN_MODEL")
+        .env_remove("LAOBAN_GITHUB_REPO")
+        .env_remove("LAOBAN_GITHUB_TOKEN")
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stderr = BufReader::new(child.stderr.take().unwrap());
+    let mut line = String::new();
+    stderr.read_line(&mut line).unwrap();
+    let addr: SocketAddr = line.trim().rsplit(' ').next().unwrap().parse().unwrap();
+
+    let (status, body) = get(addr, "/api/config?x=1");
+    assert_eq!(status, 500);
+    let v: Value = serde_json::from_str(&body).unwrap();
+    let msg = v["error"]["message"].as_str().unwrap();
+    assert!(
+        msg.contains("LAOBAN_MODEL") && msg.contains("LAOBAN_GITHUB_REPO"),
+        "{msg}"
+    );
+    assert!(
+        !msg.contains("ANTHROPIC_API_KEY"),
+        "set variables are not reported: {msg}"
+    );
+    assert_eq!(get(addr, "/healthz").0, 200);
+
+    // SAFETY: plain kill(2) on our own child's pid.
+    unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGTERM) };
+    let mut rest = String::new();
+    stderr.read_to_string(&mut rest).unwrap();
+    child.wait().unwrap();
+    assert!(rest.contains("/api disabled"), "{rest}");
+    assert!(
+        rest.contains("laoban-server: GET /api/config 500 "),
+        "{rest}"
+    );
+    assert!(rest.contains("error=internal"), "{rest}");
+    assert!(rest.contains("laoban-server: GET /healthz 200 "), "{rest}");
+    assert!(!rest.contains(secret) && !line.contains(secret));
+    assert!(!rest.contains("x=1"), "query strings are not logged");
+}
