@@ -220,6 +220,7 @@ impl M0Service {
             "targetNamespace": self.settings.target_namespace,
             "repo": self.settings.repo(),
             "tokenBudget": { "cap": self.budget.cap(), "used": self.budget.used() },
+            "aiTimeoutSeconds": self.settings.ai_timeout_secs,
         })
     }
 

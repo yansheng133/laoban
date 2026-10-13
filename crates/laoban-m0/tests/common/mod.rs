@@ -37,6 +37,7 @@ pub fn settings(token_cap: u64) -> M0Settings {
         repo_name: "laoban-apps".into(),
         target_namespace: "laoban-dev".into(),
         cluster_id: "c-m-test0001".into(),
+        ai_timeout_secs: 300,
     }
 }
 

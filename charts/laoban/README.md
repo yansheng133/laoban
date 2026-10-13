@@ -47,12 +47,28 @@ helm --kube-context rke2 install laoban charts/laoban -n laoban-system \
 |---|---|
 | `image.repository` | 預設 `ghcr.io/yansheng133/laoban-server`；用 Docker Hub 副本時改成 `docker.io/<namespace>/laoban-server` |
 | `image.digest` | 一律用 digest 拉映像檔，格式 `sha256:<64 個小寫十六進位>`；沒填或格式不對 render 失敗。`image.tag` 只當資訊顯示 |
-| `anthropic.existingSecret` | 既有 Secret 名稱，key 預設 `api-key`，注入成 `ANTHROPIC_API_KEY` |
+| `anthropic.existingSecret` | 既有 Secret 名稱，key 預設 `api-key`，注入成 `ANTHROPIC_API_KEY`。設了 `ai.baseUrl` 時可以留空 |
 | `github.existingSecret` | 既有 Secret 名稱，key 預設 `token`，注入成 `LAOBAN_GITHUB_TOKEN` |
 | `github.repo` | `<owner>/<repo>`，例如 `yansheng133/laoban-apps`，注入成 `LAOBAN_GITHUB_REPO` |
-| `config.model` | Anthropic 模型 ID，注入成 `LAOBAN_MODEL`。後端不寫死模型 |
+| `config.model` | 模型 ID，注入成 `LAOBAN_MODEL`：Anthropic 模型 ID，或本機模型在端點上的名稱。後端不寫死模型 |
 
 金鑰與 token 永遠不放在 values，只填既有 Secret 的名稱。
+
+### 改用本機模型（Ollama）
+
+不用 Anthropic API 時，可以把 AI 呼叫改送到相容 Anthropic Messages API 的端點，例如 Ollama（`/v1/messages`，本機版不檢查 API key）。疊加 `ci/m0-local-model-values.yaml`：
+
+```bash
+helm upgrade --install laoban charts/laoban -n laoban-system \
+  -f charts/laoban/ci/m0-values.yaml -f charts/laoban/ci/m0-local-model-values.yaml \
+  --set image.digest=sha256:<...>
+```
+
+- `ai.baseUrl`：只寫 scheme、主機與 port（後端自己加 `/v1/messages`），例如 `http://192.168.128.1:11434`。`http://` 是明文，只用在私有網路。
+- `ai.timeoutSeconds`：單次 AI 呼叫上限，30～1800 秒，預設 300；本機模型比較慢，overlay 設 900。
+- `anthropic.existingSecret` 可以留空，此時不注入 `ANTHROPIC_API_KEY`，後端也不送 `x-api-key`。
+- 遮蔽、token 上限等規則照常套用；token 數由端點回報，Ollama 的數字是近似值。
+- 本機模型照「只回 JSON」指示的穩定度比較差，`ai_invalid_output` 會比較常見。後端會去掉回應前後多出的說明文字再解析，但內容驗證跟原本一樣嚴格。
 
 `replicaCount` 只允許 1：M0 的計畫存在後端記憶體，稽核暫存區開啟時也是 ReadWriteOnce 卷，多副本要先改設計，HA 留到之後。更新策略用 `Recreate`，避免新舊 Pod 同時掛同一個 RWO 卷而卡住。
 
@@ -131,8 +147,10 @@ M0 預設 `persistence.enabled: false`：M0 不外送稽核紀錄（只寫後端
 | 值 | 環境變數 | 說明 |
 |---|---|---|
 | `containerPort` | `LAOBAN_LISTEN_ADDR` | 預設 `0.0.0.0:8080` |
-| `anthropic.existingSecret`／`secretKey` | `ANTHROPIC_API_KEY` | 從 Secret 注入 |
-| `config.model` | `LAOBAN_MODEL` | 必填，Anthropic 模型 ID |
+| `anthropic.existingSecret`／`secretKey` | `ANTHROPIC_API_KEY` | 從 Secret 注入；設了 `ai.baseUrl` 時可省略 |
+| `ai.baseUrl` | `LAOBAN_AI_BASE_URL` | 空白＝Anthropic API；否則為相容端點（例如 Ollama） |
+| `ai.timeoutSeconds` | `LAOBAN_AI_TIMEOUT_SECONDS` | 單次 AI 呼叫上限，預設 300 |
+| `config.model` | `LAOBAN_MODEL` | 必填，模型 ID |
 | `config.tokenCap` | `LAOBAN_TOKEN_CAP` | 每月 token 上限，預設 2000000 |
 | `github.repo` | `LAOBAN_GITHUB_REPO` | 必填，`<owner>/<repo>` |
 | `github.existingSecret`／`secretKey` | `LAOBAN_GITHUB_TOKEN` | 必填，從 Secret 注入 |
@@ -176,7 +194,7 @@ CRD 的 group 應該是自己能控制的網域。`laoban.io` 與 `laoban.dev` �
 CI（`.github/workflows/ci.yml` 的 `chart` job）：
 
 1. `helm lint`：`laoban` 用兩組 values 各跑一次——`ci/ci-values.yaml`（把 M0 關掉的功能全部打開：impersonation RBAC、CRD 檢查、PVC、syslog mTLS，讓這些範本持續被檢查）與 `ci/m0-values.yaml`（M0 實際安裝的設定）；再加上 `laoban-crd`。全部 `--kube-version 1.34.0`。
-2. `helm template` 兩組 values，並確認缺必填值時會以明確訊息失敗：`image.digest`（兩組都測）、`anthropic.existingSecret`、`github.existingSecret`、`github.repo`、`config.model`；`crds.required` 為 `true` 而沒裝 CRD（`ci-values.yaml`，以及 M0 打開 `crds.required` 時）；`persistence.enabled` 為 `true` 而 `storageClass` 空白（兩組都測）。
+2. `helm template` 兩組 values，並確認缺必填值時會以明確訊息失敗：`image.digest`（兩組都測）、`anthropic.existingSecret`、`github.existingSecret`、`github.repo`、`config.model`、`ai.baseUrl` 格式、`ai.timeoutSeconds` 範圍；`crds.required` 為 `true` 而沒裝 CRD（`ci-values.yaml`，以及 M0 打開 `crds.required` 時）；`persistence.enabled` 為 `true` 而 `storageClass` 空白（兩組都測）。
 3. 確認 M0 的 render 沒有任何 ClusterRole、ClusterRoleBinding、Role、RoleBinding、PVC，ServiceAccount 與 Pod 都是 `automountServiceAccountToken: false`，M0 的環境變數都在、`LAOBAN_TOKEN_CAP` 是 `"2000000"`（不是 `2e+06`）；同時確認 `ci-values.yaml` 的 render 仍有 ClusterRole、ClusterRoleBinding、PVC。
 4. `kubeconform -strict -kubernetes-version 1.34.0` 驗證兩份後端 manifest 與 `deploy/m0`。kubeconform 預設的 schema 集沒有 `CustomResourceDefinition` 本身與 Fleet 物件的 schema，這些改由下一步的 API server 檢查。
 5. 啟動 k3s（v1.34，只有 API server、不跑 agent）：`charts/laoban-crd/ci/test-crds.sh` 套用 CRD 與範例物件（結構化 schema、預設值、列舉、CEL 規則、spec 不可修改、status 規則）；兩份後端 manifest 做 server-side dry run；`deploy/m0/ci/test-m0.sh` 檢查 Fleet 物件與 `laoban-dev` 的 restricted（見 `deploy/m0/README.md`）。

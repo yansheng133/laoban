@@ -26,8 +26,13 @@ export const BUNDLE_POLL_INTERVAL_MS = 5 * 1000;
 
 export const BUNDLE_POLL_TIMEOUT_MS = 10 * 60 * 1000;
 
-// AI calls usually take 30-60 s; give up well after that.
-export const AI_REQUEST_TIMEOUT_MS = 3 * 60 * 1000;
+// Used until GET /api/config has answered, or when it has no
+// aiTimeoutSeconds (older backend). The backend's own default is 300 s.
+export const AI_REQUEST_TIMEOUT_MS = 5 * 60 * 1000 + 60 * 1000;
+
+// Added to the backend's AI timeout: the apply call also commits to GitHub
+// after the AI answers, and the request goes through the Rancher proxy.
+export const AI_REQUEST_MARGIN_MS = 60 * 1000;
 
 export const DEFAULT_REQUEST_TIMEOUT_MS = 30 * 1000;
 

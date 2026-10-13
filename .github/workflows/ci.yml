@@ -84,6 +84,8 @@ jobs:
             --kube-version "${KUBE_VERSION}" --set crds.required=false
           helm lint charts/laoban -f charts/laoban/ci/m0-values.yaml \
             --kube-version "${KUBE_VERSION}"
+          helm lint charts/laoban -f charts/laoban/ci/m0-values.yaml \
+            -f charts/laoban/ci/m0-local-model-values.yaml --kube-version "${KUBE_VERSION}"
           helm lint charts/laoban-crd --kube-version "${KUBE_VERSION}"
       - name: helm template
         run: |
@@ -94,6 +96,9 @@ jobs:
           helm template laoban charts/laoban -n laoban-system \
             -f charts/laoban/ci/m0-values.yaml \
             --kube-version "${KUBE_VERSION}" > rendered/laoban-m0.yaml
+          helm template laoban charts/laoban -n laoban-system \
+            -f charts/laoban/ci/m0-values.yaml -f charts/laoban/ci/m0-local-model-values.yaml \
+            --kube-version "${KUBE_VERSION}" > rendered/laoban-m0-local.yaml
           helm template laoban-crd charts/laoban-crd -n laoban-system \
             --kube-version "${KUBE_VERSION}" > rendered/laoban-crd.yaml
       - name: Rendering fails without required values
@@ -118,6 +123,22 @@ jobs:
           check "install the laoban-crd chart first" "${m0[@]}" --set crds.required=true
           check "persistence.storageClass is required" "${ci[@]}" --set persistence.storageClass=
           check "persistence.storageClass is required" "${m0[@]}" --set persistence.enabled=true --set persistence.storageClass=
+          local=("${m0[@]}" -f charts/laoban/ci/m0-local-model-values.yaml)
+          check "ai.baseUrl must be scheme, host and optional port only" "${local[@]}" --set ai.baseUrl=http://192.0.2.1:11434/v1/messages
+          check "ai.baseUrl must be scheme, host and optional port only" "${local[@]}" --set ai.baseUrl=ftp://192.0.2.1
+          check "ai.timeoutSeconds must be between 30 and 1800" "${local[@]}" --set ai.timeoutSeconds=10
+          check "ai.timeoutSeconds must be between 30 and 1800" "${m0[@]}" --set ai.timeoutSeconds=3600
+      - name: Local-model render has no Anthropic key and points at the endpoint
+        run: |
+          f=rendered/laoban-m0-local.yaml
+          if grep -q 'name: ANTHROPIC_API_KEY$' "$f"; then echo "local-model render must not inject ANTHROPIC_API_KEY"; exit 1; fi
+          grep -A1 'name: LAOBAN_AI_BASE_URL$' "$f" | grep -q 'value: "http://192.168.128.1:11434"' \
+            || { echo "LAOBAN_AI_BASE_URL missing or wrong"; exit 1; }
+          grep -A1 'name: LAOBAN_AI_TIMEOUT_SECONDS$' "$f" | grep -q 'value: "900"' \
+            || { echo "LAOBAN_AI_TIMEOUT_SECONDS must render as \"900\""; exit 1; }
+          # The Anthropic render keeps the key and has no base URL.
+          grep -q 'name: ANTHROPIC_API_KEY$' rendered/laoban-m0.yaml || { echo "M0: ANTHROPIC_API_KEY missing"; exit 1; }
+          if grep -q 'name: LAOBAN_AI_BASE_URL$' rendered/laoban-m0.yaml; then echo "M0: unexpected LAOBAN_AI_BASE_URL"; exit 1; fi
       - name: M0 render has no RBAC, no PVC and no ServiceAccount token
         run: |
           kinds() { grep -E '^kind: ' "$1" | sort | uniq -c; }
@@ -142,7 +163,7 @@ jobs:
         # itself or for Fleet's kinds, so the CRD chart and the Fleet objects
         # are checked against a real API server below.
         run: |
-          kubeconform -strict -summary -kubernetes-version "${KUBE_VERSION}" rendered/laoban.yaml rendered/laoban-m0.yaml
+          kubeconform -strict -summary -kubernetes-version "${KUBE_VERSION}" rendered/laoban.yaml rendered/laoban-m0.yaml rendered/laoban-m0-local.yaml
           kubeconform -strict -summary -kubernetes-version "${KUBE_VERSION}" -skip GitRepo,GitRepoRestriction deploy/m0
       - name: Start k3s API server
         run: |
@@ -166,6 +187,7 @@ jobs:
         run: |
           k3s kubectl apply --dry-run=server -f rendered/laoban.yaml
           k3s kubectl apply --dry-run=server -f rendered/laoban-m0.yaml
+          k3s kubectl apply --dry-run=server -f rendered/laoban-m0-local.yaml
         env:
           KUBECONFIG: /etc/rancher/k3s/k3s.yaml
       - name: deploy/m0 against a real API server

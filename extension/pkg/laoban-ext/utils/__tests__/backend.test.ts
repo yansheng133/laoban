@@ -1,5 +1,8 @@
 import { describe, it, expect } from '@jest/globals';
-import { parseBackendError, resolveAppUrl, safeHttpsUrl, backendUrl } from '../backend';
+import {
+  parseBackendError, resolveAppUrl, safeHttpsUrl, backendUrl, aiRequestTimeoutMs, ConfigResponse
+} from '../backend';
+import { AI_REQUEST_TIMEOUT_MS } from '../../config/backend';
 
 describe('backendUrl', () => {
   it('goes through the Rancher service proxy', () => {
@@ -44,5 +47,26 @@ describe('safeHttpsUrl', () => {
     expect(safeHttpsUrl('http://github.com/o/r/commit/abc')).toBeNull();
     expect(safeHttpsUrl('javascript:alert(1)')).toBeNull();
     expect(safeHttpsUrl(undefined)).toBeNull();
+  });
+});
+
+describe('aiRequestTimeoutMs', () => {
+  const base: ConfigResponse = {
+    model: 'm', targetNamespace: 'laoban-dev', repo: 'o/r', tokenBudget: { cap: 1, used: 0 }
+  };
+
+  it('waits a minute longer than the backend waits for the AI', () => {
+    expect(aiRequestTimeoutMs({ ...base, aiTimeoutSeconds: 900 })).toBe(960 * 1000);
+    expect(aiRequestTimeoutMs({ ...base, aiTimeoutSeconds: 300 })).toBe(360 * 1000);
+  });
+
+  it('falls back before /api/config has answered or for an older backend', () => {
+    expect(aiRequestTimeoutMs(null)).toBe(AI_REQUEST_TIMEOUT_MS);
+    expect(aiRequestTimeoutMs(base)).toBe(AI_REQUEST_TIMEOUT_MS);
+    expect(aiRequestTimeoutMs({ ...base, aiTimeoutSeconds: 0 })).toBe(AI_REQUEST_TIMEOUT_MS);
+  });
+
+  it('caps absurd values at the backend maximum', () => {
+    expect(aiRequestTimeoutMs({ ...base, aiTimeoutSeconds: 1e9 })).toBe(1860 * 1000);
   });
 });

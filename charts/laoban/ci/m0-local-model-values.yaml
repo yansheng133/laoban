@@ -1,0 +1,16 @@
+# Overlay on m0-values.yaml: the M0 install with a local model served by
+# Ollama on the Mac that runs the lab VMs, instead of the Anthropic API.
+#
+#   helm upgrade --install laoban charts/laoban -n laoban-system \
+#     -f charts/laoban/ci/m0-values.yaml -f charts/laoban/ci/m0-local-model-values.yaml \
+#     --set image.digest=sha256:<...>
+#
+# No Anthropic key is needed. baseUrl is the Mac's address on the UTM network
+# as seen from the rke2 VM; check it before installing (deploy/m0/README.md).
+anthropic:
+  existingSecret: ""
+ai:
+  baseUrl: http://192.168.128.1:11434
+  timeoutSeconds: 900
+config:
+  model: qwen3-coder:30b
