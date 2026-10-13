@@ -123,7 +123,7 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 - 範本 `main.py`：`http.server` 包住 `handler.handle()`，JSON 進出，例外回 500。
 - 安全設定：`runAsNonRoot`、`runAsUser: 65532`、`readOnlyRootFilesystem: true`、去掉所有 capabilities、`seccompProfile: RuntimeDefault`、`allowPrivilegeEscalation: false`；requests 50m／64Mi，limits 200m／128Mi；`automountServiceAccountToken: false`。
 - ConfigMap 內容變動時要觸發重新部署：Deployment 的 pod template 加 annotation `laoban.io/content-hash: <sha256>`。
-- 所有物件加 label `app.kubernetes.io/managed-by: laoban`、`laoban.io/app: <appName>`。
+- 所有物件加 label `laoban.io/app: <appName>`；Pod 範本另加 `app.kubernetes.io/managed-by: laoban`。ConfigMap、Deployment、Service 本身**不寫** `app.kubernetes.io/managed-by`：Fleet 經 Helm 部署，Helm 會把它改成 `Helm`，Fleet 比對 Git 時就永遠判定 Modified、Bundle 不會 Ready（第一次實測遇到）。
 - 應用網址：`<基底>/k8s/clusters/c-m-26kbxk5f/api/v1/namespaces/laoban-dev/services/http:<app>-web:8080/proxy/`（經 Rancher 代理，用使用者自己的登入；不需要 Ingress）。
 
 ## GitHub
@@ -144,7 +144,7 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 
 - 一個頁面，三個區塊：左邊對話（輸入需求、送出、顯示計畫摘要與步驟）、右邊 3D 架構圖、下方狀態列。
 - 3D 圖沿用 `web/viewer-prototype` 的程式（three.js 0.160.0、`graph-diff.mjs`）；M0 只需要顯示與縮放，不需要版本比較與拖曳。
-- 「確認並部署」按下後顯示 commit 連結，接著每 5 秒讀 Fleet Bundle（`/v1/fleet.cattle.io.bundles`，篩 `laoban.io` 前綴或 bundlePrefix）的 Ready 狀態，Ready 後顯示「打開應用」連結。
+- 「確認並部署」按下後顯示 commit 連結，接著每 5 秒讀 Fleet Bundle（Bundle 只剩 Modified、沒有待部署或錯誤時，也視為應用已在執行，顯示連結並附上 Fleet 的訊息）（`/v1/fleet.cattle.io.bundles`，篩 `laoban.io` 前綴或 bundlePrefix）的 Ready 狀態，Ready 後顯示「打開應用」連結。
 - 所有 AI 產生的文字用文字方式顯示，不用 `v-html`。
 - 錯誤顯示後端回的繁中 `message`。
 

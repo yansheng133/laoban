@@ -4,7 +4,7 @@ import { bundleReadiness, Bundle, FLEET_COMMIT_LABEL } from '../bundle';
 const PREFIX = 'laoban-apps-apps-breakfast';
 
 function bundle(name: string, opts: {
-  ready?: number; desired?: number; errApplied?: number; readyCond?: string; message?: string;
+  ready?: number; desired?: number; errApplied?: number; modified?: number; readyCond?: string; message?: string;
   generation?: number; observed?: number; commit?: string;
 } = {}): Bundle {
   return {
@@ -19,7 +19,7 @@ function bundle(name: string, opts: {
         type: 'Ready', status: opts.readyCond, message: opts.message
       }] : [],
       summary:            {
-        desiredReady: opts.desired ?? 1, ready: opts.ready ?? 0, errApplied: opts.errApplied ?? 0
+        desiredReady: opts.desired ?? 1, ready: opts.ready ?? 0, errApplied: opts.errApplied ?? 0, modified: opts.modified ?? 0
       },
     },
   };
@@ -97,5 +97,36 @@ describe('bundleReadiness', () => {
     const bundles = [null, {}, { metadata: {} }, bundle(PREFIX, { ready: 1 })] as unknown as Bundle[];
 
     expect(bundleReadiness(bundles, PREFIX).state).toBe('ready');
+  });
+
+  // Seen in the first M0 run: Helm rewrote a label, so Fleet reported
+  // Modified(1) forever although the app was running.
+  it('is modified when every target is applied but drifted from Git', () => {
+    const msg = 'Modified(1) [Cluster fleet-default/rke2]; deployment.apps laoban-dev/x-web modified';
+    const r = bundleReadiness([bundle(PREFIX, {
+      ready: 0, modified: 1, readyCond: 'False', message: msg
+    })], PREFIX);
+
+    expect(r.state).toBe('modified');
+    expect(r.message).toBe(msg);
+  });
+
+  it('is not modified while some target is still pending', () => {
+    expect(bundleReadiness([bundle(PREFIX, {
+      desired: 2, ready: 0, modified: 1, readyCond: 'False'
+    })], PREFIX).state).toBe('pending');
+  });
+
+  it('prefers error over modified', () => {
+    expect(bundleReadiness([bundle(PREFIX, {
+      ready: 0, modified: 1, errApplied: 1
+    })], PREFIX).state).toBe('error');
+  });
+
+  it('is modified when one bundle is ready and another only modified', () => {
+    expect(bundleReadiness([
+      bundle(`${ PREFIX }-a`, { ready: 1 }),
+      bundle(`${ PREFIX }-b`, { ready: 0, modified: 1 }),
+    ], PREFIX).state).toBe('modified');
   });
 });

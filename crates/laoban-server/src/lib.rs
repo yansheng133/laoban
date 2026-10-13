@@ -203,6 +203,8 @@ struct Response {
     /// For the log line only.
     plan_id: Option<String>,
     error_code: Option<&'static str>,
+    /// For the log line only: why it failed (see `M0Error::log_detail`).
+    error_detail: Option<String>,
 }
 
 impl Response {
@@ -214,6 +216,7 @@ impl Response {
             allow: None,
             plan_id: None,
             error_code: None,
+            error_detail: None,
         }
     }
 
@@ -225,6 +228,7 @@ impl Response {
             allow: None,
             plan_id: None,
             error_code: None,
+            error_detail: None,
         }
     }
 
@@ -232,6 +236,7 @@ impl Response {
     fn api_error(status: u16, code: &'static str, message: &str) -> Self {
         Self {
             error_code: Some(code),
+            error_detail: None,
             ..Self::json(
                 status,
                 json!({ "error": { "code": code, "message": message } }).to_string(),
@@ -432,7 +437,9 @@ fn route(head: &[u8]) -> (Response, bool) {
 }
 
 fn m0_error(e: &M0Error) -> Response {
-    Response::api_error(e.status(), e.code(), &e.user_message())
+    let mut resp = Response::api_error(e.status(), e.code(), &e.user_message());
+    resp.error_detail = e.log_detail();
+    resp
 }
 
 fn bad_request(message: &str) -> Response {
@@ -508,6 +515,16 @@ fn log_safe(s: &str) -> String {
         .collect()
 }
 
+/// One line, bounded, quoted; spaces kept so the message stays readable.
+fn log_detail_safe(s: &str) -> String {
+    let inner: String = s
+        .chars()
+        .take(300)
+        .map(|c| if c.is_control() || c == '"' { '\'' } else { c })
+        .collect();
+    format!("\"{inner}\"")
+}
+
 fn log_line(method: &str, path: &str, resp: &Response, started: Instant) {
     let mut line = format!(
         "{NAME}: {} {} {} {}ms",
@@ -523,6 +540,10 @@ fn log_line(method: &str, path: &str, resp: &Response, started: Instant) {
     if let Some(code) = resp.error_code {
         line.push_str(" error=");
         line.push_str(code);
+    }
+    if let Some(detail) = &resp.error_detail {
+        line.push_str(" detail=");
+        line.push_str(&log_detail_safe(detail));
     }
     eprintln!("{line}");
 }
@@ -673,5 +694,10 @@ mod tests {
     fn log_safety() {
         assert_eq!(log_safe("/a b\nc\u{1b}"), "/a?b?c?");
         assert_eq!(log_safe(&"x".repeat(500)).len(), 200);
+        assert_eq!(
+            log_detail_safe("GitHub create blob failed with HTTP 403: \"no\"\nx"),
+            "\"GitHub create blob failed with HTTP 403: 'no''x\""
+        );
+        assert_eq!(log_detail_safe(&"y".repeat(500)).len(), 302);
     }
 }

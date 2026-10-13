@@ -112,8 +112,10 @@ yarn build-pkg laoban-ext
    yarn serve-pkgs          # 以 port 4500 提供 dist-pkg 的內容
    ```
 
+   需要 Node.js 24 以上與 Yarn 1（`@rancher/shell` 3.0.13 的要求）。本機版本不夠時，可以跟 CI 一樣在 `registry.suse.com/bci/nodejs:24` 容器裡建置與執行。`serve-pkgs` 會聽所有網卡；在容器裡跑時用 `-p 127.0.0.1:4500:4500` 只開放給本機。
+
 3. 在 Rancher 左上角選單開啟 **Extensions**，右上角三個點選 **Developer load**。
-4. **Extension URL** 填入 `serve-pkgs` 印出的網址，例如 `http://127.0.0.1:4500/laoban-ext-0.1.0/laoban-ext-0.1.0.umd.min.js`，按 **Load**。瀏覽器要能連到這台機器的 4500 port。
+4. **Extension URL** 填入 `serve-pkgs` 印出的網址，例如 `http://127.0.0.1:4500/laoban-ext-0.1.0/laoban-ext-0.1.0.umd.min.js`，按 **Load**。瀏覽器要能連到這台機器的 4500 port。**網址一定要從 `http://` 開始**：少了的話 Rancher 不會擋，而是把它當成 Rancher 底下的相對路徑，載入時才失敗（console 出現 `Failed to load script from 'https://<Rancher>/dashboard/c/local/4500/...'`）。這時到 Extensions 移除它，再用完整網址重新載入。
 5. 要在重新整理後保留，載入時勾選 **Persist extension by creating custom resource**。
 
 ### 方法二：本機開發伺服器
