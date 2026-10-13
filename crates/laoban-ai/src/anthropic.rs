@@ -93,7 +93,9 @@ pub enum AnthropicSetupError {
 pub struct AnthropicProvider {
     agent: ureq::Agent,
     url: String,
-    key: ApiKey,
+    /// `None` only for a compatible endpoint that does not check keys
+    /// (see [`AnthropicProvider::without_key`]); no `x-api-key` is sent.
+    key: Option<ApiKey>,
 }
 
 impl fmt::Debug for AnthropicProvider {
@@ -107,6 +109,20 @@ impl fmt::Debug for AnthropicProvider {
 
 impl AnthropicProvider {
     pub fn new(key: ApiKey, config: AnthropicConfig) -> Result<Self, AnthropicSetupError> {
+        Self::build(Some(key), config)
+    }
+
+    /// For an Anthropic Messages API compatible endpoint that does not check
+    /// keys, such as a local Ollama server. Refuses the Anthropic API itself,
+    /// which always needs a key.
+    pub fn without_key(config: AnthropicConfig) -> Result<Self, AnthropicSetupError> {
+        if config.base_url.trim_end_matches('/') == DEFAULT_BASE_URL {
+            return Err(AnthropicSetupError::MissingKey);
+        }
+        Self::build(None, config)
+    }
+
+    fn build(key: Option<ApiKey>, config: AnthropicConfig) -> Result<Self, AnthropicSetupError> {
         let base = config.base_url.trim_end_matches('/');
         if !(base.starts_with("https://") || base.starts_with("http://")) {
             return Err(AnthropicSetupError::BadBaseUrl);
@@ -222,10 +238,11 @@ fn parse_retry_after(v: &str) -> Option<Duration> {
 impl Provider for AnthropicProvider {
     fn send(&self, req: &ProviderRequest) -> Result<ProviderResponse, ProviderError> {
         let body = request_body(req).to_string();
-        let result = self
-            .agent
-            .post(&self.url)
-            .set("x-api-key", self.key.expose())
+        let mut request = self.agent.post(&self.url);
+        if let Some(key) = &self.key {
+            request = request.set("x-api-key", key.expose());
+        }
+        let result = request
             .set("anthropic-version", ANTHROPIC_VERSION)
             .set("content-type", "application/json")
             .send_string(&body);

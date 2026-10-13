@@ -92,7 +92,7 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 ### 其他
 
 - `GET /healthz`、`GET /version`（已存在）。
-- `GET /api/config` → `{ "model": "…", "targetNamespace": "laoban-dev", "repo": "<owner>/<repo>", "tokenBudget": {"cap": …, "used": …} }`，給頁面顯示用，不含任何秘密。
+- `GET /api/config` → `{ "model": "…", "targetNamespace": "laoban-dev", "repo": "<owner>/<repo>", "tokenBudget": {"cap": …, "used": …}, "aiTimeoutSeconds": 300 }`，給頁面顯示用，不含任何秘密。
 
 ## AI 的兩次呼叫
 
@@ -153,8 +153,10 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 | 變數 | 說明 |
 |---|---|
 | `LAOBAN_LISTEN_ADDR` | 預設 `0.0.0.0:8080`（已存在） |
-| `ANTHROPIC_API_KEY` | 從 Secret 注入 |
-| `LAOBAN_MODEL` | Anthropic 模型 ID |
+| `ANTHROPIC_API_KEY` | 從 Secret 注入；設了 `LAOBAN_AI_BASE_URL` 時可省略 |
+| `LAOBAN_MODEL` | 模型 ID（Anthropic 模型 ID，或本機模型在端點上的名稱） |
+| `LAOBAN_AI_BASE_URL` | 選用。相容 Anthropic Messages API 的端點（例如 Mac 上的 Ollama），只寫 scheme、主機與 port；不設就是 Anthropic API |
+| `LAOBAN_AI_TIMEOUT_SECONDS` | 單次 AI 呼叫上限，30～1800，預設 300 |
 | `LAOBAN_TOKEN_CAP` | 每月 token 上限，預設 2,000,000 |
 | `LAOBAN_GITHUB_REPO` | `<owner>/<repo>` |
 | `LAOBAN_GITHUB_TOKEN` | 從 Secret 注入 |

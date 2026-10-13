@@ -100,16 +100,29 @@ persistence:
     - ReadWriteOnce
   mountPath: /var/spool/laoban
 
+# Where the AI calls go.
+ai:
+  # Empty: the Anthropic API. Otherwise the base URL (scheme, host, optional
+  # port) of an Anthropic Messages API compatible endpoint, for example a local
+  # Ollama server: http://<host>:11434 (LAOBAN_AI_BASE_URL). Requests to it are
+  # plain HTTP when the URL is http://, so keep it on a private network.
+  baseUrl: ""
+  # Upper bound for one AI call, 30 to 1800 (LAOBAN_AI_TIMEOUT_SECONDS).
+  # Local models are slower; 900 is a reasonable value for them.
+  timeoutSeconds: 300
+
 # Anthropic API key, read from an existing Secret. Never put the key here.
 anthropic:
-  # Required. Name of an existing Secret in the release namespace.
+  # Required unless ai.baseUrl is set. Name of an existing Secret in the
+  # release namespace.
   existingSecret: ""
   # Key inside that Secret.
   secretKey: api-key
 
 # M0 backend settings (environment variables, see docs/m0-design.md).
 config:
-  # Required. Anthropic model ID (LAOBAN_MODEL), never hard-coded in the backend.
+  # Required. Model ID (LAOBAN_MODEL), never hard-coded in the backend: an
+  # Anthropic model ID, or the endpoint's own name for a local model.
   model: ""
   # Monthly token cap enforced by laoban itself (LAOBAN_TOKEN_CAP).
   tokenCap: 2000000

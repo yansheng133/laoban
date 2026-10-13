@@ -1,11 +1,23 @@
 {{- include "laoban.crdCheck" . }}
-{{- $anthropicSecret := required "anthropic.existingSecret is required: name of an existing Secret holding the Anthropic API key (the key itself never goes in values)" .Values.anthropic.existingSecret }}
+{{- $aiBaseUrl := .Values.ai.baseUrl | default "" }}
+{{- if and $aiBaseUrl (not (regexMatch "^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?/?$" $aiBaseUrl)) }}
+{{- fail (printf "ai.baseUrl must be scheme, host and optional port only (the backend appends /v1/messages), got %q" $aiBaseUrl) }}
+{{- end }}
+{{- $aiTimeout := int .Values.ai.timeoutSeconds }}
+{{- if or (lt $aiTimeout 30) (gt $aiTimeout 1800) }}
+{{- fail (printf "ai.timeoutSeconds must be between 30 and 1800, got %d" $aiTimeout) }}
+{{- end }}
+{{- /* The key is only required when the calls go to the Anthropic API. */}}
+{{- $anthropicSecret := .Values.anthropic.existingSecret }}
+{{- if not $aiBaseUrl }}
+{{- $anthropicSecret = required "anthropic.existingSecret is required: name of an existing Secret holding the Anthropic API key (the key itself never goes in values); or set ai.baseUrl for an Anthropic-compatible endpoint such as a local Ollama server" .Values.anthropic.existingSecret }}
+{{- end }}
 {{- $githubSecret := required "github.existingSecret is required: name of an existing Secret holding the GitHub fine-grained token (the token itself never goes in values)" .Values.github.existingSecret }}
 {{- $githubRepo := required "github.repo is required: the <owner>/<repo> the generated apps are committed to" .Values.github.repo }}
 {{- if not (regexMatch "^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$" $githubRepo) }}
 {{- fail (printf "github.repo must look like <owner>/<repo>, got %q" $githubRepo) }}
 {{- end }}
-{{- $model := required "config.model is required: the Anthropic model ID (LAOBAN_MODEL)" .Values.config.model }}
+{{- $model := required "config.model is required: the model ID (LAOBAN_MODEL)" .Values.config.model }}
 {{- if and .Values.syslog.enabled (not .Values.syslog.host) }}
 {{- fail "syslog.host is required when syslog.enabled is true" }}
 {{- end }}
@@ -79,11 +91,19 @@ spec:
                   fieldPath: metadata.namespace
             - name: LAOBAN_SPOOL_DIR
               value: {{ .Values.persistence.mountPath | quote }}
+            {{- if $anthropicSecret }}
             - name: ANTHROPIC_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: {{ $anthropicSecret }}
                   key: {{ .Values.anthropic.secretKey }}
+            {{- end }}
+            {{- if $aiBaseUrl }}
+            - name: LAOBAN_AI_BASE_URL
+              value: {{ $aiBaseUrl | quote }}
+            {{- end }}
+            - name: LAOBAN_AI_TIMEOUT_SECONDS
+              value: {{ $aiTimeout | toString | quote }}
             - name: LAOBAN_MODEL
               value: {{ $model | quote }}
             # int64 first: Helm reads numbers as float64 and would print 2e+06.

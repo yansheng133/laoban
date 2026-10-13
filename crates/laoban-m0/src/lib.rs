@@ -20,7 +20,7 @@ pub mod service;
 pub mod store;
 mod time;
 
-pub use config::{from_env_with, ConfigError, EnvConfig, M0Settings, Secret};
+pub use config::{from_env_with, AiEndpoint, ConfigError, EnvConfig, M0Settings, Secret};
 pub use github::{CommitFile, GithubCommitter, GithubConfig, GithubError, GithubToken};
 pub use service::{ApplyRequest, M0Error, M0Service, PlanRequestBody};
 

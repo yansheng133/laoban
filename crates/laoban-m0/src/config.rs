@@ -14,10 +14,18 @@ pub const ENV_GITHUB_REPO: &str = "LAOBAN_GITHUB_REPO";
 pub const ENV_GITHUB_TOKEN: &str = "LAOBAN_GITHUB_TOKEN";
 pub const ENV_TARGET_NAMESPACE: &str = "LAOBAN_TARGET_NAMESPACE";
 pub const ENV_CLUSTER_ID: &str = "LAOBAN_CLUSTER_ID";
+/// Base URL of an Anthropic Messages API compatible endpoint (for example a
+/// local Ollama server). Unset means the Anthropic API itself.
+pub const ENV_AI_BASE_URL: &str = "LAOBAN_AI_BASE_URL";
+/// Upper bound for one AI call, in seconds.
+pub const ENV_AI_TIMEOUT: &str = "LAOBAN_AI_TIMEOUT_SECONDS";
 
 pub const DEFAULT_TOKEN_CAP: u64 = 2_000_000;
 pub const DEFAULT_TARGET_NAMESPACE: &str = "laoban-dev";
 pub const DEFAULT_CLUSTER_ID: &str = "c-m-26kbxk5f";
+pub const DEFAULT_AI_TIMEOUT_SECS: u64 = 300;
+/// Accepted range for `LAOBAN_AI_TIMEOUT_SECONDS`.
+pub const AI_TIMEOUT_RANGE: std::ops::RangeInclusive<u64> = 30..=1800;
 
 /// Non-secret settings.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,6 +36,8 @@ pub struct M0Settings {
     pub repo_name: String,
     pub target_namespace: String,
     pub cluster_id: String,
+    /// Upper bound for one AI call; the page waits a little longer.
+    pub ai_timeout_secs: u64,
 }
 
 impl M0Settings {
@@ -53,10 +63,21 @@ impl fmt::Debug for Secret {
     }
 }
 
+/// Where the AI calls go.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AiEndpoint {
+    /// `None`: the Anthropic API. `Some`: an Anthropic-compatible endpoint
+    /// set with `LAOBAN_AI_BASE_URL`.
+    pub base_url: Option<String>,
+}
+
 #[derive(Debug)]
 pub struct EnvConfig {
     pub settings: M0Settings,
-    pub anthropic_api_key: Secret,
+    pub ai: AiEndpoint,
+    /// Required for the Anthropic API; optional for a compatible endpoint
+    /// (a local Ollama server does not check keys).
+    pub anthropic_api_key: Option<Secret>,
     pub github_token: Secret,
 }
 
@@ -93,12 +114,13 @@ pub fn from_env_with(get: impl Fn(&str) -> Option<String>) -> Result<EnvConfig, 
             .filter(|v| !v.is_empty())
     };
 
-    let required = [
-        ENV_ANTHROPIC_API_KEY,
-        ENV_MODEL,
-        ENV_GITHUB_REPO,
-        ENV_GITHUB_TOKEN,
-    ];
+    let base_url = value(ENV_AI_BASE_URL);
+    // The key is only required when the calls go to the Anthropic API.
+    let mut required = vec![];
+    if base_url.is_none() {
+        required.push(ENV_ANTHROPIC_API_KEY);
+    }
+    required.extend([ENV_MODEL, ENV_GITHUB_REPO, ENV_GITHUB_TOKEN]);
     let missing: Vec<&'static str> = required
         .iter()
         .copied()
@@ -107,14 +129,31 @@ pub fn from_env_with(get: impl Fn(&str) -> Option<String>) -> Result<EnvConfig, 
     if !missing.is_empty() {
         return Err(ConfigError::Missing(missing));
     }
-    let key = value(ENV_ANTHROPIC_API_KEY).unwrap_or_default();
+    let key = value(ENV_ANTHROPIC_API_KEY);
     let model = value(ENV_MODEL).unwrap_or_default();
     let repo = value(ENV_GITHUB_REPO).unwrap_or_default();
     let token = value(ENV_GITHUB_TOKEN).unwrap_or_default();
 
-    if !key.bytes().all(|b| b.is_ascii_graphic()) {
-        return Err(ConfigError::Invalid(ENV_ANTHROPIC_API_KEY));
+    if let Some(key) = &key {
+        if !key.bytes().all(|b| b.is_ascii_graphic()) {
+            return Err(ConfigError::Invalid(ENV_ANTHROPIC_API_KEY));
+        }
     }
+    if let Some(url) = &base_url {
+        static BASE_URL: OnceLock<Regex> = OnceLock::new();
+        // Scheme, host and optional port only: the client appends /v1/messages.
+        if !re(&BASE_URL, r"^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?/?$").is_match(url) {
+            return Err(ConfigError::Invalid(ENV_AI_BASE_URL));
+        }
+    }
+    let ai_timeout_secs = match value(ENV_AI_TIMEOUT) {
+        None => DEFAULT_AI_TIMEOUT_SECS,
+        Some(v) => v
+            .parse::<u64>()
+            .ok()
+            .filter(|n| AI_TIMEOUT_RANGE.contains(n))
+            .ok_or(ConfigError::Invalid(ENV_AI_TIMEOUT))?,
+    };
     if !token.bytes().all(|b| b.is_ascii_graphic()) {
         return Err(ConfigError::Invalid(ENV_GITHUB_TOKEN));
     }
@@ -161,8 +200,10 @@ pub fn from_env_with(get: impl Fn(&str) -> Option<String>) -> Result<EnvConfig, 
             repo_name,
             target_namespace,
             cluster_id,
+            ai_timeout_secs,
         },
-        anthropic_api_key: Secret(key),
+        ai: AiEndpoint { base_url },
+        anthropic_api_key: key.map(Secret),
         github_token: Secret(token),
     })
 }
@@ -194,6 +235,9 @@ mod tests {
         assert_eq!(c.settings.target_namespace, "laoban-dev");
         assert_eq!(c.settings.cluster_id, "c-m-26kbxk5f");
         assert_eq!(c.settings.repo(), "example-owner/laoban-apps");
+        assert_eq!(c.ai.base_url, None);
+        assert_eq!(c.settings.ai_timeout_secs, DEFAULT_AI_TIMEOUT_SECS);
+        assert!(c.anthropic_api_key.is_some());
         let dbg = format!("{c:?}");
         assert!(
             !dbg.contains("secret_value") && !dbg.contains("secret-value"),
@@ -225,6 +269,12 @@ mod tests {
             (ENV_TOKEN_CAP, "0"),
             (ENV_TARGET_NAMESPACE, "Bad_NS"),
             (ENV_CLUSTER_ID, "c/m"),
+            (ENV_AI_BASE_URL, "ftp://192.0.2.1:11434"),
+            (ENV_AI_BASE_URL, "http://192.0.2.1:11434/v1/messages"),
+            (ENV_AI_BASE_URL, "http://user@192.0.2.1"),
+            (ENV_AI_TIMEOUT, "10"),
+            (ENV_AI_TIMEOUT, "3600"),
+            (ENV_AI_TIMEOUT, "soon"),
         ] {
             let mut pairs = FULL.to_vec();
             pairs.push((k, v));
@@ -237,5 +287,41 @@ mod tests {
         let mut pairs = FULL.to_vec();
         pairs.push((ENV_TOKEN_CAP, "1_000"));
         assert_eq!(from_env_with(env(&pairs)).unwrap().settings.token_cap, 1000);
+    }
+
+    #[test]
+    fn compatible_endpoint_makes_the_key_optional() {
+        let pairs = [
+            (ENV_AI_BASE_URL, "http://192.0.2.1:11434"),
+            (ENV_AI_TIMEOUT, "900"),
+            (ENV_MODEL, "local-model:30b"),
+            (ENV_GITHUB_REPO, "example-owner/laoban-apps"),
+            (ENV_GITHUB_TOKEN, "github_pat_secret_value"),
+        ];
+        let c = from_env_with(env(&pairs)).unwrap();
+        assert_eq!(c.ai.base_url.as_deref(), Some("http://192.0.2.1:11434"));
+        assert_eq!(c.settings.ai_timeout_secs, 900);
+        assert!(c.anthropic_api_key.is_none());
+
+        // A key, if given, is still passed on.
+        let mut with_key = pairs.to_vec();
+        with_key.push((ENV_ANTHROPIC_API_KEY, "sk-test-secret-value"));
+        assert!(from_env_with(env(&with_key))
+            .unwrap()
+            .anthropic_api_key
+            .is_some());
+    }
+
+    #[test]
+    fn key_still_required_without_base_url() {
+        let pairs = [
+            (ENV_MODEL, "m"),
+            (ENV_GITHUB_REPO, "example-owner/laoban-apps"),
+            (ENV_GITHUB_TOKEN, "t"),
+        ];
+        assert_eq!(
+            from_env_with(env(&pairs)).unwrap_err(),
+            ConfigError::Missing(vec![ENV_ANTHROPIC_API_KEY])
+        );
     }
 }

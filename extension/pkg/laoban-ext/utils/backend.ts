@@ -3,7 +3,9 @@
 // the browser sends the session cookie, and state-changing requests carry the
 // CSRF token the same way Rancher's own axios plugin does.
 
-import { BACKEND_BASE_PATH, FLEET_BUNDLES_PATH, DEFAULT_REQUEST_TIMEOUT_MS } from '../config/backend';
+import {
+  AI_REQUEST_MARGIN_MS, AI_REQUEST_TIMEOUT_MS, BACKEND_BASE_PATH, FLEET_BUNDLES_PATH, DEFAULT_REQUEST_TIMEOUT_MS
+} from '../config/backend';
 import type { Architecture } from './layout';
 import type { Bundle } from './bundle';
 
@@ -35,6 +37,21 @@ export interface ConfigResponse {
   targetNamespace: string;
   repo: string;
   tokenBudget: { cap: number; used: number };
+  // Seconds the backend waits for one AI call (LAOBAN_AI_TIMEOUT_SECONDS).
+  aiTimeoutSeconds?: number;
+}
+
+// How long the page waits for /api/plan and /api/apply: a little longer than
+// the backend waits for the AI, so the backend's own error message (not a
+// generic timeout) is what the user sees.
+export function aiRequestTimeoutMs(config: ConfigResponse | null | undefined): number {
+  const secs = config?.aiTimeoutSeconds;
+
+  if (typeof secs !== 'number' || !Number.isFinite(secs) || secs <= 0) {
+    return AI_REQUEST_TIMEOUT_MS;
+  }
+
+  return Math.min(secs, 1800) * 1000 + AI_REQUEST_MARGIN_MS;
 }
 
 // `message` is the backend's user-facing (Traditional Chinese) sentence, or

@@ -14,12 +14,12 @@ import { useStore } from 'vuex';
 import { useI18n } from '@shell/composables/useI18n';
 import ArchitectureView from '../components/ArchitectureView.vue';
 import {
-  getConfig, createPlan, applyPlan, listBundles, resolveAppUrl, safeHttpsUrl,
+  getConfig, createPlan, applyPlan, listBundles, resolveAppUrl, safeHttpsUrl, aiRequestTimeoutMs,
   RequestError, ConfigResponse, PlanResponse, ApplyResponse
 } from '../utils/backend';
 import { bundleReadiness, Readiness } from '../utils/bundle';
 import {
-  AI_REQUEST_TIMEOUT_MS, APP_NAME_PATTERN, BUNDLE_POLL_INTERVAL_MS, BUNDLE_POLL_TIMEOUT_MS, FLEET_WORKSPACE
+  APP_NAME_PATTERN, BUNDLE_POLL_INTERVAL_MS, BUNDLE_POLL_TIMEOUT_MS, FLEET_WORKSPACE
 } from '../config/backend';
 
 type Phase = 'idle' | 'planning' | 'planned' | 'applying' | 'deploying' | 'ready' | 'timeout';
@@ -166,7 +166,7 @@ export default defineComponent({
       phase.value = 'planning';
       startElapsed();
       try {
-        plan.value = await createPlan(store, prompt.value.trim(), appName.value.trim() || undefined, AI_REQUEST_TIMEOUT_MS);
+        plan.value = await createPlan(store, prompt.value.trim(), appName.value.trim() || undefined, aiRequestTimeoutMs(config.value));
         phase.value = 'planned';
       } catch (e) {
         errorText.value = messageFor(e);
@@ -185,7 +185,7 @@ export default defineComponent({
       phase.value = 'applying';
       startElapsed();
       try {
-        applied.value = await applyPlan(store, plan.value.planId, AI_REQUEST_TIMEOUT_MS);
+        applied.value = await applyPlan(store, plan.value.planId, aiRequestTimeoutMs(config.value));
       } catch (e) {
         errorText.value = messageFor(e);
         phase.value = 'planned';

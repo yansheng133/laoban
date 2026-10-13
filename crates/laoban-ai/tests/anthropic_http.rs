@@ -213,3 +213,39 @@ fn bad_keys_are_rejected_without_echoing_them() {
     let err = ApiKey::new("abc\r\nX-Injected: 1").unwrap_err();
     assert!(!err.to_string().contains("Injected"));
 }
+
+#[test]
+fn without_key_sends_no_api_key_header() {
+    // An Anthropic-compatible endpoint such as a local Ollama server.
+    let server = MockServer::start(|_| {
+        Reply::json(
+            200,
+            r#"{"id":"msg_1","type":"message","role":"assistant","model":"local-model",
+"content":[{"type":"thinking","thinking":"plan"},{"type":"text","text":"ok"}],
+"stop_reason":"end_turn","usage":{"input_tokens":3,"output_tokens":1}}"#,
+        )
+    });
+    let p = AnthropicProvider::without_key(AnthropicConfig {
+        base_url: server.url(),
+        connect_timeout: Duration::from_secs(2),
+        request_timeout: Duration::from_secs(10),
+    })
+    .unwrap();
+    assert_eq!(p.send(&request()).unwrap().content, "ok");
+    let reqs = server.requests();
+    assert_eq!(reqs[0].path, "/v1/messages");
+    assert_eq!(reqs[0].header("x-api-key"), None);
+    assert_eq!(reqs[0].header("anthropic-version"), Some(ANTHROPIC_VERSION));
+}
+
+#[test]
+fn without_key_refuses_the_anthropic_api() {
+    for base_url in ["https://api.anthropic.com", "https://api.anthropic.com/"] {
+        let err = AnthropicProvider::without_key(AnthropicConfig {
+            base_url: base_url.into(),
+            ..AnthropicConfig::default()
+        })
+        .unwrap_err();
+        assert_eq!(err, laoban_ai::anthropic::AnthropicSetupError::MissingKey);
+    }
+}

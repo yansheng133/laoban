@@ -123,16 +123,28 @@ impl AppPlan {
     }
 }
 
-/// Strip one surrounding Markdown code fence, if present.
+/// Strip one surrounding Markdown code fence, if present. If what is left
+/// still does not start with `{` (smaller local models often add a sentence
+/// before or after the JSON), fall back to the span from the first `{` to the
+/// last `}`. The result is parsed and validated as strictly as before.
 pub(crate) fn strip_fence(text: &str) -> &str {
     let t = text.trim();
-    let Some(rest) = t.strip_prefix("```") else {
-        return t;
-    };
-    let rest = rest.strip_prefix("json").unwrap_or(rest);
-    match rest.trim_end().strip_suffix("```") {
-        Some(inner) => inner.trim(),
+    let unfenced = match t.strip_prefix("```") {
         None => t,
+        Some(rest) => {
+            let rest = rest.strip_prefix("json").unwrap_or(rest);
+            match rest.trim_end().strip_suffix("```") {
+                Some(inner) => inner.trim(),
+                None => t,
+            }
+        }
+    };
+    if unfenced.starts_with('{') {
+        return unfenced;
+    }
+    match (unfenced.find('{'), unfenced.rfind('}')) {
+        (Some(start), Some(end)) if start < end => &unfenced[start..=end],
+        _ => unfenced,
     }
 }
 
@@ -347,7 +359,13 @@ mod tests {
     fn fences_are_stripped() {
         assert_eq!(strip_fence("```json\n{}\n```"), "{}");
         assert_eq!(strip_fence(" {} "), "{}");
-        assert_eq!(strip_fence("```\n{}"), "```\n{}");
+        assert_eq!(strip_fence("```\n{}"), "{}");
+        assert_eq!(
+            strip_fence("Here is the plan:\n```json\n{\"a\": {}}\n```\nHope it helps."),
+            "{\"a\": {}}"
+        );
+        assert_eq!(strip_fence("no json here"), "no json here");
+        assert_eq!(strip_fence("} backwards {"), "} backwards {");
     }
 
     #[test]
