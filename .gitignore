@@ -7,3 +7,9 @@
 *.pem
 *.key
 kubeconfig*
+
+# Rancher UI extension (extension/.gitignore has the full list)
+node_modules/
+/extension/dist/
+/extension/dist-pkg/
+/extension/pkg/*/.shell

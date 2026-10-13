@@ -17,6 +17,10 @@ laoban（老闆）是一個 Rancher UI extension：使用者用自然語言描�
 | `crates/laoban-mask` | 敏感資料遮蔽引擎：送給 AI 之前與寫入稽核紀錄之前都用同一套規則 |
 | `crates/laoban-policy` | 部署審查政策引擎：決定一次變更能不能直接部署、要不要人工審查、由誰審 |
 | `web/viewer-prototype` | 3D 架構視圖原型：三層架構、版本比較、細節層級、拖曳調整版面 |
+| `crates/laoban-server`、`Containerfile`、`build/` | 後端服務（目前只有 `/healthz`、`/version`）與容器映像檔建置：SUSE BCI 多階段建置、x86-64／ARM64 原生建置、推送 Docker Hub、cosign v2 簽章與 SBOM，見 [build/README.md](build/README.md) |
+| `charts/laoban` | 後端服務的 Helm chart（部署在 Rancher local 叢集），見 [README](charts/laoban/README.md) |
+| `charts/laoban-crd` | laoban 的 CRD（ProjectPolicy、ChangeRequest、ArchitectureVersion） |
+| `extension` | Rancher UI extension（`laoban-ext`）骨架：頂層產品 laoban 與總覽頁，尚未連接後端。建置與載入方式見 [extension/README.md](extension/README.md) |
 
 ## 開發
 

@@ -5,6 +5,7 @@ members = [
     "crates/laoban-ai",
     "crates/laoban-mask",
     "crates/laoban-policy",
+    "crates/laoban-server",
 ]
 
 [workspace.package]

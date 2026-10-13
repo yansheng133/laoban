@@ -1,0 +1,265 @@
+# ChangeRequest mirrors laoban_policy::ChangeRequest and laoban_policy::Decision
+# (crates/laoban-policy/src/lib.rs) and laoban_policy::risk::Risk (risk.rs).
+# Field names are camelCase forms of the Rust fields; enum values are PascalCase
+# forms of the Rust variants. The Decision enum (tagged by "decision" in Rust)
+# is flattened into status: decision + notify / reviewers + reasons / rejectReason.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: changerequests.laoban.yansheng133.github.io
+  {{- include "laoban-crd.metadata" . | nindent 2 }}
+spec:
+  group: laoban.yansheng133.github.io
+  scope: Namespaced
+  names:
+    kind: ChangeRequest
+    listKind: ChangeRequestList
+    plural: changerequests
+    singular: changerequest
+    shortNames:
+      - lbcr
+    categories:
+      - laoban
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Author
+          type: string
+          jsonPath: .spec.author
+        - name: Target
+          type: string
+          jsonPath: .spec.target.name
+        - name: Production
+          type: boolean
+          jsonPath: .spec.target.production
+        - name: Decision
+          type: string
+          jsonPath: .status.decision
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          description: A request to deploy one change, and the review policy's decision on it.
+          type: object
+          required:
+            - spec
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              description: What is being changed. Immutable once created.
+              type: object
+              x-kubernetes-validations:
+                - rule: self == oldSelf
+                  message: spec is immutable; submit a new ChangeRequest instead
+              required:
+                - project
+                - author
+                - authorRoles
+                - target
+              properties:
+                project:
+                  description: Rancher Project ID, <cluster ID>:<project ID>.
+                  type: string
+                  minLength: 3
+                  maxLength: 253
+                  pattern: '^[^:\s]+:[^:\s]+$'
+                author:
+                  description: Rancher principal ID of the author (for example local://u-abc12).
+                  type: string
+                  minLength: 1
+                  maxLength: 512
+                authorRoles:
+                  description: >-
+                    Roles the author holds in the Project; they stack. Empty means no
+                    role, which the policy rejects (NoRole).
+                  type: array
+                  maxItems: 4
+                  x-kubernetes-list-type: set
+                  items:
+                    type: string
+                    enum:
+                      - BusinessUnitReadOnly
+                      - BusinessUnit
+                      - Developer
+                      - PlatformEngineer
+                target:
+                  description: Environment layer the change is deployed to.
+                  type: object
+                  required:
+                    - name
+                    - production
+                  properties:
+                    name:
+                      type: string
+                      minLength: 1
+                      maxLength: 63
+                    production:
+                      type: boolean
+                risk:
+                  description: What the change touches, from the rendered manifests and the build step.
+                  type: object
+                  default: {}
+                  properties:
+                    exposure:
+                      description: Ways the change exposes workloads externally.
+                      type: array
+                      maxItems: 256
+                      x-kubernetes-list-type: atomic
+                      items:
+                        type: object
+                        required:
+                          - change
+                          - namespace
+                          - name
+                        x-kubernetes-validations:
+                          - rule: "(self.change == 'NewGatewayResource') == has(self.kind)"
+                            message: kind is set exactly when change is NewGatewayResource
+                          - rule: "(self.change == 'ServiceExposed') == has(self.serviceType)"
+                            message: serviceType is set exactly when change is ServiceExposed
+                          - rule: "(self.change == 'NetworkPolicyAllowsAll') == has(self.direction)"
+                            message: direction is set exactly when change is NetworkPolicyAllowsAll
+                        properties:
+                          change:
+                            type: string
+                            enum:
+                              - NewIngress
+                              - NewGatewayResource
+                              - ServiceExposed
+                              - NetworkPolicyRemoved
+                              - NetworkPolicyAllowsAll
+                          namespace:
+                            type: string
+                            minLength: 1
+                            maxLength: 63
+                          name:
+                            type: string
+                            minLength: 1
+                            maxLength: 253
+                          kind:
+                            description: Gateway API kind, for NewGatewayResource.
+                            type: string
+                            enum:
+                              - Gateway
+                              - HTTPRoute
+                              - GRPCRoute
+                              - TLSRoute
+                              - TCPRoute
+                              - UDPRoute
+                          serviceType:
+                            description: New Service type, for ServiceExposed.
+                            type: string
+                            enum:
+                              - LoadBalancer
+                              - NodePort
+                          direction:
+                            description: Direction that now allows all peers, for NetworkPolicyAllowsAll.
+                            type: string
+                            enum:
+                              - Ingress
+                              - Egress
+                    databaseSchemaChange:
+                      description: Reported by the build step (for example migration files changed).
+                      type: boolean
+                      default: false
+                    permissionChange:
+                      description: Role, ClusterRole, their bindings or a ServiceAccount changed.
+                      type: boolean
+                      default: false
+            status:
+              description: Set by the laoban backend only.
+              type: object
+              x-kubernetes-validations:
+                - rule: "!has(self.decision) || self.decision != 'Rejected' || has(self.rejectReason)"
+                  message: rejectReason is required when decision is Rejected
+                - rule: "!has(self.decision) || self.decision != 'ReviewRequired' || (has(self.reviewers) && size(self.reviewers) > 0 && has(self.reasons) && size(self.reasons) > 0)"
+                  message: reviewers and reasons are required when decision is ReviewRequired
+              properties:
+                observedGeneration:
+                  type: integer
+                  format: int64
+                  minimum: 0
+                decision:
+                  type: string
+                  enum:
+                    - Deploy
+                    - ReviewRequired
+                    - Rejected
+                notify:
+                  description: For Deploy, whether reviewers are notified (NotifyOnly).
+                  type: boolean
+                reviewers:
+                  description: For ReviewRequired, principals allowed to approve (never the author).
+                  type: array
+                  maxItems: 200
+                  x-kubernetes-list-type: set
+                  items:
+                    type: string
+                    minLength: 1
+                    maxLength: 512
+                reasons:
+                  description: For ReviewRequired, every reason that applies.
+                  type: array
+                  maxItems: 5
+                  x-kubernetes-list-type: set
+                  items:
+                    type: string
+                    enum:
+                      - RoleRequiresReview
+                      - ProductionLayer
+                      - ExposesExternally
+                      - DatabaseSchemaChange
+                      - PermissionChange
+                rejectReason:
+                  description: For Rejected.
+                  type: string
+                  enum:
+                    - NoRole
+                    - ReadOnly
+                    - NoEligibleReviewer
+                conditions:
+                  type: array
+                  maxItems: 16
+                  x-kubernetes-list-type: map
+                  x-kubernetes-list-map-keys:
+                    - type
+                  items:
+                    type: object
+                    required:
+                      - type
+                      - status
+                      - lastTransitionTime
+                      - reason
+                      - message
+                    properties:
+                      type:
+                        type: string
+                        maxLength: 316
+                      status:
+                        type: string
+                        enum:
+                          - "True"
+                          - "False"
+                          - Unknown
+                      observedGeneration:
+                        type: integer
+                        format: int64
+                        minimum: 0
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                      reason:
+                        type: string
+                        maxLength: 1024
+                      message:
+                        type: string
+                        maxLength: 32768

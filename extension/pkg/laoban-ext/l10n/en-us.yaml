@@ -1,0 +1,22 @@
+product:
+  laoban: laoban
+
+laoban:
+  nav:
+    dashboard: Overview
+  dashboard:
+    title: laoban
+    description: Describe what you need in natural language. laoban proposes a plan and an architecture view first, writes code only after you confirm, and runs automated checks and human review before deploying. This is a development preview and is not connected to any backend service yet.
+    cards:
+      requests:
+        title: Requests
+        emptyTitle: No requests yet
+        emptyDescription: Describe what you want in natural language here. laoban will reply with a plan for you to confirm.
+      architecture:
+        title: Architecture view
+        emptyTitle: No architecture view yet
+        emptyDescription: Once a plan is confirmed, the before and after architecture will be shown here.
+      review:
+        title: Change review
+        emptyTitle: No changes waiting for review
+        emptyDescription: Changes that need human review will be listed here and deployed only after approval.

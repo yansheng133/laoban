@@ -1,0 +1,166 @@
+# ProjectPolicy mirrors laoban_policy::ProjectPolicy (crates/laoban-policy/src/lib.rs).
+# Field names are the camelCase forms of the Rust fields; enum values are the
+# PascalCase forms of the Rust variants.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: projectpolicies.laoban.yansheng133.github.io
+  {{- include "laoban-crd.metadata" . | nindent 2 }}
+spec:
+  group: laoban.yansheng133.github.io
+  scope: Namespaced
+  names:
+    kind: ProjectPolicy
+    listKind: ProjectPolicyList
+    plural: projectpolicies
+    singular: projectpolicy
+    shortNames:
+      - lbpp
+    categories:
+      - laoban
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Project
+          type: string
+          jsonPath: .spec.project
+        - name: Developer
+          type: string
+          jsonPath: .spec.developer
+        - name: PlatformEngineer
+          type: string
+          jsonPath: .spec.platformEngineer
+        - name: ProdReview
+          type: boolean
+          jsonPath: .spec.productionAlwaysRequiresReview
+        - name: RiskReview
+          type: boolean
+          jsonPath: .spec.riskBasedReview
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          description: Deployment review policy for one Rancher Project.
+          type: object
+          required:
+            - spec
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              required:
+                - project
+              properties:
+                project:
+                  description: >-
+                    Rancher Project ID this policy applies to, in the form
+                    <cluster ID>:<project ID> (for example local:p-abcde).
+                  type: string
+                  minLength: 3
+                  maxLength: 253
+                  pattern: '^[^:\s]+:[^:\s]+$'
+                owners:
+                  description: >-
+                    Project owners as Rancher principal IDs (for example
+                    local://u-abc12). Owners other than the author review changes.
+                  type: array
+                  maxItems: 100
+                  x-kubernetes-list-type: set
+                  items:
+                    type: string
+                    minLength: 1
+                    maxLength: 512
+                admins:
+                  description: >-
+                    Fallback reviewers (Rancher principal IDs), used when no owner
+                    other than the author exists.
+                  type: array
+                  maxItems: 100
+                  x-kubernetes-list-type: set
+                  items:
+                    type: string
+                    minLength: 1
+                    maxLength: 512
+                developer:
+                  description: Review requirement for changes by users with the Developer role.
+                  type: string
+                  enum:
+                    - Exempt
+                    - NotifyOnly
+                    - Review
+                  default: Review
+                platformEngineer:
+                  description: Review requirement for changes by users with the PlatformEngineer role.
+                  type: string
+                  enum:
+                    - Exempt
+                    - NotifyOnly
+                    - Review
+                  default: Review
+                productionAlwaysRequiresReview:
+                  description: >-
+                    Phase-1 temporary rule: every change to a production layer needs
+                    human review, whatever the author's roles. Keep true until
+                    environment-based review replaces it.
+                  type: boolean
+                  default: true
+                riskBasedReview:
+                  description: >-
+                    Review changes that expose workloads externally, change a database
+                    schema or change permissions.
+                  type: boolean
+                  default: true
+            status:
+              type: object
+              properties:
+                observedGeneration:
+                  type: integer
+                  format: int64
+                  minimum: 0
+                conditions:
+                  type: array
+                  maxItems: 16
+                  x-kubernetes-list-type: map
+                  x-kubernetes-list-map-keys:
+                    - type
+                  items:
+                    type: object
+                    required:
+                      - type
+                      - status
+                      - lastTransitionTime
+                      - reason
+                      - message
+                    properties:
+                      type:
+                        type: string
+                        maxLength: 316
+                      status:
+                        type: string
+                        enum:
+                          - "True"
+                          - "False"
+                          - Unknown
+                      observedGeneration:
+                        type: integer
+                        format: int64
+                        minimum: 0
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                      reason:
+                        type: string
+                        maxLength: 1024
+                      message:
+                        type: string
+                        maxLength: 32768

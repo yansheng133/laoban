@@ -1,0 +1,126 @@
+# Default values for the laoban backend.
+# No secrets go in this file: credentials are read from existing Secrets by name.
+
+# PoC: one replica. The audit spool is a ReadWriteOnce volume, so more than one
+# replica needs a different spool design first (HA is a later phase).
+replicaCount: 1
+
+image:
+  # Replace with the real repository. Rendering fails while the placeholder is set.
+  repository: docker.io/REPLACE_ME/laoban-server
+  # Required. Images are always pulled by digest, e.g. "sha256:<64 hex chars>".
+  digest: ""
+  # Informational only (shown in labels); never used to pull.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  # Name of the ServiceAccount to create. Defaults to the full name.
+  name: ""
+  annotations: {}
+
+# Identity delegation: the backend acts as the signed-in Rancher user through
+# Kubernetes impersonation. These are the only permissions the ServiceAccount gets.
+impersonation:
+  # Rancher sets these extras on its own impersonation service accounts
+  # (principal ID and username). Keep both so audit records match Rancher's.
+  userExtras:
+    - principalid
+    - username
+
+# The backend has no Ingress. The UI extension reaches it through Rancher's
+# Kubernetes API proxy (see README).
+service:
+  port: 8080
+
+containerPort: 8080
+
+probes:
+  # Assumption: the backend serves an unauthenticated health endpoint on the
+  # container port. Change if the server uses a different path.
+  path: /healthz
+  liveness:
+    initialDelaySeconds: 10
+    periodSeconds: 20
+    timeoutSeconds: 3
+    failureThreshold: 3
+  readiness:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+  seccompProfile:
+    type: RuntimeDefault
+
+# Audit-log spool: records wait here until the syslog target accepts them.
+persistence:
+  enabled: true
+  # Empty = cluster default StorageClass (for example local-path). The PVC stays
+  # Pending if the cluster has no default StorageClass. local-path has no
+  # snapshots and is tied to one node; syslog is the durable copy.
+  storageClass: ""
+  size: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  mountPath: /var/spool/laoban
+
+# Anthropic API key, read from an existing Secret. Never put the key here.
+anthropic:
+  # Required. Name of an existing Secret in the release namespace.
+  existingSecret: ""
+  # Key inside that Secret.
+  secretKey: api-key
+
+# Audit-log forwarding over syslog (TLS).
+syslog:
+  enabled: false
+  host: ""
+  port: 6514
+  tls:
+    enabled: true
+    # Existing ConfigMap holding the CA bundle that signed the syslog server certificate.
+    caConfigMap: ""
+    caKey: ca.crt
+    # Existing Secret of type kubernetes.io/tls with the client certificate (mTLS).
+    # Leave empty when the syslog server does not require a client certificate.
+    clientCertSecret: ""
+
+# Fail rendering when the laoban CRDs are not installed (checked through
+# .Capabilities.APIVersions). Pass --api-versions to `helm template` when rendering offline.
+crdCheck:
+  enabled: true
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

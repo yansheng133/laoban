@@ -1,0 +1,69 @@
+# Objects the API server must reject. CI applies each one with a server-side
+# dry run and fails if any is accepted.
+# 1. kind missing for NewGatewayResource
+apiVersion: laoban.yansheng133.github.io/v1alpha1
+kind: ChangeRequest
+metadata:
+  name: bad-gateway
+  namespace: laoban-system
+spec:
+  project: local:p-shop1
+  author: local://u-dev
+  authorRoles: [Developer]
+  target: { name: dev, production: false }
+  risk:
+    exposure:
+      - { change: NewGatewayResource, namespace: shop, name: web }
+---
+# 2. unknown review mode
+apiVersion: laoban.yansheng133.github.io/v1alpha1
+kind: ProjectPolicy
+metadata:
+  name: bad-mode
+  namespace: laoban-system
+spec:
+  project: local:p-shop1
+  developer: Sometimes
+---
+# 3. parent not earlier than version
+apiVersion: laoban.yansheng133.github.io/v1alpha1
+kind: ArchitectureVersion
+metadata:
+  name: bad-parent
+  namespace: laoban-system
+spec:
+  project: local:p-shop1
+  version: 2
+  parent: 2
+  author: local://u-dev
+  nodes: []
+  edges: []
+---
+# 4. duplicate node id
+apiVersion: laoban.yansheng133.github.io/v1alpha1
+kind: ArchitectureVersion
+metadata:
+  name: bad-dup
+  namespace: laoban-system
+spec:
+  project: local:p-shop1
+  version: 1
+  author: local://u-dev
+  nodes:
+    - { id: a, layer: code, kind: app, name: a, detail: 1, pos: { x: 0, z: 0 } }
+    - { id: a, layer: data, kind: table, name: b, detail: 3, pos: { x: 1, z: 1 } }
+  edges: []
+---
+# 5. detail out of range
+apiVersion: laoban.yansheng133.github.io/v1alpha1
+kind: ArchitectureVersion
+metadata:
+  name: bad-detail
+  namespace: laoban-system
+spec:
+  project: local:p-shop1
+  version: 1
+  author: local://u-dev
+  nodes:
+    - { id: a, layer: code, kind: app, name: a, detail: 4, pos: { x: 0, z: 0 } }
+  edges: []
