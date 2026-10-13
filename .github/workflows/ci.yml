@@ -18,7 +18,7 @@ jobs:
     # Build and test inside SUSE BCI rather than on the Ubuntu host.
     container: registry.suse.com/bci/rust:1.98
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: |
           grep PRETTY_NAME /etc/os-release
           cargo --version && cargo fmt --version && cargo clippy --version
@@ -30,14 +30,14 @@ jobs:
     runs-on: ubuntu-24.04
     container: registry.suse.com/bci/nodejs:22
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: node --version
       - run: node --test web/viewer-prototype/*.test.mjs
 
   secrets:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
@@ -59,7 +59,7 @@ jobs:
       K3S_SHA256: ef1df26b26276c0f6d962391c94e12f9362d1f1e30ec7a7926e9ddb84b0d66ce
       LAOBAN_API: laoban.yansheng133.github.io/v1alpha1
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
           version: v4.2.4
@@ -133,7 +133,7 @@ jobs:
       run:
         working-directory: extension
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: |
           grep PRETTY_NAME /etc/os-release
           node --version && npm --version
