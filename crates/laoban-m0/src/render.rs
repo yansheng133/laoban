@@ -324,14 +324,10 @@ fn readme(input: &RenderInput<'_>) -> String {
     )
 }
 
-/// Render every file under `apps/<app>/`.
-pub fn render(input: &RenderInput<'_>) -> Vec<CommitFile> {
-    let app = input.app;
-    let f = input.files;
-    let web_cm = format!("{app}-web-files");
-    let api_cm = format!("{app}-api-code");
+type ConfigMapData<'a> = BTreeMap<&'a str, &'a str>;
 
-    let web_data: BTreeMap<&str, &str> = [
+fn configmap_data(f: &GeneratedFiles) -> (ConfigMapData<'_>, ConfigMapData<'_>) {
+    let web = [
         ("index.html", f.index_html.as_str()),
         ("app.js", f.app_js.as_str()),
         ("style.css", f.style_css.as_str()),
@@ -339,10 +335,28 @@ pub fn render(input: &RenderInput<'_>) -> Vec<CommitFile> {
     ]
     .into_iter()
     .collect();
-    let api_data: BTreeMap<&str, &str> =
-        [("handler.py", f.handler_py.as_str()), ("main.py", MAIN_PY)]
-            .into_iter()
-            .collect();
+    let api = [("handler.py", f.handler_py.as_str()), ("main.py", MAIN_PY)]
+        .into_iter()
+        .collect();
+    (web, api)
+}
+
+/// The `laoban.io/content-hash` pod template annotation each Deployment
+/// gets: `[("web", hash), ("api", hash)]`. The page compares it with the
+/// live Deployment to know the new version is the one running.
+pub fn rollout_hashes(files: &GeneratedFiles) -> [(&'static str, String); 2] {
+    let (web, api) = configmap_data(files);
+    [("web", content_hash(&web)), ("api", content_hash(&api))]
+}
+
+/// Render every file under `apps/<app>/`.
+pub fn render(input: &RenderInput<'_>) -> Vec<CommitFile> {
+    let app = input.app;
+    let f = input.files;
+    let web_cm = format!("{app}-web-files");
+    let api_cm = format!("{app}-api-code");
+
+    let (web_data, api_data) = configmap_data(f);
     let web_hash = content_hash(&web_data);
     let api_hash = content_hash(&api_data);
 

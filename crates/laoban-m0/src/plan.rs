@@ -16,7 +16,7 @@ use crate::InvalidOutput;
 /// Response format appended to the system prompt for the plan call.
 pub const PLAN_INSTRUCTIONS: &str = r#"Task: plan a small web application from the user requirement in the data block. The application always has exactly two components: a static web front end (index.html, app.js, style.css) and a JSON HTTP API written as one Python module using only the standard library, keeping its data in memory. There is no database, queue or other component.
 Respond with exactly one JSON object and nothing else (no Markdown fences), with these fields:
-{"appName": string matching ^[a-z][a-z0-9-]{1,30}$, "summary": string, "steps": [string], "components": {"web": {"modules": [{"name": string, "purpose": string}]}, "api": {"modules": [{"name": string, "purpose": string}], "endpoints": [{"method": "GET"|"POST"|"PUT"|"PATCH"|"DELETE", "path": string starting with "/", "purpose": string}]}}, "notes": string}
+{"appName": string matching ^[a-z][a-z0-9-]{1,30}$, "summary": string, "steps": [string], "components": {"web": {"modules": [{"name": string, "purpose": string}]}, "api": {"modules": [{"name": string, "purpose": string}], "endpoints": [{"method": "GET"|"POST"|"PUT"|"PATCH"|"DELETE", "path": string starting with "/" as the API module sees it, without any /api prefix (for example "/orders"), "purpose": string}]}}, "notes": string}
 Write summary, steps, purposes and notes in Traditional Chinese (Taiwan). Use at most 8 modules per component, at most 16 endpoints and at most 20 steps. Do not include positions or coordinates."#;
 
 /// Extra instructions for the plan call when an existing app is changed.
@@ -198,14 +198,34 @@ fn check_endpoint(e: Endpoint) -> Result<Endpoint, InvalidOutput> {
     if !matches!(method.as_str(), "GET" | "POST" | "PUT" | "PATCH" | "DELETE") {
         return Err(InvalidOutput("endpoint method not allowed".into()));
     }
-    if !path_re.is_match(e.path.trim()) || e.path.contains("..") {
+    let path = normalize_endpoint_path(e.path.trim());
+    if !path_re.is_match(&path) || path.contains("..") {
         return Err(InvalidOutput("endpoint path is not allowed".into()));
     }
     Ok(Endpoint {
         method,
-        path: e.path.trim().to_string(),
+        path,
         purpose: check_text("endpoint purpose", &e.purpose, MAX_TEXT, false)?,
     })
+}
+
+/// Endpoint paths are as `handler.handle()` sees them: the web server
+/// forwards `api/<x>` to the API's `/<x>`. Models sometimes write the
+/// browser-side path (`/api/orders`) instead, which then disagrees with the
+/// code; drop that prefix (repeatedly, case-insensitively).
+pub(crate) fn normalize_endpoint_path(path: &str) -> String {
+    let mut p = path.trim().to_string();
+    loop {
+        let lower = p.to_ascii_lowercase();
+        if lower == "/api" || lower == "/api/" {
+            return "/".into();
+        }
+        if lower.starts_with("/api/") {
+            p = p[4..].to_string();
+        } else {
+            return p;
+        }
+    }
 }
 
 /// Parse and validate the AI's plan response.
@@ -355,6 +375,22 @@ mod tests {
             "ab\n",
         ] {
             assert!(!valid_app_name(bad), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn api_prefix_is_dropped_from_endpoint_paths() {
+        for (given, want) in [
+            ("/api/polls", "/polls"),
+            ("/API/polls/{id}", "/polls/{id}"),
+            ("/api/api/x", "/x"),
+            ("/api", "/"),
+            ("/api/", "/"),
+            ("/apiary", "/apiary"),
+            ("/orders", "/orders"),
+            (" /api/count ", "/count"),
+        ] {
+            assert_eq!(normalize_endpoint_path(given), want, "{given}");
         }
     }
 

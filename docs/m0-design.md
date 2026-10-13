@@ -64,6 +64,7 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 }
 ```
 
+- 端點路徑是 API 程式（`handler.handle()`）看到的路徑；AI 寫成 `/api/orders` 這種瀏覽器端路徑時，後端會去掉開頭的 `/api`（實測本機模型偶爾會這樣寫，與它產生的程式不一致）。
 - `architecture` 用 `web/viewer-prototype/graph-diff.mjs` 的模型：`node = {id, layer: network|code|data, kind, name, detail: 1..3, parent?, props?, pos:{x,z}}`，`edge = {from, to, kind, label?}`。
 - 試吃版的架構固定是：network 層一個 `service` web、一個 `service` api；code 層一個 `app` web、一個 `app` api，各自可以有 `module`（detail 3）；data 層在 M0 可以有一個 `table` 代表 API 的記憶體資料（`props.storage: "memory"`）。AI 只決定名稱、模組、說明和連線標籤；**位置由後端依層與順序排**，不信任 AI 給的座標。
 - 計畫存在後端記憶體（以 `planId` 為鍵，保留 1 小時，最多 20 筆）。後端重啟就消失，可以接受。
@@ -84,7 +85,8 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 }
 ```
 
-- 同一個 `planId` 只能 apply 一次（第二次回 `409`）。
+- 同一個 `planId` 只能成功 apply 一次（成功後再送回 `409`）；apply 失敗（例如 `ai_invalid_output`）時可以用同一個 `planId` 重送，不必重新產生計畫。
+- 回應的 `rollout` 列出兩個 Deployment：`{deployment, path, contentHash}`，`path` 是經 Rancher 代理讀這個 Deployment 的 Steve 路徑，`contentHash` 是它的 Pod 範本該有的 `laoban.io/content-hash`。頁面在 Fleet Bundle 就緒之後，還會確認兩個 Deployment 都已換成這個範本、舊 Pod 都已退場，才顯示「打開應用」（實測曾遇到 Bundle 先報就緒、新 Pod 一分鐘後才起來）。
 - 回應多 `mode` 與 `appName`。新應用在 commit 前再確認一次名稱沒被占用。修改現有應用時，產生程式那一步另外帶 `current_code` 資料區塊（目前的四個檔案），要求在保留其餘行為的前提下改出完整的四個檔案。
 
 ### `GET /api/apps`

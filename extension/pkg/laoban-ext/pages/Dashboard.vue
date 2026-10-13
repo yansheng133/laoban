@@ -15,10 +15,11 @@ import { useI18n } from '@shell/composables/useI18n';
 import ArchitectureView from '../components/ArchitectureView.vue';
 import AppList from '../components/AppList.vue';
 import {
-  getConfig, createPlan, applyPlan, listBundles, resolveAppUrl, safeHttpsUrl, aiRequestTimeoutMs, getApp,
+  getConfig, createPlan, applyPlan, listBundles, resolveAppUrl, safeHttpsUrl, aiRequestTimeoutMs, getApp, getDeployment,
   RequestError, ConfigResponse, PlanResponse, ApplyResponse, AppDetail
 } from '../utils/backend';
 import { bundleReadiness, Readiness } from '../utils/bundle';
+import { deploymentRolledOut, rolloutTargets } from '../utils/rollout';
 import {
   APP_NAME_PATTERN, BUNDLE_POLL_INTERVAL_MS, BUNDLE_POLL_TIMEOUT_MS, FLEET_WORKSPACE
 } from '../config/backend';
@@ -45,6 +46,8 @@ export default defineComponent({
     const applied = ref<ApplyResponse | null>(null);
     const readiness = ref<Readiness | null>(null);
     const pollError = ref(false);
+    // Fleet is ready but the new pods are not all running yet.
+    const rollingOut = ref(false);
     const elapsed = ref(0);
     // Set while an existing app is being changed ("編輯" in the app list).
     const editing = ref<AppDetail | null>(null);
@@ -140,11 +143,38 @@ export default defineComponent({
 
       // 'modified': running but drifted from Git; offer the app anyway.
       if (readiness.value?.state === 'ready' || readiness.value?.state === 'modified') {
-        phase.value = 'ready';
-        stopElapsed();
-        appList.value?.refresh();
+        // Fleet can say ready a moment before the new pods replace the old
+        // ones; wait until every Deployment runs the committed template.
+        const targets = rolloutTargets(applied.value?.rollout);
+        let done = true;
 
-        return;
+        try {
+          for (const target of targets) {
+            const d = await getDeployment(store, target.path);
+
+            if (gen !== pollGeneration) {
+              return;
+            }
+            if (!deploymentRolledOut(d, target.contentHash)) {
+              done = false;
+              break;
+            }
+          }
+        } catch (e) {
+          if (gen !== pollGeneration) {
+            return;
+          }
+          pollError.value = true;
+          done = false;
+        }
+        rollingOut.value = !done;
+        if (done) {
+          phase.value = 'ready';
+          stopElapsed();
+          appList.value?.refresh();
+
+          return;
+        }
       }
       if (Date.now() - pollStarted >= BUNDLE_POLL_TIMEOUT_MS) {
         phase.value = 'timeout';
@@ -158,6 +188,7 @@ export default defineComponent({
     function startPolling() {
       stopPolling();
       readiness.value = null;
+      rollingOut.value = false;
       pollError.value = false;
       pollStarted = Date.now();
       phase.value = 'deploying';
@@ -276,6 +307,9 @@ export default defineComponent({
         }
         if (r.state === 'error') {
           return t('laoban.dashboard.status.bundleError', { ready: r.ready, desired: r.desired });
+        }
+        if (rollingOut.value) {
+          return t('laoban.dashboard.status.rollingOut', { seconds: elapsed.value });
         }
 
         return t('laoban.dashboard.status.deploying', { ready: r.ready, desired: r.desired });

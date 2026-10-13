@@ -85,6 +85,7 @@ laoban:
       applying: "The AI is generating code and committing it to GitHub. This usually takes 30 to 60 seconds ({seconds} s so far)…"
       waitingBundle: "Committed. Waiting for Fleet to pick up the change ({seconds} s so far)…"
       deploying: "Fleet is deploying: {ready} / {desired} ready…"
+      rollingOut: "Fleet が適用しました。新しい Pod の起動を待っています（{seconds} 秒）…"
       bundleError: "Fleet reports a deployment error ({ready} / {desired} ready). Still checking…"
       ready: Deployed. You can open the app.
       readyModified: "アプリはデプロイされ実行中なので開けます。ただし Fleet は実際のオブジェクトが Git と一致しない（Modified）と報告しています。詳細は Continuous Delivery の {workspace} ワークスペースで確認してください。"

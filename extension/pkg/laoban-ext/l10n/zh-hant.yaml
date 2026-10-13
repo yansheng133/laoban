@@ -83,6 +83,7 @@ laoban:
       applying: "AI 正在產生程式並寫進 GitHub，通常需要 30～60 秒（已 {seconds} 秒）…"
       waitingBundle: "已寫進 GitHub，等待 Fleet 讀取這次變更（已 {seconds} 秒）…"
       deploying: "Fleet 部署中：{ready} / {desired} 就緒…"
+      rollingOut: "Fleet 已套用，等新版本的 Pod 啟動（已 {seconds} 秒）…"
       bundleError: "Fleet 回報部署錯誤（{ready} / {desired} 就緒），仍持續確認中…"
       ready: 部署完成，可以打開應用。
       readyModified: "應用已部署並在執行，可以打開。但 Fleet 回報實際物件與 Git 內容不一致（Modified），細節請到 Continuous Delivery 的 {workspace} 工作區查看。"

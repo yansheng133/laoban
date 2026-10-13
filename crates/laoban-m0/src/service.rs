@@ -22,7 +22,7 @@ use crate::meta::{self, AppMeta, HistoryEntry, META_FILE};
 use crate::plan::{
     architecture, parse_app_plan, valid_app_name, EDIT_PLAN_INSTRUCTIONS, PLAN_INSTRUCTIONS,
 };
-use crate::render::{render, RenderInput};
+use crate::render::{render, rollout_hashes, RenderInput};
 use crate::store::{BaseApp, PlanStore, StoreError, StoredPlan};
 use crate::{time, InvalidOutput};
 
@@ -597,6 +597,20 @@ impl M0Service {
             .map_err(M0Error::Github)?;
 
         let s = &self.settings;
+        let rollout: Vec<Value> = rollout_hashes(&files)
+            .into_iter()
+            .map(|(component, hash)| {
+                let name = format!("{app}-{component}");
+                json!({
+                    "deployment": name,
+                    "path": format!(
+                        "/k8s/clusters/{}/v1/apps.deployments/{}/{name}",
+                        s.cluster_id, s.target_namespace
+                    ),
+                    "contentHash": hash,
+                })
+            })
+            .collect();
         Ok(json!({
             "mode": kind,
             "appName": app,
@@ -609,6 +623,7 @@ impl M0Service {
                 "gitRepo": FLEET_GITREPO,
                 "bundlePrefix": format!("{FLEET_GITREPO}-{APPS_DIR}-{app}"),
             },
+            "rollout": rollout,
         }))
     }
 }

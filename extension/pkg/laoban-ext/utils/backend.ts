@@ -7,6 +7,7 @@ import {
   AI_REQUEST_MARGIN_MS, AI_REQUEST_TIMEOUT_MS, BACKEND_BASE_PATH, FLEET_BUNDLES_PATH, DEFAULT_REQUEST_TIMEOUT_MS
 } from '../config/backend';
 import type { Architecture } from './layout';
+import type { Deployment } from './rollout';
 import type { Bundle } from './bundle';
 
 // The part of the Vuex store this module uses (the shell's cookies getter).
@@ -29,6 +30,8 @@ export interface PlanResponse {
 export interface ApplyResponse {
   mode?: 'create' | 'edit';
   appName?: string;
+  // Deployments to check after Fleet is ready (see utils/rollout.ts).
+  rollout?: unknown;
   commit: string;
   commitUrl: string;
   path: string;
@@ -242,6 +245,22 @@ export function applyPlan(store: StoreLike, planId: string, timeoutMs: number): 
   return requestJson<ApplyResponse>(store, backendUrl('/api/apply'), {
     method: 'POST', body: { planId }, timeoutMs
   });
+}
+
+/**
+ * One Deployment in the target cluster through Steve, or null if it does not
+ * exist yet. `path` comes from rolloutTargets(), which only allows Steve
+ * deployment paths.
+ */
+export async function getDeployment(store: StoreLike, path: string): Promise<Deployment | null> {
+  try {
+    return await requestJson<Deployment>(store, path);
+  } catch (e) {
+    if (e instanceof RequestError && e.status === 404) {
+      return null;
+    }
+    throw e;
+  }
 }
 
 /** List Fleet bundles in the workspace through Steve on the local cluster. */
