@@ -11,6 +11,7 @@ fn plan_req(prompt: &str) -> PlanRequestBody {
     PlanRequestBody {
         prompt: prompt.into(),
         app_name: None,
+        base_app: None,
     }
 }
 
@@ -30,6 +31,7 @@ fn call_sequence(h: &Harness) -> Vec<String> {
             let path = r
                 .path
                 .strip_prefix("/repos/example-owner/laoban-apps/git/")
+                .or_else(|| r.path.strip_prefix("/repos/example-owner/laoban-apps/"))
                 .unwrap_or(&r.path)
                 .to_string();
             format!("{} {}", r.method, path)
@@ -96,6 +98,8 @@ fn happy_path_plan_then_apply() {
     assert_eq!(
         applied,
         json!({
+            "mode": "create",
+            "appName": "breakfast",
             "commit": NEW_COMMIT,
             "commitUrl": format!("https://github.com/example-owner/laoban-apps/commit/{NEW_COMMIT}"),
             "path": "apps/breakfast",
@@ -106,11 +110,15 @@ fn happy_path_plan_then_apply() {
 
     // Git Data API sequence.
     let seq = call_sequence(&h);
+    // The name is checked against apps/ when planning and again before
+    // committing.
     let mut expected = vec![
+        "GET contents/apps?ref=main".to_string(),
+        "GET contents/apps?ref=main".to_string(),
         "GET ref/heads/main".to_string(),
         format!("GET commits/{BASE_COMMIT}"),
     ];
-    expected.extend(std::iter::repeat("POST blobs".to_string()).take(6));
+    expected.extend(std::iter::repeat("POST blobs".to_string()).take(8));
     expected.extend([
         "POST trees".to_string(),
         "POST commits".to_string(),
@@ -127,7 +135,7 @@ fn happy_path_plan_then_apply() {
         assert_eq!(r.header("accept"), Some("application/vnd.github+json"));
     }
     let body = |i: usize| -> Value { serde_json::from_str(&reqs[i].body_str()).unwrap() };
-    let tree = body(8);
+    let tree = body(12);
     assert_eq!(tree["base_tree"], BASE_TREE);
     let paths: Vec<&str> = tree["tree"]
         .as_array()
@@ -148,16 +156,18 @@ fn happy_path_plan_then_apply() {
             "apps/breakfast/web.yaml",
             "apps/breakfast/api.yaml",
             "apps/breakfast/README.md",
+            "apps/breakfast/laoban.json",
+            "apps/breakfast/.fleetignore",
         ]
     );
-    let commit = body(9);
+    let commit = body(13);
     assert_eq!(commit["tree"], NEW_TREE);
     assert_eq!(commit["parents"], json!([BASE_COMMIT]));
     assert_eq!(
         commit["message"],
         "laoban: breakfast — 早餐店點餐頁面，可以選餐點和送出訂單。\n\nGenerated-by: laoban\n"
     );
-    assert_eq!(body(10), json!({"sha": NEW_COMMIT, "force": false}));
+    assert_eq!(body(14), json!({"sha": NEW_COMMIT, "force": false}));
 
     // Blob contents.
     let blobs = blob_contents(&h.github);
@@ -170,6 +180,16 @@ fn happy_path_plan_then_apply() {
     assert!(blobs[4].contains("\"/app/main.py\""));
     assert!(blobs[5].contains("做一個早餐店點餐頁面"));
     assert!(blobs[5].contains(MODEL));
+    // laoban.json reads back with the same validation as an AI response.
+    let meta = laoban_m0::meta::parse("breakfast", &blobs[6]).unwrap();
+    assert_eq!(
+        meta.files,
+        laoban_m0::codegen::parse_generated(&files_json()).unwrap()
+    );
+    assert_eq!(meta.history.len(), 1);
+    assert_eq!(meta.history[0].kind, "create");
+    assert!(meta.history[0].request.contains("做一個早餐店點餐頁面"));
+    assert!(blobs[7].contains("laoban.json"));
 
     // The code call received the plan as a data block, not the user turn.
     let sent = h.provider.received();
@@ -224,7 +244,7 @@ fn extra_file_key_is_502_and_nothing_is_committed() {
     let id = plan_id(&h.service.plan(&plan_req("x 需求")).unwrap());
     let err = h.service.apply(&apply_req(&id)).unwrap_err();
     assert_eq!((err.status(), err.code()), (502, "ai_invalid_output"));
-    assert!(h.github.requests().is_empty());
+    assert_eq!(writes(&h.github), 0);
     // A failed apply can be retried.
     assert!(h.service.apply(&apply_req(&id)).is_ok());
 }
@@ -240,7 +260,7 @@ fn extra_top_level_key_is_502() {
     let id = plan_id(&h.service.plan(&plan_req("x 需求")).unwrap());
     let err = h.service.apply(&apply_req(&id)).unwrap_err();
     assert_eq!(err.code(), "ai_invalid_output");
-    assert!(h.github.requests().is_empty());
+    assert_eq!(writes(&h.github), 0);
 }
 
 #[test]
@@ -254,7 +274,7 @@ fn oversize_file_is_502() {
     let id = plan_id(&h.service.plan(&plan_req("x 需求")).unwrap());
     let err = h.service.apply(&apply_req(&id)).unwrap_err();
     assert_eq!((err.status(), err.code()), (502, "ai_invalid_output"));
-    assert!(h.github.requests().is_empty());
+    assert_eq!(writes(&h.github), 0);
 }
 
 #[test]
@@ -304,7 +324,7 @@ fn national_id_never_reaches_provider_or_readme() {
         .contains("[MASKED:TW_ID]"));
     let blobs = blob_contents(&h.github);
     assert!(blobs.iter().all(|b| !b.contains(&id_number)));
-    let readme = blobs.last().unwrap();
+    let readme = &blobs[5];
     assert!(readme.contains("[MASKED:TW_ID]"), "{readme}");
 }
 
@@ -338,6 +358,7 @@ fn bad_requests() {
         PlanRequestBody {
             prompt: "ok".into(),
             app_name: Some("Bad_Name".into()),
+            base_app: None,
         },
     ] {
         let err = h.service.plan(&body).unwrap_err();
@@ -355,6 +376,7 @@ fn user_app_name_wins_and_invalid_ai_name_is_502() {
         .plan(&PlanRequestBody {
             prompt: "x 需求".into(),
             app_name: Some("my-shop".into()),
+            base_app: None,
         })
         .unwrap();
     assert_eq!(plan["appName"], "my-shop");

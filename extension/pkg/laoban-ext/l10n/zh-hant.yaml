@@ -4,6 +4,39 @@ product:
 laoban:
   nav:
     dashboard: 總覽
+  apps:
+    title: 應用清單
+    refresh: 重新整理
+    empty: 還沒有任何應用。在上方輸入需求，部署後就會出現在這裡。
+    loadFailed: 無法讀取應用清單，請稍後再試。
+    legacy: 較早版本產生，沒有編輯紀錄，無法編輯。
+    revisions: "共 {count} 個版本"
+    open: 打開
+    edit: 編輯
+    col:
+      name: 名稱
+      summary: 摘要
+      updated: 最後更新
+      state: Fleet 狀態
+      actions: 動作
+    state:
+      ready: 已就緒
+      modified: 執行中（與 Git 不一致）
+      pending: 部署中
+      error: 部署錯誤
+      missing: Fleet 尚未讀到
+      unknown: "-"
+  edit:
+    title: "編輯：{appName}"
+    history: 最近的修改
+    kindCreate: 建立
+    kindEdit: 修改
+    cancel: 取消編輯，改成新增應用
+    promptLabel: 要怎麼修改
+    promptPlaceholder: 例如：加上飲料選項，訂單要能填備註
+    generate: 產生修改計畫
+    planTitle: "修改計畫：{appName}"
+    currentArch: 目前的架構。產生修改計畫後會換成修改後的樣子。
   dashboard:
     title: laoban
     description: 用一句話描述需求，laoban 會先提出計畫與架構圖；確認後才產生程式、寫進 GitHub，再由 Fleet 部署。這是試吃版（M0）。

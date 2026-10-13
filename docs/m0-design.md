@@ -47,7 +47,8 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 { "prompt": "做一個早餐店點餐頁面，可以選餐點和送出訂單", "appName": "breakfast" }
 ```
 
-- `appName`：`^[a-z][a-z0-9-]{1,30}$`。省略時由後端從 AI 回應的 `appName` 取，再驗證。
+- `appName`：`^[a-z][a-z0-9-]{1,30}$`。省略時由後端從 AI 回應的 `appName` 取，再驗證。名稱已經被現有應用使用時：使用者指定的回 `409 app_exists`（不呼叫 AI）；AI 取的名稱自動改用 `-2`～`-9` 結尾的空名稱。
+- `baseApp`：修改現有應用時帶入它的名稱（不可與不同的 `appName` 同時出現）。後端從 GitHub 讀該應用的 `laoban.json`，把目前的計畫與這次的修改要求分成兩個資料區塊（`current_plan`、`change_request`）給 AI，要求回傳完整的新計畫，名稱不變。回應多一個 `"mode": "edit"`（新應用為 `"create"`）。程式超過 40 KiB 的應用不能編輯（本機模型的 context 放不下）。
 
 回應 `200`：
 
@@ -84,10 +85,19 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 ```
 
 - 同一個 `planId` 只能 apply 一次（第二次回 `409`）。
+- 回應多 `mode` 與 `appName`。新應用在 commit 前再確認一次名稱沒被占用。修改現有應用時，產生程式那一步另外帶 `current_code` 資料區塊（目前的四個檔案），要求在保留其餘行為的前提下改出完整的四個檔案。
+
+### `GET /api/apps`
+
+列出 `apps/` 底下的每個應用，最近修改的在前：`{"apps": [{appName, editable, summary, updatedAt, revisions, appUrl, path, fleet}]}`。沒有可讀 `laoban.json` 的目錄（例如較早版本產生的）也會列出，`editable: false`。不含程式內容。
+
+### `GET /api/apps/<appName>`
+
+`{appName, summary, steps, architecture, updatedAt, history, appUrl, path, fleet}`，`history` 新的在前，每筆 `{at, kind: create|edit, request, summary, model}`（文字都已遮蔽）。不存在回 `404 app_not_found`；沒有 `laoban.json` 回 `409 not_editable`。
 
 ### 錯誤
 
-一律 `{"error": {"code": "…", "message": "…"}}`，`message` 是給使用者看的繁中句子。代碼：`bad_request`（400）、`plan_not_found`（404）、`already_applied`（409）、`budget_exceeded`（429，laoban 自己的 token 上限）、`spend_limit`（402，Anthropic 花費上限，**不重試**）、`ai_invalid_output`（502，AI 回應不合格式或碰到禁止的資源）、`github_failed`（502）、`internal`（500）。
+一律 `{"error": {"code": "…", "message": "…"}}`，`message` 是給使用者看的繁中句子。代碼：`bad_request`（400）、`plan_not_found`（404）、`already_applied`（409）、`app_exists`（409）、`app_not_found`（404）、`not_editable`（409）、`budget_exceeded`（429，laoban 自己的 token 上限）、`spend_limit`（402，Anthropic 花費上限，**不重試**）、`ai_invalid_output`（502，AI 回應不合格式或碰到禁止的資源）、`github_failed`（502）、`internal`（500）。
 
 ### 其他
 
@@ -116,7 +126,9 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 | `configmap-api.yaml` | ConfigMap `<app>-api-code`：AI 的 `handler.py`，加上範本的 `main.py` |
 | `web.yaml` | Deployment＋Service `<app>-web`，port 8080 |
 | `api.yaml` | Deployment＋Service `<app>-api`，port 8080 |
-| `README.md` | 原始需求、計畫摘要、產生時間、模型 ID（需求先遮蔽再寫入） |
+| `README.md` | 這次的需求、計畫摘要、產生時間、模型 ID（需求先遮蔽再寫入） |
+| `laoban.json` | 給 laoban 自己讀回的紀錄：計畫與四個程式檔（格式同 AI 的回應，讀回時走同一套驗證）、最近 20 筆需求紀錄（已遮蔽）。應用清單與編輯都靠它 |
+| `.fleetignore` | 讓 Fleet 不把 `laoban.json` 當成 manifest |
 
 - 兩個 Deployment 都用 `registry.suse.com/bci/python:3.13`（**實作時查證 tag 存在**，並在 manifest 用 digest；查不到 digest 就用 tag，在 PR 說明標出來），`command: ["python3", "/app/server.py"]` 或 `main.py`。
 - 範本 `server.py`：服務 `/app` 下的靜態檔，並把 `api/*` 轉給 `http://<app>-api:8080/`。標準函式庫實作。
@@ -143,6 +155,7 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 ## 頁面（Rancher UI extension）
 
 - 一個頁面，三個區塊：左邊對話（輸入需求、送出、顯示計畫摘要與步驟）、右邊 3D 架構圖、下方狀態列。
+- 總覽頁下方是**應用清單**（`GET /api/apps`）：名稱、摘要、最後更新、Fleet 狀態，以及「打開」「編輯」。按「編輯」後，上方切換成編輯模式：顯示目前摘要、最近 5 筆修改紀錄與目前的 3D 架構圖，輸入「要怎麼修改」後產生修改計畫（`baseApp`），確認後 commit 到同一個目錄。可以隨時取消、回到新增模式。
 - 3D 圖沿用 `web/viewer-prototype` 的程式（three.js 0.160.0、`graph-diff.mjs`）；M0 只需要顯示與縮放，不需要版本比較與拖曳。
 - 「確認並部署」按下後顯示 commit 連結，接著每 5 秒讀 Fleet Bundle（Bundle 只剩 Modified、沒有待部署或錯誤時，也視為應用已在執行，顯示連結並附上 Fleet 的訊息）（`/v1/fleet.cattle.io.bundles`，篩 `laoban.io` 前綴或 bundlePrefix）的 Ready 狀態，Ready 後顯示「打開應用」連結。
 - 所有 AI 產生的文字用文字方式顯示，不用 `v-html`。

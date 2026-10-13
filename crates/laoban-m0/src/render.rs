@@ -33,6 +33,8 @@ pub struct RenderInput<'a> {
     pub model: &'a str,
     /// RFC 3339 UTC timestamp.
     pub generated_at: &'a str,
+    /// Content of `laoban.json` (see [`crate::meta`]).
+    pub meta_json: &'a str,
 }
 
 /// sha256 over the ConfigMap data: for each key in sorted order,
@@ -305,8 +307,8 @@ fn quote_block(text: &str) -> String {
 
 fn readme(input: &RenderInput<'_>) -> String {
     format!(
-        "# {app}\n\n此目錄由 laoban 產生，請勿手動修改；要變更請重新產生。\n\n\
-## 原始需求（已遮蔽）\n\n{prompt}\n\
+        "# {app}\n\n此目錄由 laoban 產生，請勿手動修改；要變更請在 laoban 頁面的應用清單按「編輯」。\n\n\
+## 這次的需求（已遮蔽）\n\n{prompt}\n\
 ## 計畫摘要\n\n{summary}\n\
 ## 產生資訊\n\n\
 - 產生時間：{at}\n\
@@ -390,6 +392,14 @@ pub fn render(input: &RenderInput<'_>) -> Vec<CommitFile> {
         CommitFile {
             path: format!("{dir}/README.md"),
             content: readme(input),
+        },
+        CommitFile {
+            path: format!("{dir}/{}", crate::meta::META_FILE),
+            content: input.meta_json.to_string(),
+        },
+        CommitFile {
+            path: format!("{dir}/.fleetignore"),
+            content: crate::meta::FLEETIGNORE.to_string(),
         },
     ]
 }

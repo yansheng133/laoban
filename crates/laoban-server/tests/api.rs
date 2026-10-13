@@ -23,6 +23,10 @@ const COMMIT: &str = "4444444444444444444444444444444444444444";
 fn github_mock() -> MockServer {
     let n = Arc::new(AtomicUsize::new(0));
     MockServer::start(move |r: &Recorded| {
+        // The repository has no apps/ directory yet.
+        if r.path.contains("/contents/") {
+            return Reply::json(404, r#"{"message":"Not Found"}"#);
+        }
         let i = n.fetch_add(1, Ordering::SeqCst);
         let sha = if r.path.ends_with("/git/commits") {
             COMMIT.to_string()
@@ -196,6 +200,32 @@ fn plan_apply_and_errors_over_http() {
 
     // Probes still behave as before.
     assert_eq!(get(r.addr, "/healthz"), (200, "ok".to_string()));
+}
+
+#[test]
+fn apps_endpoints() {
+    let r = start(Box::new(MockProvider::new()), 1_000_000);
+    let (status, body) = get(r.addr, "/api/apps");
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(
+        serde_json::from_str::<Value>(&body).unwrap(),
+        json!({"apps": []})
+    );
+
+    let (status, body) = get(r.addr, "/api/apps/breakfast");
+    assert_eq!(status, 404);
+    assert_error(&serde_json::from_str(&body).unwrap(), "app_not_found");
+
+    let (status, body) = get(r.addr, "/api/apps/Bad_Name");
+    assert_eq!(status, 400);
+    assert_error(&serde_json::from_str(&body).unwrap(), "bad_request");
+
+    for path in ["/api/apps/a/b", "/api/apps/"] {
+        let (status, _) = get(r.addr, path);
+        assert_eq!(status, 404, "{path}");
+    }
+    let (status, _) = post(r.addr, "/api/apps", "{}");
+    assert_eq!(status, 405);
 }
 
 #[test]

@@ -459,9 +459,14 @@ fn valid_plan_id(id: &str) -> bool {
 
 /// Handle `/api/*`. `body` is empty for requests without one.
 fn route_api(api: &ApiState, head: &RequestHead, body: &[u8]) -> Response {
-    let (allowed, is_post) = match head.path.as_str() {
-        "/api/config" => ("GET", false),
+    let path = head.path.as_str();
+    let app = path
+        .strip_prefix("/api/apps/")
+        .filter(|rest| !rest.is_empty() && !rest.contains('/'));
+    let (allowed, is_post) = match path {
+        "/api/config" | "/api/apps" => ("GET", false),
         "/api/plan" | "/api/apply" => ("POST", true),
+        _ if app.is_some() => ("GET", false),
         _ => return Response::api_error(404, "bad_request", "找不到這個 API。"),
     };
     if head.method != allowed {
@@ -475,7 +480,16 @@ fn route_api(api: &ApiState, head: &RequestHead, body: &[u8]) -> Response {
         ApiState::Unconfigured(message) => return Response::api_error(500, "internal", message),
     };
     if !is_post {
-        return Response::json(200, service.config_json().to_string());
+        let result = match (path, app) {
+            ("/api/config", _) => Ok(service.config_json()),
+            ("/api/apps", _) => service.list_apps(),
+            (_, Some(name)) => service.get_app(name),
+            _ => return Response::api_error(404, "bad_request", "找不到這個 API。"),
+        };
+        return match result {
+            Ok(v) => Response::json(200, v.to_string()),
+            Err(e) => m0_error(&e),
+        };
     }
     // Requiring a JSON content type also keeps plain cross-site form
     // posts (which cannot set it without a CORS preflight) out.
@@ -484,7 +498,9 @@ fn route_api(api: &ApiState, head: &RequestHead, body: &[u8]) -> Response {
     }
     if head.path == "/api/plan" {
         let Ok(req) = serde_json::from_slice::<PlanRequestBody>(body) else {
-            return bad_request("請求格式不正確：需要 {\"prompt\": \"…\"}，可加 \"appName\"。");
+            return bad_request(
+                "請求格式不正確：需要 {\"prompt\": \"…\"}，可加 \"appName\" 或 \"baseApp\"。",
+            );
         };
         match service.plan(&req) {
             Ok(v) => Response {

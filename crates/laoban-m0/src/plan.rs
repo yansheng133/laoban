@@ -19,6 +19,9 @@ Respond with exactly one JSON object and nothing else (no Markdown fences), with
 {"appName": string matching ^[a-z][a-z0-9-]{1,30}$, "summary": string, "steps": [string], "components": {"web": {"modules": [{"name": string, "purpose": string}]}, "api": {"modules": [{"name": string, "purpose": string}], "endpoints": [{"method": "GET"|"POST"|"PUT"|"PATCH"|"DELETE", "path": string starting with "/", "purpose": string}]}}, "notes": string}
 Write summary, steps, purposes and notes in Traditional Chinese (Taiwan). Use at most 8 modules per component, at most 16 endpoints and at most 20 steps. Do not include positions or coordinates."#;
 
+/// Extra instructions for the plan call when an existing app is changed.
+pub const EDIT_PLAN_INSTRUCTIONS: &str = r#"This is a change to an existing application. The data block current_plan holds its current plan in the response format, and the data block change_request holds what the user wants changed. Return the complete updated plan (not only the differences), keep appName unchanged, and keep the modules and endpoints the change does not affect. In summary, describe the application as a whole after the change; make the steps the steps of this change."#;
+
 const MAX_STEPS: usize = 20;
 const MAX_MODULES: usize = 8;
 const MAX_ENDPOINTS: usize = 16;

@@ -1,6 +1,8 @@
 //! Commit a set of files to one branch with the GitHub Git Data API:
 //! get ref → base commit → blobs → tree (with `base_tree`) → commit →
-//! update ref (`force: false`).
+//! update ref (`force: false`). Also reads directory listings and single
+//! files from the branch with the contents API (raw media type, so no
+//! base64 decoding is needed).
 //!
 //! No retries: a failed step (including a stale ref, which GitHub reports
 //! as 422 or 409 when the branch moved underneath us) is returned as an
@@ -19,6 +21,8 @@ pub const DEFAULT_API_BASE: &str = "https://api.github.com";
 
 /// Largest error body read, in bytes.
 const MAX_ERROR_BODY: u64 = 64 * 1024;
+/// Largest file read back with [`GithubCommitter::read_file`], in bytes.
+pub const MAX_READ_BYTES: u64 = 1024 * 1024;
 
 /// A fine-grained personal access token. `Debug` never shows it.
 #[derive(Clone)]
@@ -140,11 +144,23 @@ impl GithubCommitter {
         url: &str,
         body: Option<&Value>,
     ) -> Result<Value, GithubError> {
+        let text = self.call_text(stage, method, url, body, "application/vnd.github+json")?;
+        serde_json::from_str(&text).map_err(|_| GithubError::InvalidResponse { stage })
+    }
+
+    fn call_text(
+        &self,
+        stage: &'static str,
+        method: &str,
+        url: &str,
+        body: Option<&Value>,
+        accept: &str,
+    ) -> Result<String, GithubError> {
         let req = self
             .agent
             .request(method, url)
             .set("authorization", &format!("Bearer {}", self.token.0))
-            .set("accept", "application/vnd.github+json")
+            .set("accept", accept)
             .set("x-github-api-version", "2022-11-28");
         let result = match body {
             Some(b) => req
@@ -154,10 +170,16 @@ impl GithubCommitter {
         };
         match result {
             Ok(resp) => {
-                let text = resp
-                    .into_string()
-                    .map_err(|_| GithubError::InvalidResponse { stage })?;
-                serde_json::from_str(&text).map_err(|_| GithubError::InvalidResponse { stage })
+                let mut text = String::new();
+                std::io::Read::read_to_string(
+                    &mut std::io::Read::take(resp.into_reader(), MAX_READ_BYTES + 1),
+                    &mut text,
+                )
+                .map_err(|_| GithubError::InvalidResponse { stage })?;
+                if text.len() as u64 > MAX_READ_BYTES {
+                    return Err(GithubError::InvalidResponse { stage });
+                }
+                Ok(text)
             }
             Err(ureq::Error::Status(status, resp)) => {
                 let mut text = String::new();
@@ -182,6 +204,51 @@ impl GithubCommitter {
                 stage,
                 kind: format!("{:?}", t.kind()),
             }),
+        }
+    }
+
+    fn contents_url(&self, path: &str) -> String {
+        self.url(&format!("contents/{path}?ref={}", self.config.branch))
+    }
+
+    /// Names of the subdirectories of `path` on the branch. A missing
+    /// directory is an empty list.
+    pub fn list_dirs(&self, path: &str) -> Result<Vec<String>, GithubError> {
+        if !safe_path(path) {
+            return Err(GithubError::BadPath);
+        }
+        let v = match self.call("list directory", "GET", &self.contents_url(path), None) {
+            Ok(v) => v,
+            Err(GithubError::Status { status: 404, .. }) => return Ok(Vec::new()),
+            Err(e) => return Err(e),
+        };
+        let items = v.as_array().ok_or(GithubError::InvalidResponse {
+            stage: "list directory",
+        })?;
+        let mut names: Vec<String> = items
+            .iter()
+            .filter(|i| i["type"] == "dir")
+            .filter_map(|i| i["name"].as_str().map(str::to_string))
+            .collect();
+        names.sort();
+        Ok(names)
+    }
+
+    /// A file's content on the branch, or `None` if it does not exist.
+    pub fn read_file(&self, path: &str) -> Result<Option<String>, GithubError> {
+        if !safe_path(path) {
+            return Err(GithubError::BadPath);
+        }
+        match self.call_text(
+            "read file",
+            "GET",
+            &self.contents_url(path),
+            None,
+            "application/vnd.github.raw+json",
+        ) {
+            Ok(text) => Ok(Some(text)),
+            Err(GithubError::Status { status: 404, .. }) => Ok(None),
+            Err(e) => Err(e),
         }
     }
 

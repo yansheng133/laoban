@@ -4,6 +4,8 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+use crate::codegen::GeneratedFiles;
+use crate::meta::HistoryEntry;
 use crate::plan::AppPlan;
 
 pub const PLAN_TTL: Duration = Duration::from_secs(60 * 60);
@@ -17,6 +19,15 @@ pub struct StoredPlan {
     pub plan: AppPlan,
     pub masked_prompt: String,
     pub model: String,
+    /// Set when the plan changes an existing app.
+    pub base: Option<BaseApp>,
+}
+
+/// The existing app a plan changes, as read when the plan was made.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BaseApp {
+    pub files: GeneratedFiles,
+    pub history: Vec<HistoryEntry>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -151,6 +162,7 @@ mod tests {
             },
             masked_prompt: String::new(),
             model: "m".into(),
+            base: None,
         }
     }
 

@@ -6,6 +6,39 @@ laoban:
     dashboard: 概要
   # M0: the dashboard strings below are English placeholders; Japanese
   # translation is not done yet.
+  apps:
+    title: アプリ一覧
+    refresh: 再読み込み
+    empty: まだアプリがありません。上で要件を入力し、デプロイするとここに表示されます。
+    loadFailed: アプリ一覧を読み込めませんでした。しばらくしてから再試行してください。
+    legacy: 以前のバージョンで作成されたため編集履歴がなく、編集できません。
+    revisions: "{count} 版"
+    open: 開く
+    edit: 編集
+    col:
+      name: 名前
+      summary: 概要
+      updated: 最終更新
+      state: Fleet の状態
+      actions: 操作
+    state:
+      ready: 準備完了
+      modified: 実行中（Git と不一致）
+      pending: デプロイ中
+      error: デプロイエラー
+      missing: Fleet 未取得
+      unknown: "-"
+  edit:
+    title: "編集：{appName}"
+    history: 最近の変更
+    kindCreate: 作成
+    kindEdit: 変更
+    cancel: 編集をやめて新しいアプリを作成
+    promptLabel: どう変更しますか
+    promptPlaceholder: 例：飲み物を追加し、注文にメモを付けられるようにする
+    generate: 変更計画を作成
+    planTitle: "変更計画：{appName}"
+    currentArch: 現在の構成です。変更計画ができると変更後の構成に置き換わります。
   dashboard:
     title: laoban
     description: Describe what you need in one sentence. laoban proposes a plan and an architecture view first; only after you confirm does it generate code, commit it to GitHub and let Fleet deploy it. This is the M0 preview.

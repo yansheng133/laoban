@@ -15,12 +15,15 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use thiserror::Error;
 
-use crate::codegen::{parse_generated, CODEGEN_INSTRUCTIONS};
+use crate::codegen::{parse_generated, CODEGEN_INSTRUCTIONS, EDIT_CODEGEN_INSTRUCTIONS};
 use crate::config::M0Settings;
 use crate::github::{GithubCommitter, GithubError};
-use crate::plan::{architecture, parse_app_plan, valid_app_name, PLAN_INSTRUCTIONS};
+use crate::meta::{self, AppMeta, HistoryEntry, META_FILE};
+use crate::plan::{
+    architecture, parse_app_plan, valid_app_name, EDIT_PLAN_INSTRUCTIONS, PLAN_INSTRUCTIONS,
+};
 use crate::render::{render, RenderInput};
-use crate::store::{PlanStore, StoreError, StoredPlan};
+use crate::store::{BaseApp, PlanStore, StoreError, StoredPlan};
 use crate::{time, InvalidOutput};
 
 /// Fleet objects created once by hand (design: Fleet).
@@ -34,6 +37,14 @@ pub const PLAN_MAX_TOKENS: u32 = 4_096;
 /// `max_tokens` for the code call. Four files of a small app fit well
 /// within this; a truncated response is rejected, never committed.
 pub const CODEGEN_MAX_TOKENS: u32 = 16_000;
+/// Largest current code (four files together) sent along when an app is
+/// changed. Keeps the request inside a 32k-token local model context
+/// together with the plan and `CODEGEN_MAX_TOKENS` of output.
+pub const MAX_EDIT_CODE_BYTES: usize = 40 * 1024;
+/// Directory in the apps repository that Fleet deploys.
+pub const APPS_DIR: &str = "apps";
+/// Most apps listed.
+pub const MAX_LISTED_APPS: usize = 100;
 
 /// There is one user in M0 and no identity is passed to the backend;
 /// this fixed principal is what the orchestrator records.
@@ -49,6 +60,9 @@ pub struct PlanRequestBody {
     pub prompt: String,
     #[serde(default)]
     pub app_name: Option<String>,
+    /// Change this existing app instead of creating a new one.
+    #[serde(default)]
+    pub base_app: Option<String>,
 }
 
 /// `POST /api/apply` body.
@@ -81,6 +95,16 @@ pub enum M0Error {
     Github(GithubError),
     #[error("internal: {0}")]
     Internal(String),
+    /// A new app would overwrite an existing one. Carries the name for the
+    /// user message only.
+    #[error("app already exists")]
+    AppExists(String),
+    #[error("app not found")]
+    AppNotFound,
+    /// The app has no (valid) laoban.json, for example one made before it
+    /// existed.
+    #[error("app is not editable")]
+    NotEditable,
 }
 
 impl M0Error {
@@ -94,6 +118,9 @@ impl M0Error {
             M0Error::AiInvalidOutput(_) => "ai_invalid_output",
             M0Error::Github(_) => "github_failed",
             M0Error::AiUnavailable(_) | M0Error::Internal(_) => "internal",
+            M0Error::AppExists(_) => "app_exists",
+            M0Error::AppNotFound => "app_not_found",
+            M0Error::NotEditable => "not_editable",
         }
     }
 
@@ -119,6 +146,8 @@ impl M0Error {
             M0Error::SpendLimit => 402,
             M0Error::AiInvalidOutput(_) | M0Error::Github(_) => 502,
             M0Error::AiUnavailable(_) | M0Error::Internal(_) => 500,
+            M0Error::AppExists(_) | M0Error::NotEditable => 409,
+            M0Error::AppNotFound => 404,
         }
     }
 
@@ -144,6 +173,14 @@ impl M0Error {
                 "寫入 GitHub 失敗，請稍後再試；若持續失敗請管理者檢查 token 與 repo 設定。".into()
             }
             M0Error::Internal(_) => "後端發生內部錯誤。".into(),
+            M0Error::AppExists(app) => format!(
+                "已經有名為 {app} 的應用。要修改它，請在下方應用清單按「編輯」；要另外建立，請換一個名稱。"
+            ),
+            M0Error::AppNotFound => "找不到這個應用，可能已經被刪除。".into(),
+            M0Error::NotEditable => {
+                "這個應用沒有 laoban 的編輯紀錄（可能是較早版本產生的），無法編輯；請用新名稱重新產生。"
+                    .into()
+            }
         }
     }
 }
@@ -260,29 +297,87 @@ impl M0Service {
             )),
         };
 
+        let base_name = match body.base_app.as_deref().map(str::trim) {
+            None | Some("") => None,
+            Some(n) if valid_app_name(n) => Some(n.to_string()),
+            Some(_) => return Err(M0Error::BadRequest("要編輯的應用名稱不正確。")),
+        };
+        if let (Some(base), Some(req)) = (&base_name, &requested_name) {
+            if base != req {
+                return Err(M0Error::BadRequest("編輯現有應用時不能改名稱。"));
+            }
+        }
+
         let masked = self.orchestrator.mask_for_ai(prompt);
-        let completion = self.orchestrator.complete(&CompletionRequest {
-            principal: PRINCIPAL.into(),
-            requested_model: None,
-            instructions: PLAN_INSTRUCTIONS.into(),
-            blocks: vec![UntrustedBlock {
-                kind: "user_requirement",
-                label: None,
-                content: masked.text.clone(),
-            }],
-            max_tokens: Some(PLAN_MAX_TOKENS),
-        })?;
-        let plan = parse_app_plan(&completion.content).map_err(M0Error::AiInvalidOutput)?;
-        let app = match requested_name {
-            Some(n) => n,
-            None => match plan.app_name.as_deref() {
-                Some(n) if valid_app_name(n) => n.to_string(),
-                _ => {
-                    return Err(M0Error::AiInvalidOutput(InvalidOutput(
-                        "appName missing or invalid".into(),
-                    )))
+        let (plan, completion, app, base) = match base_name {
+            Some(base_app) => {
+                let current = self.load_app(&base_app)?;
+                if current.files.total_bytes() > MAX_EDIT_CODE_BYTES {
+                    return Err(M0Error::BadRequest(
+                        "這個應用的程式太大，試吃版無法用 AI 編輯。",
+                    ));
                 }
-            },
+                let current_plan =
+                    serde_json::to_string_pretty(&current.plan.to_codegen_json(&base_app))
+                        .map_err(|e| M0Error::Internal(e.to_string()))?;
+                let completion = self.orchestrator.complete(&CompletionRequest {
+                    principal: PRINCIPAL.into(),
+                    requested_model: None,
+                    instructions: format!("{PLAN_INSTRUCTIONS}\n{EDIT_PLAN_INSTRUCTIONS}"),
+                    blocks: vec![
+                        UntrustedBlock {
+                            kind: "current_plan",
+                            label: None,
+                            content: current_plan,
+                        },
+                        UntrustedBlock {
+                            kind: "change_request",
+                            label: None,
+                            content: masked.text.clone(),
+                        },
+                    ],
+                    max_tokens: Some(PLAN_MAX_TOKENS),
+                })?;
+                let plan = parse_app_plan(&completion.content).map_err(M0Error::AiInvalidOutput)?;
+                let base = BaseApp {
+                    files: current.files,
+                    history: current.history,
+                };
+                (plan, completion, base_app, Some(base))
+            }
+            None => {
+                let existing = self.app_names()?;
+                if let Some(n) = &requested_name {
+                    if existing.contains(n) {
+                        return Err(M0Error::AppExists(n.clone()));
+                    }
+                }
+                let completion = self.orchestrator.complete(&CompletionRequest {
+                    principal: PRINCIPAL.into(),
+                    requested_model: None,
+                    instructions: PLAN_INSTRUCTIONS.into(),
+                    blocks: vec![UntrustedBlock {
+                        kind: "user_requirement",
+                        label: None,
+                        content: masked.text.clone(),
+                    }],
+                    max_tokens: Some(PLAN_MAX_TOKENS),
+                })?;
+                let plan = parse_app_plan(&completion.content).map_err(M0Error::AiInvalidOutput)?;
+                let app = match requested_name {
+                    Some(n) => n,
+                    None => match plan.app_name.as_deref() {
+                        Some(n) if valid_app_name(n) => unused_name(n, &existing)
+                            .ok_or_else(|| M0Error::AppExists(n.to_string()))?,
+                        _ => {
+                            return Err(M0Error::AiInvalidOutput(InvalidOutput(
+                                "appName missing or invalid".into(),
+                            )))
+                        }
+                    },
+                };
+                (plan, completion, app, None)
+            }
         };
         let arch = architecture(&plan, &app);
 
@@ -294,6 +389,7 @@ impl M0Service {
         }
         let response = json!({
             "planId": id,
+            "mode": if base.is_some() { "edit" } else { "create" },
             "appName": app,
             "summary": plan.summary,
             "steps": plan.steps,
@@ -311,10 +407,103 @@ impl M0Service {
                 plan,
                 masked_prompt: masked.text,
                 model: completion.model,
+                base,
             },
             Instant::now(),
         );
         Ok(response)
+    }
+
+    fn app_url(&self, app: &str) -> String {
+        format!(
+            "/k8s/clusters/{}/api/v1/namespaces/{}/services/http:{app}-web:8080/proxy/",
+            self.settings.cluster_id, self.settings.target_namespace
+        )
+    }
+
+    /// Names of the app directories in the repository.
+    fn app_names(&self) -> Result<Vec<String>, M0Error> {
+        self.github.list_dirs(APPS_DIR).map_err(M0Error::Github)
+    }
+
+    /// Read an app's `laoban.json`.
+    fn load_app(&self, app: &str) -> Result<AppMeta, M0Error> {
+        let path = format!("{APPS_DIR}/{app}/{META_FILE}");
+        match self.github.read_file(&path).map_err(M0Error::Github)? {
+            Some(text) => meta::parse(app, &text).map_err(|_| M0Error::NotEditable),
+            None if self.app_names()?.iter().any(|n| n == app) => Err(M0Error::NotEditable),
+            None => Err(M0Error::AppNotFound),
+        }
+    }
+
+    fn app_links(&self, app: &str) -> Value {
+        json!({
+            "appUrl": self.app_url(app),
+            "path": format!("{APPS_DIR}/{app}"),
+            "fleet": {
+                "workspace": FLEET_WORKSPACE,
+                "gitRepo": FLEET_GITREPO,
+                "bundlePrefix": format!("{FLEET_GITREPO}-{APPS_DIR}-{app}"),
+            },
+        })
+    }
+
+    /// `GET /api/apps`: every app directory, newest change first. Apps
+    /// without a readable `laoban.json` are listed as not editable.
+    pub fn list_apps(&self) -> Result<Value, M0Error> {
+        let names = self.app_names()?;
+        let mut apps: Vec<(String, Value)> = Vec::new();
+        for name in names
+            .iter()
+            .filter(|n| valid_app_name(n))
+            .take(MAX_LISTED_APPS)
+        {
+            let path = format!("{APPS_DIR}/{name}/{META_FILE}");
+            let meta = match self.github.read_file(&path).map_err(M0Error::Github)? {
+                Some(text) => meta::parse(name, &text).ok(),
+                None => None,
+            };
+            let mut item = self.app_links(name);
+            item["appName"] = json!(name);
+            match &meta {
+                Some(m) => {
+                    item["editable"] = json!(true);
+                    item["summary"] = json!(m.plan.summary);
+                    item["updatedAt"] = json!(m.updated_at());
+                    item["revisions"] = json!(m.history.len());
+                }
+                None => {
+                    item["editable"] = json!(false);
+                    item["summary"] = json!("");
+                    item["updatedAt"] = json!("");
+                    item["revisions"] = json!(0);
+                }
+            }
+            let key = meta
+                .as_ref()
+                .map(|m| m.updated_at().to_string())
+                .unwrap_or_default();
+            apps.push((key, item));
+        }
+        // Newest first; apps without a date (not editable) last, by name.
+        apps.sort_by(|a, b| b.0.cmp(&a.0));
+        Ok(json!({ "apps": apps.into_iter().map(|(_, v)| v).collect::<Vec<_>>() }))
+    }
+
+    /// `GET /api/apps/<name>`: what the page needs to show and change an app.
+    pub fn get_app(&self, app: &str) -> Result<Value, M0Error> {
+        if !valid_app_name(app) {
+            return Err(M0Error::BadRequest("應用名稱不正確。"));
+        }
+        let m = self.load_app(app)?;
+        let mut v = self.app_links(app);
+        v["appName"] = json!(app);
+        v["summary"] = json!(m.plan.summary);
+        v["steps"] = json!(m.plan.steps);
+        v["architecture"] = architecture(&m.plan, app);
+        v["updatedAt"] = json!(m.updated_at());
+        v["history"] = json!(m.history.iter().rev().collect::<Vec<_>>());
+        Ok(v)
     }
 
     /// `POST /api/apply`.
@@ -333,17 +522,34 @@ impl M0Service {
     }
 
     fn apply_inner(&self, stored: &StoredPlan) -> Result<Value, M0Error> {
+        // A new app must still not exist (another plan may have been
+        // applied under the same name since).
+        if stored.base.is_none() && self.app_names()?.contains(&stored.app) {
+            return Err(M0Error::AppExists(stored.app.clone()));
+        }
         let plan_json = serde_json::to_string_pretty(&stored.plan.to_codegen_json(&stored.app))
             .map_err(|e| M0Error::Internal(e.to_string()))?;
+        let mut blocks = vec![UntrustedBlock {
+            kind: "approved_plan",
+            label: None,
+            content: plan_json,
+        }];
+        let mut instructions = CODEGEN_INSTRUCTIONS.to_string();
+        if let Some(base) = &stored.base {
+            blocks.push(UntrustedBlock {
+                kind: "current_code",
+                label: None,
+                content: serde_json::to_string_pretty(&base.files.to_json())
+                    .map_err(|e| M0Error::Internal(e.to_string()))?,
+            });
+            instructions.push('\n');
+            instructions.push_str(EDIT_CODEGEN_INSTRUCTIONS);
+        }
         let completion = self.orchestrator.complete(&CompletionRequest {
             principal: PRINCIPAL.into(),
             requested_model: None,
-            instructions: CODEGEN_INSTRUCTIONS.into(),
-            blocks: vec![UntrustedBlock {
-                kind: "approved_plan",
-                label: None,
-                content: plan_json,
-            }],
+            instructions,
+            blocks,
             max_tokens: Some(CODEGEN_MAX_TOKENS),
         })?;
         let files = parse_generated(&completion.content).map_err(M0Error::AiInvalidOutput)?;
@@ -352,6 +558,24 @@ impl M0Service {
         let masked_summary = self.orchestrator.mask_for_ai(&stored.plan.summary).text;
         let masked_prompt = self.orchestrator.mask_for_ai(&stored.masked_prompt).text;
         let generated_at = time::rfc3339(SystemTime::now());
+        let mut history = stored
+            .base
+            .as_ref()
+            .map(|b| b.history.clone())
+            .unwrap_or_default();
+        let kind = if stored.base.is_some() {
+            "edit"
+        } else {
+            "create"
+        };
+        history.push(HistoryEntry {
+            at: generated_at.clone(),
+            kind: kind.into(),
+            request: masked_prompt.clone(),
+            summary: masked_summary.clone(),
+            model: completion.model.clone(),
+        });
+        let meta_json = meta::to_json(app, &stored.plan, &files, &history);
         let commit_files = render(&RenderInput {
             app,
             namespace: &self.settings.target_namespace,
@@ -360,8 +584,13 @@ impl M0Service {
             masked_summary: &masked_summary,
             model: &completion.model,
             generated_at: &generated_at,
+            meta_json: &meta_json,
         });
-        let message = commit_message(app, &masked_summary);
+        let message = if stored.base.is_some() {
+            commit_message(app, &format!("修改：{masked_prompt}"))
+        } else {
+            commit_message(app, &masked_summary)
+        };
         let sha = self
             .github
             .commit(&commit_files, &message)
@@ -369,20 +598,32 @@ impl M0Service {
 
         let s = &self.settings;
         Ok(json!({
+            "mode": kind,
+            "appName": app,
             "commit": sha,
             "commitUrl": format!("https://github.com/{}/{}/commit/{sha}", s.repo_owner, s.repo_name),
-            "path": format!("apps/{app}"),
-            "appUrl": format!(
-                "/k8s/clusters/{}/api/v1/namespaces/{}/services/http:{app}-web:8080/proxy/",
-                s.cluster_id, s.target_namespace
-            ),
+            "path": format!("{APPS_DIR}/{app}"),
+            "appUrl": self.app_url(app),
             "fleet": {
                 "workspace": FLEET_WORKSPACE,
                 "gitRepo": FLEET_GITREPO,
-                "bundlePrefix": format!("{FLEET_GITREPO}-apps-{app}"),
+                "bundlePrefix": format!("{FLEET_GITREPO}-{APPS_DIR}-{app}"),
             },
         }))
     }
+}
+
+/// `name` if it is free, otherwise `name-2` … `name-9` (shortened so the
+/// result is still a valid app name). `None` if all are taken.
+pub fn unused_name(name: &str, existing: &[String]) -> Option<String> {
+    if !existing.iter().any(|e| e == name) {
+        return Some(name.to_string());
+    }
+    let stem: String = name.chars().take(29).collect();
+    let stem = stem.trim_end_matches('-');
+    (2..=9)
+        .map(|n| format!("{stem}-{n}"))
+        .find(|c| valid_app_name(c) && !existing.iter().any(|e| e == c))
 }
 
 /// `laoban: <app> — <first 60 characters of the summary>` plus the

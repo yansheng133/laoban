@@ -33,6 +33,28 @@ pub struct GeneratedFiles {
     pub handler_py: String,
 }
 
+impl GeneratedFiles {
+    /// The same shape the code call returns, so [`parse_generated`] reads
+    /// it back with the same checks.
+    pub fn to_json(&self) -> Value {
+        serde_json::json!({
+            "web": {
+                "index.html": self.index_html,
+                "app.js": self.app_js,
+                "style.css": self.style_css,
+            },
+            "api": { "handler.py": self.handler_py },
+        })
+    }
+
+    pub fn total_bytes(&self) -> usize {
+        self.index_html.len() + self.app_js.len() + self.style_css.len() + self.handler_py.len()
+    }
+}
+
+/// Extra instructions for the code call when an existing app is changed.
+pub const EDIT_CODEGEN_INSTRUCTIONS: &str = r#"This is a change to an existing application. The data block current_code holds its current four files in the same JSON shape as the response. Change them so they implement the approved plan, keep everything the plan does not change (including working behaviour and styling), and return all four files in full."#;
+
 fn exact_object<'a>(
     v: &'a Value,
     what: &str,
@@ -78,11 +100,7 @@ pub fn parse_generated(text: &str) -> Result<GeneratedFiles, InvalidOutput> {
         style_css: file(web, "style.css")?,
         handler_py: file(api, "handler.py")?,
     };
-    let total = files.index_html.len()
-        + files.app_js.len()
-        + files.style_css.len()
-        + files.handler_py.len();
-    if total > MAX_TOTAL_BYTES {
+    if files.total_bytes() > MAX_TOTAL_BYTES {
         return Err(InvalidOutput(format!(
             "files exceed {MAX_TOTAL_BYTES} bytes in total"
         )));
