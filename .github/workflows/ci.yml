@@ -98,6 +98,7 @@ jobs:
           check "image.digest is required" -f charts/laoban/ci/ci-values.yaml --api-versions "${LAOBAN_API}" --set image.digest=
           check "anthropic.existingSecret is required" -f charts/laoban/ci/ci-values.yaml --api-versions "${LAOBAN_API}" --set anthropic.existingSecret=
           check "install the laoban-crd chart first" -f charts/laoban/ci/ci-values.yaml
+          check "persistence.storageClass is required" -f charts/laoban/ci/ci-values.yaml --api-versions "${LAOBAN_API}" --set persistence.storageClass=
       - name: kubeconform (backend chart)
         # The upstream schema set has no schema for CustomResourceDefinition
         # itself, so the CRD chart is checked against a real API server below.

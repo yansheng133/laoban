@@ -94,7 +94,7 @@ ServiceAccount 只綁一個 ClusterRole（`laoban-impersonator-<namespace>-<full
 ## 持久化：稽核紀錄暫存區
 
 - PVC `<fullname>-spool`，預設 1Gi、ReadWriteOnce，掛在 `/var/spool/laoban`。稽核紀錄先寫這裡，syslog 收到後才清掉。
-- `persistence.storageClass` 留空 = 叢集預設 StorageClass（例如 local-path）。叢集沒有預設 StorageClass 時 PVC 會停在 Pending。
+- `persistence.storageClass` 必填，預設 `local-path`。不依賴叢集預設 StorageClass：PoC 的下游叢集就沒有預設值，PVC 會一直停在 Pending。需要快照時改用 `longhorn`。
 - local-path 沒有快照、資料綁在單一節點；syslog 才是稽核紀錄的正本。
 - PVC 加了 `helm.sh/resource-policy: keep`，`helm uninstall` 不會刪掉未送出的紀錄。
 
