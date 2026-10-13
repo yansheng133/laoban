@@ -143,3 +143,4 @@ jobs:
       - run: npm install -g yarn@1.22.22
       - run: yarn install --frozen-lockfile
       - run: yarn build-pkg laoban-ext
+      - run: yarn test

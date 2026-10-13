@@ -16,6 +16,7 @@ export default function(plugin: IPlugin): void {
   EXTRA_LOCALES.forEach(({ locale, label }) => plugin.addLocale(locale, label));
 
   // Load a product
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
   plugin.addProduct(require('./product'));
 
   // Add Vue Routes

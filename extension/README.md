@@ -1,6 +1,6 @@
 # laoban Rancher UI extension
 
-`extension/` 是 laoban 的 Rancher UI extension。目前只有骨架：側邊導覽列多一個頂層產品 **laoban**，點進去是一頁「總覽」，顯示標題、簡短說明與三張空白狀態卡片（需求對話、架構視圖、變更審查）。這一版不呼叫任何後端服務。
+`extension/` 是 laoban 的 Rancher UI extension。側邊導覽列多一個頂層產品 **laoban**，點進去是試吃版（M0）的「總覽」頁：左邊輸入需求、看 AI 產生的計畫，右邊是計畫的 3D 架構圖，下方是狀態列；按「確認並部署」後，程式由後端寫進 GitHub、由 Fleet 部署，就緒後顯示「打開應用」。規格見 `docs/m0-design.md` 的「頁面（Rancher UI extension）」一節，頁面怎麼跟後端溝通見下方〈頁面與後端〉。
 
 | 項目 | 值 |
 |---|---|
@@ -28,15 +28,57 @@ extension/
 ├── package.json              開發用 app（name: laoban，private）
 ├── yarn.lock
 ├── vue.config.js
+├── jest.config.js            單元測試設定（pkg/*/utils/__tests__）
 └── pkg/laoban-ext/           extension 本體
     ├── package.json          extension 中繼資料與 catalog annotation
     ├── index.ts              進入點：註冊產品、路由與額外語系
     ├── product.ts            頂層產品與側邊選單
     ├── config/laoban.ts      產品、頁面、路由名稱與額外語系
+    ├── config/backend.ts     後端叢集 ID、namespace、Service 名稱、Fleet workspace、輪詢間隔
     ├── routing/extension-routing.ts
-    ├── pages/Dashboard.vue   總覽頁
+    ├── pages/Dashboard.vue   總覽頁（M0：需求、計畫、部署狀態）
+    ├── components/ArchitectureView.vue  3D 架構圖（three.js）
+    ├── utils/backend.ts      呼叫後端與 Steve 的 HTTP client
+    ├── utils/bundle.ts       Fleet Bundle 就緒判斷（純函式）
+    ├── utils/layout.ts       架構資料轉 3D 版面（純函式）
+    ├── utils/__tests__/      上面三個檔案的單元測試
     └── l10n/                 en-us.yaml、zh-hant.yaml、ja.yaml
 ```
+
+## 頁面與後端
+
+頁面跑在 Rancher UI 裡，所有請求都用使用者自己的 Rancher 登入（瀏覽器帶 Rancher 的 session cookie）；extension 不保存也不轉送任何 token。POST 請求比照 Rancher 自己的做法，把 `CSRF` cookie 的值放進 `X-Api-Csrf` header。
+
+| 用途 | 請求 | 經過 |
+|---|---|---|
+| 頁首資訊（模型、部署目標、程式庫、token 用量／上限） | `GET /api/config` | Rancher service proxy |
+| 產生計畫 | `POST /api/plan` `{prompt, appName?}` | Rancher service proxy |
+| 確認並部署 | `POST /api/apply` `{planId}` | Rancher service proxy |
+| 部署狀態 | `GET /v1/fleet.cattle.io.bundles/fleet-default` | Steve（Rancher local 叢集） |
+
+後端基底路徑是 Rancher 對 rke2 叢集上 `laoban-system/laoban` Service 的代理：
+
+```
+/k8s/clusters/c-m-26kbxk5f/api/v1/namespaces/laoban-system/services/http:laoban:8080/proxy
+```
+
+叢集 ID、namespace、Service 名稱與 port 都集中在 `pkg/laoban-ext/config/backend.ts`，換環境只改這個檔案。
+
+- **等候時間**：產生計畫與部署都要呼叫 AI，通常 30～60 秒。請求進行中按鈕會停用，狀態列顯示已等候的秒數；超過 3 分鐘視為逾時。
+- **錯誤**：後端回 `{"error": {"code", "message"}}` 時，直接顯示 `message`（後端負責寫成繁體中文）。連不到後端、Rancher 代理回的錯誤或格式不對的回應，顯示頁面自己的通用訊息。
+- **部署狀態**：`/api/apply` 成功後顯示 commit 連結（新分頁開啟），接著每 5 秒讀一次 `fleet-default` 裡名稱以回應中 `fleet.bundlePrefix` 開頭的 Bundle。所有符合的 Bundle 都滿足下列條件才算就緒：`status.summary.desiredReady` 大於 0 且 `status.summary.ready` 等於它、`Ready` condition（如果有）為 `True`、`status.observedGeneration` 不小於 `metadata.generation`；Bundle 若帶有 `fleet.cattle.io/commit` label，還必須是這次的 commit。`status.summary.errApplied` 大於 0 時狀態列顯示部署錯誤，但仍繼續確認。10 分鐘內沒有就緒就停止，並提示到 Continuous Delivery 查看。
+- **打開應用**：就緒後顯示「打開應用」，連到回應中的 `appUrl`（以 Rancher 的網址為基底）。只接受以單一 `/` 開頭的路徑，其他形式（其他網域、`//`、`javascript:`）一律不顯示連結。commit 連結只接受 `https://`。
+- **3D 架構圖**：沿用 `web/viewer-prototype` 的畫法（three.js 0.160.0，打包進 extension，不從 CDN 載入），只做顯示、旋轉與縮放，沒有版本比較與拖曳。元件位置用後端給的 `pos`；有任何元件缺少或座標不合理時，改由頁面依層與上下層關係自動排列。元件數、名稱長度都有上限。系統設定「減少動態效果」時不使用慣性旋轉，只在畫面變動時重繪。瀏覽器不支援 WebGL 時顯示文字說明，元件清單在圖下方可以展開。
+
+## 測試與檢查
+
+```bash
+cd extension
+yarn test                  # Jest，測 utils/ 底下的純函式
+yarn lint                  # @rancher/shell 的 ESLint 啟動器（第一次執行會安裝舊版 ESLint 工具鏈，需要網路）
+```
+
+Jest 與 Babel 都由 `@rancher/shell` 帶進來，沒有另外安裝測試套件。`yarn build-pkg` 本身會用 `fork-ts-checker` 檢查 `.ts` 與 `.vue` 的型別，型別錯誤會讓建置失敗。
 
 ## 建置
 
@@ -52,6 +94,8 @@ yarn build-pkg laoban-ext
 產出在 `extension/dist-pkg/laoban-ext-0.1.0/`，主檔為 `laoban-ext-0.1.0.umd.min.js`。`dist-pkg/`、`node_modules/` 都已列入 `.gitignore`，不要提交。
 
 `.yarnrc` 是產生器預設的 `--frozen-lockfile true`，`yarn.lock` 對不上 `package.json` 時安裝會直接失敗。要更新相依套件時，先改 `package.json`，再用 `yarn install --no-default-rc` 重新產生 `yarn.lock`，並一起提交。
+
+`three`（`0.160.0`，與 `web/viewer-prototype` 相同版本）寫在根目錄 `package.json` 的 `dependencies`，讓 Yarn 安裝、webpack 打包進 extension；`pkg/laoban-ext/package.json` 也列出同一個版本，標明 extension 本身用到它。型別定義 `@types/three` 是根目錄的 `devDependencies`。
 
 ## 在 Rancher 上開發與測試
 
@@ -109,9 +153,11 @@ Rancher 本身只內建 `en-us` 與 `zh-hans`（簡體中文），沒有繁體�
 
 撰寫翻譯時用台灣常用的 IT 用語，產品名稱（Rancher、Kubernetes 等）保留英文。
 
+試吃版（M0）只有繁體中文介面：`laoban.dashboard.*` 在 `zh-hant.yaml` 是正式文字，`en-us.yaml` 與 `ja.yaml` 先放同一組英文字串，日文翻譯之後再補。字串用 ICU 格式帶參數（例如 `{seconds}`），英文字串裡不要用單引號 `'`，ICU 會把它當成跳脫字元。
+
 ## 顯示 AI 產生的內容
 
-之後由 AI 產生的文字（計畫、說明、審查意見）一律以純文字顯示：在 template 裡用 `{{ }}` 插值，不用 `v-html`。產生器提供的 ESLint 設定已將 `vue/no-v-html` 設為 error。
+AI 產生的文字（計畫摘要、步驟、元件名稱、連線標籤）一律以純文字顯示：在 template 裡用 `{{ }}` 插值，不用 `v-html`；3D 圖上的標籤用 `textContent` 放進 DOM，不用 `innerHTML`。產生器提供的 ESLint 設定已將 `vue/no-v-html` 設為 error。
 
 如果將來真的需要顯示 HTML（例如 Markdown 轉成的內容），必須先經過 [DOMPurify](https://github.com/cure53/DOMPurify) 清理。`@rancher/shell` 已內建以 DOMPurify 實作的 `v-clean-html` directive，優先使用它，不要自行拼接 HTML。
 

@@ -6,17 +6,54 @@ laoban:
     dashboard: 總覽
   dashboard:
     title: laoban
-    description: 用自然語言描述需求，laoban 會先提出計畫與架構視圖，經你確認後才撰寫程式，並在部署前通過自動檢查與人工審查。目前為開發預覽版，尚未連接任何後端服務。
-    cards:
-      requests:
-        title: 需求對話
-        emptyTitle: 尚無需求對話
-        emptyDescription: 之後可以在這裡用自然語言描述想做的事，laoban 會先回覆計畫供你確認。
-      architecture:
-        title: 架構視圖
-        emptyTitle: 尚無架構視圖
-        emptyDescription: 計畫確認後，這裡會顯示變更前後的架構圖。
-      review:
-        title: 變更審查
-        emptyTitle: 目前沒有待審查的變更
-        emptyDescription: 需要人工審查的變更會列在這裡，核准後才會部署。
+    description: 用一句話描述需求，laoban 會先提出計畫與架構圖；確認後才產生程式、寫進 GitHub，再由 Fleet 部署。這是試吃版（M0）。
+    config:
+      model: 模型
+      targetNamespace: 部署目標
+      repo: 程式庫
+      tokenBudget: Token 用量
+      tokenUsage: "{used} / {cap}"
+      unavailable: 無法讀取 laoban 後端設定。
+    chat:
+      title: 需求
+      promptLabel: 想做什麼
+      promptPlaceholder: 例如：做一個早餐店點餐頁面，可以選餐點和送出訂單
+      appNameLabel: 應用名稱（選填）
+      appNamePlaceholder: breakfast
+      appNameHint: 小寫英文字母開頭，只能用小寫英文、數字與連字號，共 2～31 個字元。留空時由 AI 命名。
+      generate: 產生計畫
+    plan:
+      title: "計畫：{appName}"
+      steps: 步驟
+      masked: "送出給 AI 前已遮蔽 {count} 處疑似敏感資訊。"
+      usage: "這次用了 {input} 個輸入 token、{output} 個輸出 token。"
+      apply: 確認並部署
+    result:
+      committed: 已寫進 GitHub：
+      openApp: 打開應用
+      badAppUrl: 後端回傳的應用網址格式不正確，無法顯示連結。
+    arch:
+      title: 架構圖
+      empty: 產生計畫後，這裡會顯示應用的 3D 架構圖。
+      hint: 拖曳旋轉，滾輪或雙指縮放。
+      noWebgl: 這個瀏覽器無法使用 WebGL，無法顯示 3D 架構圖。元件清單請見下方。
+      ariaLabel: "3D 架構圖，共 {count} 個元件"
+      listTitle: "元件清單（{count}）"
+      layers:
+        network: 網路
+        code: 程式
+        data: 資料
+    status:
+      idle: 輸入需求後按「產生計畫」。
+      planning: "AI 正在產生計畫，通常需要 30～60 秒（已 {seconds} 秒）…"
+      planned: 計畫已產生。確認內容後按「確認並部署」。
+      applying: "AI 正在產生程式並寫進 GitHub，通常需要 30～60 秒（已 {seconds} 秒）…"
+      waitingBundle: "已寫進 GitHub，等待 Fleet 讀取這次變更（已 {seconds} 秒）…"
+      deploying: "Fleet 部署中：{ready} / {desired} 就緒…"
+      bundleError: "Fleet 回報部署錯誤（{ready} / {desired} 就緒），仍持續確認中…"
+      ready: 部署完成，可以打開應用。
+      timeout: "等了 {minutes} 分鐘仍未就緒，已停止確認。請到 Continuous Delivery 的 {workspace} 工作區查看 Bundle 狀態。"
+      pollFailed: 這次無法讀取 Fleet 狀態，5 秒後重試。
+    errors:
+      generic: 無法連線到 laoban 後端，請稍後再試。
+      timeout: 等候 laoban 後端回應逾時，請稍後再試。
