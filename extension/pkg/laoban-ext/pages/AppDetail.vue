@@ -11,6 +11,8 @@ import {
 import { useStore } from 'vuex';
 import { useRoute } from 'vue-router';
 import { useI18n } from '@shell/composables/useI18n';
+import AppearanceMenu from '../components/AppearanceMenu.vue';
+import { useAppearance } from '../composables/useAppearance';
 import ArchitectureView from '../components/ArchitectureView.vue';
 import PlanResult from '../components/PlanResult.vue';
 import StatusBar from '../components/StatusBar.vue';
@@ -24,13 +26,14 @@ export default defineComponent({
   name: 'LaobanAppDetail',
 
   components: {
-    ArchitectureView, PlanResult, StatusBar
+    ArchitectureView, PlanResult, StatusBar, AppearanceMenu
   },
 
   setup() {
     const store = useStore();
     const route = useRoute();
     const { t } = useI18n(store);
+    const { palette } = useAppearance(store);
 
     const detail = ref<AppDetail | null>(null);
     const loading = ref(false);
@@ -96,6 +99,7 @@ export default defineComponent({
 
     return {
       t,
+      palette,
       ...flow,
       busy,
       detail,
@@ -117,7 +121,11 @@ export default defineComponent({
 </script>
 
 <template>
-  <div class="laoban-m0">
+  <div
+    class="laoban-m0"
+    :data-laoban-palette="palette"
+  >
+    <AppearanceMenu class="laoban-appearance-bar" />
     <header class="laoban-header">
       <div>
         <router-link :to="appsRoute">
@@ -288,6 +296,10 @@ export default defineComponent({
 
 <style lang="scss" scoped>
 @import '../styles/layout.scss';
+
+.laoban-appearance-bar {
+  justify-content: flex-end;
+}
 
 .laoban-detail-name {
   font-family: monospace;

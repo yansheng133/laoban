@@ -46,6 +46,18 @@ laoban:
     currentSteps: Current build steps
     history: "History ({count})"
     archPlanned: Architecture of the change plan. It becomes the current one once deployed.
+  appearance:
+    theme: Theme
+    themes:
+      light: Light
+      auto: Auto
+      dark: Dark
+    palette: Colors
+    palettes:
+      rancher: Rancher default
+      ocean: Ocean
+      sunset: Sunset
+      grape: Grape
   dashboard:
     title: laoban
     description: Describe what you need in one sentence. laoban proposes a plan and an architecture view first; only after you confirm does it generate code, commit it to GitHub and let Fleet deploy it. This is the M0 preview.

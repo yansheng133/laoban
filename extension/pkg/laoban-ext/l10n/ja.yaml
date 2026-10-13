@@ -48,6 +48,18 @@ laoban:
     currentSteps: 現在の構築手順
     history: "変更履歴（{count}）"
     archPlanned: 変更計画の構成です。デプロイ後に現在の構成になります。
+  appearance:
+    theme: 外観
+    themes:
+      light: ライト
+      auto: 自動
+      dark: ダーク
+    palette: 配色
+    palettes:
+      rancher: Rancher 既定
+      ocean: オーシャン
+      sunset: サンセット
+      grape: グレープ
   dashboard:
     title: laoban
     description: Describe what you need in one sentence. laoban proposes a plan and an architecture view first; only after you confirm does it generate code, commit it to GitHub and let Fleet deploy it. This is the M0 preview.

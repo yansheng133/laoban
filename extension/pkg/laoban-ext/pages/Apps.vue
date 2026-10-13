@@ -4,26 +4,33 @@
 import { defineComponent } from 'vue';
 import { useStore } from 'vuex';
 import { useI18n } from '@shell/composables/useI18n';
+import AppearanceMenu from '../components/AppearanceMenu.vue';
+import { useAppearance } from '../composables/useAppearance';
 import AppList from '../components/AppList.vue';
 import { DASHBOARD_ROUTE_NAME, PRODUCT_NAME, BLANK_CLUSTER } from '../config/laoban';
 
 export default defineComponent({
   name: 'LaobanApps',
 
-  components: { AppList },
+  components: { AppList, AppearanceMenu },
 
   setup() {
     const store = useStore();
     const { t } = useI18n(store);
+    const { palette } = useAppearance(store);
     const createRoute = { name: DASHBOARD_ROUTE_NAME, params: { product: PRODUCT_NAME, cluster: BLANK_CLUSTER } };
 
-    return { t, createRoute };
+    return { t, createRoute, palette };
   },
 });
 </script>
 
 <template>
-  <div class="laoban-m0">
+  <div
+    class="laoban-m0"
+    :data-laoban-palette="palette"
+  >
+    <AppearanceMenu class="laoban-appearance-bar" />
     <header class="laoban-header">
       <div>
         <h1>{{ t('laoban.apps.title') }}</h1>
@@ -47,4 +54,8 @@ export default defineComponent({
 
 <style lang="scss" scoped>
 @import '../styles/layout.scss';
+
+.laoban-appearance-bar {
+  justify-content: flex-end;
+}
 </style>

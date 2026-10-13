@@ -159,6 +159,7 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 - 一個頁面，三個區塊：左邊對話（輸入需求、送出、顯示計畫摘要與步驟）、右邊 3D 架構圖、下方狀態列。
 - 左側選單兩頁：**總覽**（新增應用：上面的對話與 3D 圖）與**應用**（`GET /api/apps` 的清單：名稱、摘要、最後更新、Fleet 狀態，「打開」「編輯／詳細」，右上角「新增應用」回到總覽）。
 - 點應用名稱進**應用詳細頁**（`/laoban/c/_/apps/<名稱>`）：摘要、目前的建置步驟、完整修改紀錄、目前的 3D 架構圖、GitHub 程式碼連結與「打開應用」；在「要怎麼修改」輸入後產生修改計畫（`baseApp`），確認後 commit 到同一個目錄，完成後頁面重新讀取這個應用。新增與修改共用同一套計畫／部署／等待流程（`composables/useDeployFlow.ts`）。
+- 外觀：每頁右上角可切換**亮色／自動／暗色**與**配色**。亮暗走 Rancher 自己的使用者偏好（`prefs/setTheme`，與 User Preferences 同一個設定，Rancher 跟著換 `<body>` 的 theme class）；管理者用全域設定強制主題時以全域設定為準。配色有「Rancher 預設」與海洋、夕陽、葡萄三組，只在 laoban 頁面內覆寫 Rancher 的 primary／link 變數與 3D 圖的分層顏色，亮暗各一組，對比都在 WCAG AA（4.5:1）以上；選擇記在瀏覽器的 localStorage（換瀏覽器或清除網站資料會回到預設）。
 - 3D 圖沿用 `web/viewer-prototype` 的程式（three.js 0.160.0、`graph-diff.mjs`）；M0 只需要顯示與縮放，不需要版本比較與拖曳。
 - 「確認並部署」按下後顯示 commit 連結，接著每 5 秒讀 Fleet Bundle（Bundle 只剩 Modified、沒有待部署或錯誤時，也視為應用已在執行，顯示連結並附上 Fleet 的訊息）（`/v1/fleet.cattle.io.bundles`，篩 `laoban.io` 前綴或 bundlePrefix）的 Ready 狀態，Ready 後顯示「打開應用」連結。
 - 所有 AI 產生的文字用文字方式顯示，不用 `v-html`。

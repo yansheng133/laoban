@@ -1,0 +1,79 @@
+// Palettes for the laoban pages (config/appearance.ts). Global, not scoped:
+// loaded once from AppearanceMenu.vue, which every laoban page shows.
+//
+// Each page's root element has class laoban-m0 and data-laoban-palette.
+// Rancher puts theme-light or theme-dark on <body>; the dark rules are more
+// specific, so they win. Inside the laoban pages a palette overrides
+// Rancher's primary/link variables (buttons, links, focus) and sets the 3D
+// view's layer colours (--laoban-layer-*, --laoban-edge, read by
+// ArchitectureView). "rancher" overrides nothing of Rancher's.
+
+@mixin primary($primary, $hover, $text, $link, $soft) {
+  --primary: #{$primary};
+  --primary-hover: #{$hover};
+  --primary-hover-bg: #{$hover};
+  --primary-border: #{$primary};
+  --primary-text: #{$text};
+  --link: #{$link};
+  --non-primary-text: #{$link};
+  --non-primary-hover: #{$soft};
+  --secondary-border: #{$primary};
+  --on-secondary: #{$link};
+  --secondary-hover: #{$soft};
+  --on-tertiary: #{$link};
+  --tertiary-hover: #{$soft};
+}
+
+@mixin layers($network, $code, $data, $edge) {
+  --laoban-layer-network: #{$network};
+  --laoban-layer-code: #{$code};
+  --laoban-layer-data: #{$data};
+  --laoban-edge: #{$edge};
+}
+
+// Rancher's own colours; 3D layers in neutral blue/grey/teal.
+.laoban-m0 {
+  @include layers(#4a78c2, #6b7686, #2c8a87, #8a96a5);
+}
+
+.theme-dark .laoban-m0 {
+  @include layers(#6f98dc, #9aa5b4, #4fb3ae, #6d7a8a);
+}
+
+// 海洋：blue.
+.laoban-m0[data-laoban-palette="ocean"] {
+  @include primary(#1f6fb2, #185a91, #ffffff, #1f6fb2, #e6f0f9);
+  @include layers(#1f6fb2, #4b6584, #0f9b8e, #7f93a8);
+}
+
+.theme-dark .laoban-m0[data-laoban-palette="ocean"] {
+  @include primary(#5fa8e8, #82bcef, #0d1b2a, #8cc4f5, #1a2c3d);
+  @include layers(#5fa8e8, #8fa3bb, #3cc7b8, #64788c);
+}
+
+// 夕陽：orange.
+.laoban-m0[data-laoban-palette="sunset"] {
+  @include primary(#b04e14, #923f0e, #ffffff, #a8480f, #fbeee6);
+  @include layers(#d9822b, #8a6f5a, #b8455a, #a08f84);
+}
+
+.theme-dark .laoban-m0[data-laoban-palette="sunset"] {
+  @include primary(#f29a5c, #f6b585, #2a160a, #f6b585, #3a2418);
+  @include layers(#f29a5c, #b8a395, #e07a8d, #7d6e66);
+}
+
+// 葡萄：purple.
+.laoban-m0[data-laoban-palette="grape"] {
+  @include primary(#6a4bc4, #563aa8, #ffffff, #6a4bc4, #efeafa);
+  @include layers(#6a4bc4, #6b7686, #c2478f, #9a90b0);
+}
+
+.theme-dark .laoban-m0[data-laoban-palette="grape"] {
+  @include primary(#a08cf0, #b8a8f5, #1a1230, #b8a8f5, #2a2242);
+  @include layers(#a08cf0, #a3abb8, #e27bb7, #6f6888);
+}
+
+// The palette also marks the panels, so the choice is visible at a glance.
+.laoban-m0 .laoban-panel {
+  border-top: 3px solid var(--primary);
+}

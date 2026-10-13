@@ -46,6 +46,18 @@ laoban:
     currentSteps: 目前的建置步驟
     history: "修改紀錄（{count}）"
     archPlanned: 修改計畫的架構。部署完成後會成為目前的架構。
+  appearance:
+    theme: 外觀
+    themes:
+      light: 亮色
+      auto: 自動
+      dark: 暗色
+    palette: 配色
+    palettes:
+      rancher: Rancher 預設
+      ocean: 海洋
+      sunset: 夕陽
+      grape: 葡萄
   dashboard:
     title: laoban
     description: 用一句話描述需求，laoban 會先提出計畫與架構圖；確認後才產生程式、寫進 GitHub，再由 Fleet 部署。這是試吃版（M0）。

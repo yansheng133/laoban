@@ -117,6 +117,7 @@ export default defineComponent({
       return Object.fromEntries(COLOR_TOKENS.map((n) => {
         const v = cs?.getPropertyValue(`--laoban-${ n }`).trim();
 
+        // Fallback if the view is used outside a laoban page.
         return [n, new THREE.Color(v || '#888888')];
       }));
     }
@@ -281,9 +282,15 @@ export default defineComponent({
 
       resizeObserver = new ResizeObserver(resize);
       resizeObserver.observe(stage.value);
-      // Rancher switches themes with a class on <body>; re-read the colors.
+      // Rancher switches themes with a class on <body>, and the laoban page
+      // switches palettes with data-laoban-palette; re-read the colors.
       themeObserver = new MutationObserver(() => build(false));
       themeObserver.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+      const page = root.value?.closest('[data-laoban-palette]');
+
+      if (page) {
+        themeObserver.observe(page, { attributes: true, attributeFilter: ['data-laoban-palette'] });
+      }
 
       resize();
       build();
@@ -380,26 +387,14 @@ export default defineComponent({
 </template>
 
 <style lang="scss" scoped>
+// Layer colours (--laoban-layer-*, --laoban-edge) come from the page's
+// palette (styles/palettes.scss) and follow Rancher's light/dark theme.
 .laoban-arch {
-  --laoban-layer-network: #4a78c2;
-  --laoban-layer-code: #6b7686;
-  --laoban-layer-data: #2c8a87;
-  --laoban-edge: #8a96a5;
-
   display: flex;
   flex-direction: column;
   gap: 8px;
   height: 100%;
   min-height: 0;
-}
-
-// Rancher puts .theme-dark on <body>; the scope attribute only applies to
-// the last compound selector, so this matches.
-.theme-dark .laoban-arch {
-  --laoban-layer-network: #6f98dc;
-  --laoban-layer-code: #9aa5b4;
-  --laoban-layer-data: #4fb3ae;
-  --laoban-edge: #6d7a8a;
 }
 
 .laoban-arch-stage {
