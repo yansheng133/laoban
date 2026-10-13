@@ -1,8 +1,8 @@
 //! Provider-neutral request/response types and the [`Provider`] trait.
 //!
 //! Only Anthropic is targeted for now, but nothing here is Anthropic
-//! specific. The HTTP client lives in a later change; the README documents
-//! the Messages API shapes it will map to.
+//! specific. The HTTP client is the `anthropic` module (feature `http`);
+//! the README documents the Messages API mapping.
 
 use std::collections::VecDeque;
 use std::sync::Mutex;

@@ -7,8 +7,21 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[features]
+# Real Anthropic HTTP client (`anthropic` module). Off by default so the
+# core crate builds and tests without any HTTP or TLS dependency.
+http = ["dep:ureq"]
+
 [dependencies]
 laoban-mask = { path = "../laoban-mask" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+ureq = { workspace = true, optional = true }
+
+[dev-dependencies]
+laoban-mockhttp = { path = "../laoban-mockhttp" }
+
+[[test]]
+name = "anthropic_http"
+required-features = ["http"]

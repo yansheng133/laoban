@@ -4,7 +4,7 @@ laoban 呼叫 AI 模型的唯一路徑。負責：模型供應商抽象層、錯
 
 本 crate **不執行任何東西**：AI 的回應一律當成資料，解析成型別化的 `Plan` 並對照允許清單檢查，執行與部署由後續流程（含人工審查）負責。
 
-> 本次變更**沒有**實作真正的 HTTP 用戶端，所有測試都使用 `MockProvider`，不會連網。下方「Anthropic Messages API 對應」一節記錄之後實作 HTTP 用戶端時要對應的官方格式。
+> 真正的 Anthropic HTTP 用戶端在 cargo feature `http` 後面（`anthropic` 模組，見下方「HTTP 用戶端」）。預設不開，核心 crate 不帶任何 HTTP／TLS 相依套件。所有測試都不連外網：協調流程用 `MockProvider`，HTTP 用戶端用測試內的本機模擬伺服器（`laoban-mockhttp`）。
 
 ## 元件
 
@@ -19,6 +19,7 @@ laoban 呼叫 AI 模型的唯一路徑。負責：模型供應商抽象層、錯
 | `model` | 管理者強制指定模型，或讓使用者從允許清單中選擇 |
 | `audit` | `AiAuditSink` trait，發出 `ai.request`／`ai.response` 事件（只含遮蔽後文字） |
 | `orchestrator` | 串起上述元件；擁有 `Masker`，呼叫端無法略過遮蔽 |
+| `anthropic`（feature `http`） | `AnthropicProvider`：以 `ureq`（rustls，不用 OpenSSL）實作的同步 Messages API 用戶端 |
 
 ## 處理流程
 
@@ -34,13 +35,23 @@ laoban 呼叫 AI 模型的唯一路徑。負責：模型供應商抽象層、錯
 
 每次呼叫（含重試）都會發出一筆 `ai.request` 與一筆 `ai.response` 稽核事件，內容是遮蔽後文字、token 數、模型 ID 與 principal ID。回應文字寫入稽核前再以 `Destination::Audit` 遮蔽一次。
 
+### 自訂回應格式：`Orchestrator::complete()`
+
+回應格式不是 `Plan` 的呼叫端（例如 `laoban-m0` 的計畫與產生程式兩次呼叫）改用 `complete()`。它走同一條路：選模型、遮蔽、資料區塊、預留預算、重試規則、稽核、拒絕 `max_tokens`／`refusal`，差別只在：
+
+- 呼叫端提供 `instructions`（固定在程式裡的工作說明與回應格式，**不可放使用者輸入**），接在系統提示詞的資料區塊說明（`data_block_preamble()`）之後；
+- 不受信任的內容以 `UntrustedBlock { kind, label, content }` 傳入，`kind` 是程式裡的固定字串；
+- 回傳未解析的文字（`Completion`），由呼叫端自己解析與驗證，並一律當成不受信任的資料。
+
+`security_preamble()` 拆成 `data_block_preamble()` 加 `PLAN_RESPONSE_FORMAT`，`propose_plan()` 送出的內容逐字不變（有單元測試比對）。`mask_for_ai()` 讓呼叫端用同一套規則遮蔽要寫到別處的文字（例如產生的 README）並取得發現數。
+
 ## Token 預算
 
 - `TokenBudget` 以 `Mutex` 保護，以 `Arc` 在所有 Project 之間共用。
 - 每期（period）由注入的 `PeriodClock` 決定；內建 `UtcMonthClock`（UTC 曆月）與測試用 `FixedPeriod`。期別一變，用量歸零。
 - 上限管的是**預留**：任何時刻「已結算 + 未結算預留」都不會超過上限。實際用量若高於預留（輸入估計偏低），超出部分仍照實記錄，後續預留會看到。
 - `Reservation` 未結算就被丟棄（供應商錯誤、panic）時自動全額退還。
-- 輸入 token 目前以「UTF-8 位元組數 ÷ 3 + 8」粗估（中文字一個約 3 位元組、約 1 token；英文約 4 字元 1 token，所以偏高估）。HTTP 用戶端上線後可改用官方的 token 計數端點 `POST /v1/messages/count_tokens`。
+- 輸入 token 目前以「UTF-8 位元組數 ÷ 3 + 8」粗估（中文字一個約 3 位元組、約 1 token；英文約 4 字元 1 token，所以偏高估）。之後可改用官方的 token 計數端點 `POST /v1/messages/count_tokens`。
 
 ## 提示注入：是緩解，不是防止
 
@@ -108,17 +119,33 @@ laoban 呼叫 AI 模型的唯一路徑。負責：模型供應商抽象層、錯
 - 速率限制、支出上限（「Reaching your spend cap」「Setting your own spend limit」）與回應標頭：<https://platform.claude.com/docs/en/api/rate-limits>（原網址 <https://docs.claude.com/en/api/rate-limits>）
 - Messages API 請求與回應格式：<https://platform.claude.com/docs/en/api/messages/create>
 
+## HTTP 用戶端（feature `http`）
+
+`laoban_ai::anthropic::AnthropicProvider` 實作 `Provider`，對應方式完全依照上一節：
+
+- `POST {base}/v1/messages`，標頭 `x-api-key`、`anthropic-version: 2023-06-01`、`content-type: application/json`；`system` 為空字串時不送。
+- 成功回應：`content[]` 中 `type: "text"` 的 `text` 依序串接（其他型別的區塊忽略），`usage` 與 `stop_reason` 照表對應。成功狀態但內容不是 Messages API 物件時回傳 `Other { error_type: "invalid_response" }`。
+- 錯誤回應：讀取狀態碼、`retry-after`（秒數；HTTP 日期格式忽略）與 JSON 主體的 `error.type`／`error.message`／`error.details.error_code`，**一律交給 `classify()`**，不另寫分類邏輯。用戶端本身不重試，重試只由 orchestrator 依 `RetryPolicy` 決定，花費上限永不重試。
+- 連線失敗、逾時等傳輸錯誤回傳 `Other { status: None, error_type: "transport" }`，不重試；訊息只含錯誤種類，不含網址或請求內容。
+- 逾時：連線 10 秒、整個呼叫 300 秒（產生程式可能要數分鐘）；`AnthropicConfig` 可調。不跟隨轉址。
+- API 金鑰：`from_env()` 讀環境變數 `ANTHROPIC_API_KEY`，存在 `ApiKey` 裡，`Debug` 一律顯示 `[REDACTED]`，錯誤訊息不含金鑰；含換行等不能放進標頭的字元時直接拒絕。
+- TLS 用 rustls 與內建的 Mozilla 根憑證（`webpki-roots`），不需要容器裡的 CA 套件，也不用 OpenSSL。**不會**讀 `HTTPS_PROXY`：叢集若必須經代理伺服器出網，要另外處理。
+
+測試（`tests/anthropic_http.rs`）在測試程式內起本機模擬伺服器，驗證請求標頭與主體、回應對應、每一種錯誤分類、逾時、金鑰不出現在 `Debug` 與錯誤訊息。
+
 ## 尚未處理
 
-- 真正的 HTTP 用戶端（含 `retry-after` 標頭解析、`request-id` 記錄）。
+- `request-id` 標頭目前沒有記錄。
 - 500 `api_error` 官方建議以指數退避重試，目前歸類為 `Other` 不重試，待決定。
 - 402 `billing_error` 目前歸類為 `Other`，是否要獨立成類別待決定。
-- 退避沒有加入抖動（jitter）；多個執行個體同時重試時可能同步，HTTP 用戶端上線時再評估。
+- 退避沒有加入抖動（jitter）；多個執行個體同時重試時可能同步。
+- 沒有串流（streaming）；`max_tokens` 很大時官方建議改用串流以免長時間無回應。
 
 ## 測試
 
 ```bash
-cargo test -p laoban-ai
+cargo test -p laoban-ai                  # 不含 HTTP 用戶端
+cargo test -p laoban-ai --features http  # 加上 HTTP 用戶端測試
 ```
 
 測試資料全部是合成的：IP 用 192.0.2.x、網域用 example.test、principal 用 `local://u-test01`、身分證字號以檢查碼產生、模型 ID 用 `model-a-test` 這類假名稱。

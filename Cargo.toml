@@ -3,7 +3,9 @@ resolver = "2"
 members = [
     "crates/laoban-audit",
     "crates/laoban-ai",
+    "crates/laoban-m0",
     "crates/laoban-mask",
+    "crates/laoban-mockhttp",
     "crates/laoban-policy",
     "crates/laoban-server",
 ]
@@ -20,3 +22,6 @@ regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
+# Blocking HTTP client with rustls (no OpenSSL); gzip is not needed.
+ureq = { version = "2.12", default-features = false, features = ["tls"] }
+sha2 = "0.10"

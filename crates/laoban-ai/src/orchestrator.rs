@@ -17,10 +17,10 @@ use crate::error::ProviderError;
 use crate::model::{resolve_model, ModelError, ModelSelection};
 use crate::plan::{parse_plan, validate_plan, Plan, PlanError, PlanPolicy};
 use crate::prompt::{
-    boundary_from_nonce, render_blocks, security_preamble, BoundaryGenerator, DataBlock,
-    PromptError,
+    boundary_from_nonce, data_block_preamble, render_blocks, security_preamble, BoundaryGenerator,
+    DataBlock, PromptError,
 };
-use crate::provider::{Message, Provider, ProviderRequest, Role, StopReason};
+use crate::provider::{Message, Provider, ProviderRequest, ProviderResponse, Role, StopReason};
 use crate::retry::{backoff_delay, RetryPolicy, Sleeper};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -67,6 +67,42 @@ pub struct PlanRequest {
     pub cluster_state: Vec<ContextItem>,
     #[serde(default)]
     pub files: Vec<ContextItem>,
+}
+
+/// One piece of untrusted content for [`Orchestrator::complete`]. It is
+/// masked and wrapped in a data block like every other untrusted input.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UntrustedBlock {
+    /// Fixed block kind chosen by the calling code, never by user input.
+    pub kind: &'static str,
+    /// Optional label; untrusted, masked and neutralized.
+    pub label: Option<String>,
+    pub content: String,
+}
+
+/// A request for [`Orchestrator::complete`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompletionRequest {
+    /// Rancher principal ID. Goes to audit only, never to the provider.
+    pub principal: String,
+    pub requested_model: Option<String>,
+    /// Trusted task description and response format, fixed by the calling
+    /// code. Appended to the system prompt after the data-block preamble.
+    /// Never put user input here.
+    pub instructions: String,
+    pub blocks: Vec<UntrustedBlock>,
+    /// Overrides `OrchestratorConfig::max_tokens` for this call.
+    pub max_tokens: Option<u32>,
+}
+
+/// Raw result of [`Orchestrator::complete`]. `content` is untrusted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Completion {
+    pub content: String,
+    pub model: String,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub attempts: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -175,6 +211,90 @@ impl Orchestrator {
     pub fn propose_plan(&self, req: &PlanRequest) -> Result<PlanOutcome, AiError> {
         let model = resolve_model(&self.config.models, req.requested_model.as_deref())?;
         let request = self.build_request(req, model.clone())?;
+        let (response, attempts) = self.call(&req.principal, &model, &request)?;
+        let plan = parse_plan(&response.content)?;
+        validate_plan(&plan, &self.config.plan_policy, &req.target_cluster)?;
+        Ok(PlanOutcome {
+            plan,
+            model,
+            input_tokens: response.input_tokens,
+            output_tokens: response.output_tokens,
+            attempts,
+        })
+    }
+
+    /// Mask `text` exactly as the orchestrator masks content for the
+    /// provider (`Destination::Ai`). For callers that also write the text
+    /// somewhere else (for example a generated README) and want the same
+    /// rules applied, and for counting findings.
+    pub fn mask_for_ai(&self, text: &str) -> laoban_mask::Masked {
+        self.masker.mask(text, Destination::Ai)
+    }
+
+    /// Build the masked, delimited request for [`Orchestrator::complete`].
+    pub fn build_completion_request(
+        &self,
+        req: &CompletionRequest,
+        model: String,
+    ) -> Result<ProviderRequest, AiError> {
+        let boundary = boundary_from_nonce(&self.deps.boundary.nonce())?;
+        let blocks: Vec<DataBlock> = req
+            .blocks
+            .iter()
+            .map(|b| DataBlock {
+                kind: b.kind,
+                label: b.label.as_deref().map(|l| self.mask(l)),
+                body: self.mask(&b.content),
+            })
+            .collect();
+        let user = render_blocks(&blocks, &boundary);
+
+        let admin = self.mask(&self.config.system_prompt);
+        let mut system = String::new();
+        if !admin.trim().is_empty() {
+            system.push_str(&admin);
+            system.push_str("\n\n");
+        }
+        system.push_str(&data_block_preamble(&boundary));
+        system.push_str(&req.instructions);
+
+        Ok(ProviderRequest {
+            model,
+            system,
+            messages: vec![Message {
+                role: Role::User,
+                content: user,
+            }],
+            max_tokens: req.max_tokens.unwrap_or(self.config.max_tokens),
+        })
+    }
+
+    /// General-purpose call with the same guarantees as
+    /// [`Orchestrator::propose_plan`] (masking, data blocks, budget, retry
+    /// rules, audit, truncation/refusal rejection), for callers that parse
+    /// and validate a response schema of their own. The response text is
+    /// returned unparsed; treat it as untrusted data.
+    pub fn complete(&self, req: &CompletionRequest) -> Result<Completion, AiError> {
+        let model = resolve_model(&self.config.models, req.requested_model.as_deref())?;
+        let request = self.build_completion_request(req, model.clone())?;
+        let (response, attempts) = self.call(&req.principal, &model, &request)?;
+        Ok(Completion {
+            content: response.content,
+            model,
+            input_tokens: response.input_tokens,
+            output_tokens: response.output_tokens,
+            attempts,
+        })
+    }
+
+    /// Budget, audit, send and retry. Rejects truncated and refused
+    /// responses.
+    fn call(
+        &self,
+        principal: &str,
+        model: &str,
+        request: &ProviderRequest,
+    ) -> Result<(ProviderResponse, u32), AiError> {
         let user_content: String = request
             .messages
             .iter()
@@ -190,20 +310,20 @@ impl Orchestrator {
             // Refused here, before the provider is called.
             let reservation = self.deps.budget.reserve(reserve_amount)?;
             self.deps.audit.record(AiAuditEvent::Request {
-                principal: req.principal.clone(),
-                model: model.clone(),
+                principal: principal.to_string(),
+                model: model.to_string(),
                 attempt,
                 system: request.system.clone(),
                 content: user_content.clone(),
                 estimated_input_tokens: estimated_input,
                 max_tokens: request.max_tokens,
             });
-            match self.deps.provider.send(&request) {
+            match self.deps.provider.send(request) {
                 Ok(resp) => {
                     reservation.settle(resp.input_tokens + resp.output_tokens);
                     self.deps.audit.record(AiAuditEvent::Response {
-                        principal: req.principal.clone(),
-                        model: model.clone(),
+                        principal: principal.to_string(),
+                        model: model.to_string(),
                         attempt,
                         outcome: "ok".into(),
                         content: self.masker.mask(&resp.content, Destination::Audit).text,
@@ -215,8 +335,8 @@ impl Orchestrator {
                 Err(err) => {
                     drop(reservation); // refund
                     self.deps.audit.record(AiAuditEvent::Response {
-                        principal: req.principal.clone(),
-                        model: model.clone(),
+                        principal: principal.to_string(),
+                        model: model.to_string(),
                         attempt,
                         outcome: error_kind(&err).into(),
                         content: String::new(),
@@ -242,15 +362,7 @@ impl Orchestrator {
             StopReason::Refusal => return Err(PlanError::Refused.into()),
             _ => {}
         }
-        let plan = parse_plan(&response.content)?;
-        validate_plan(&plan, &self.config.plan_policy, &req.target_cluster)?;
-        Ok(PlanOutcome {
-            plan,
-            model,
-            input_tokens: response.input_tokens,
-            output_tokens: response.output_tokens,
-            attempts: attempt,
-        })
+        Ok((response, attempt))
     }
 }
 
