@@ -1,0 +1,22 @@
+product:
+  laoban: laoban
+
+laoban:
+  nav:
+    dashboard: 總覽
+  dashboard:
+    title: laoban
+    description: 用自然語言描述需求，laoban 會先提出計畫與架構視圖，經你確認後才撰寫程式，並在部署前通過自動檢查與人工審查。目前為開發預覽版，尚未連接任何後端服務。
+    cards:
+      requests:
+        title: 需求對話
+        emptyTitle: 尚無需求對話
+        emptyDescription: 之後可以在這裡用自然語言描述想做的事，laoban 會先回覆計畫供你確認。
+      architecture:
+        title: 架構視圖
+        emptyTitle: 尚無架構視圖
+        emptyDescription: 計畫確認後，這裡會顯示變更前後的架構圖。
+      review:
+        title: 變更審查
+        emptyTitle: 目前沒有待審查的變更
+        emptyDescription: 需要人工審查的變更會列在這裡，核准後才會部署。
