@@ -1,0 +1,76 @@
+# Example objects used by CI to check the CRD schemas against a real API server.
+# Synthetic data (breakfast-shop sample from web/viewer-prototype).
+apiVersion: laoban.yansheng133.github.io/v1alpha1
+kind: ProjectPolicy
+metadata:
+  name: shop
+  namespace: laoban-system
+spec:
+  project: local:p-shop1
+  owners:
+    - local://u-owner
+  admins:
+    - local://u-admin
+  developer: NotifyOnly
+  platformEngineer: Exempt
+---
+apiVersion: laoban.yansheng133.github.io/v1alpha1
+kind: ChangeRequest
+metadata:
+  name: shop-v3
+  namespace: laoban-system
+spec:
+  project: local:p-shop1
+  author: local://u-dev
+  authorRoles:
+    - Developer
+  target:
+    name: prod
+    production: true
+  risk:
+    exposure:
+      - change: NetworkPolicyRemoved
+        namespace: shop
+        name: allow-api-to-db
+      - change: ServiceExposed
+        namespace: shop
+        name: web
+        serviceType: LoadBalancer
+    databaseSchemaChange: true
+---
+apiVersion: laoban.yansheng133.github.io/v1alpha1
+kind: ArchitectureVersion
+metadata:
+  name: shop-v1
+  namespace: laoban-system
+spec:
+  project: local:p-shop1
+  version: 1
+  author: local://u-biz
+  note:
+    zh-TW: 第一版：點餐網頁與訂單 API
+    en: "First version: ordering page and order API"
+  nodes:
+    - { id: ing-web, layer: network, kind: ingress, name: order.example.test, detail: 1, props: { tls: false }, pos: { x: -6, z: 0 } }
+    - { id: svc-web, layer: network, kind: service, name: web, detail: 2, parent: app-web, props: { type: ClusterIP, port: 80 }, pos: { x: -2, z: -2 } }
+    - { id: app-web, layer: code, kind: app, name: web, detail: 1, props: { lang: TypeScript, replicas: 1 }, pos: { x: -4, z: -1 } }
+    - { id: mod-routes, layer: code, kind: module, name: routes, detail: 3, parent: app-web, props: { file: src/routes.rs }, pos: { x: 0.5, z: 2.5 } }
+    - { id: db-orders, layer: data, kind: database, name: orders-db, detail: 1, props: { engine: PostgreSQL, version: 16 }, pos: { x: 3, z: 0 } }
+  edges:
+    - { from: ing-web, to: svc-web, kind: routes }
+    - { from: svc-web, to: app-web, kind: routes }
+    - { from: mod-routes, to: db-orders, kind: writes, label: SQL }
+---
+apiVersion: laoban.yansheng133.github.io/v1alpha1
+kind: ArchitectureVersion
+metadata:
+  name: shop-v2
+  namespace: laoban-system
+spec:
+  project: local:p-shop1
+  version: 2
+  parent: 1
+  author: local://u-dev
+  nodes:
+    - { id: app-web, layer: code, kind: app, name: web, detail: 1, pos: { x: -4, z: -1 } }
+  edges: []

@@ -1,0 +1,160 @@
+{{- include "laoban.crdCheck" . }}
+{{- $anthropicSecret := required "anthropic.existingSecret is required: name of an existing Secret holding the Anthropic API key (the key itself never goes in values)" .Values.anthropic.existingSecret }}
+{{- if and .Values.syslog.enabled (not .Values.syslog.host) }}
+{{- fail "syslog.host is required when syslog.enabled is true" }}
+{{- end }}
+{{- if and .Values.syslog.enabled .Values.syslog.tls.enabled (not .Values.syslog.tls.caConfigMap) }}
+{{- fail "syslog.tls.caConfigMap is required when syslog TLS is enabled" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "laoban.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "laoban.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  # The spool volume is ReadWriteOnce: stop the old pod before starting the new one.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "laoban.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "laoban.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- if or .Values.image.tag .Values.podAnnotations }}
+      annotations:
+        {{- with .Values.image.tag }}
+        # Informational only: the image is pulled by digest.
+        laoban.yansheng133.github.io/image-tag: {{ . | quote }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "laoban.serviceAccountName" . }}
+      # The backend calls the Kubernetes API (with impersonation headers), so it needs its token.
+      automountServiceAccountToken: true
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: laoban-server
+          image: {{ include "laoban.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.containerPort }}
+              protocol: TCP
+          env:
+            # Contract with the (not yet written) Rust server. Keep in sync with its config.
+            - name: LAOBAN_LISTEN_ADDR
+              value: {{ printf "0.0.0.0:%d" (int .Values.containerPort) | quote }}
+            - name: LAOBAN_POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: LAOBAN_SPOOL_DIR
+              value: {{ .Values.persistence.mountPath | quote }}
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $anthropicSecret }}
+                  key: {{ .Values.anthropic.secretKey }}
+            {{- if .Values.syslog.enabled }}
+            - name: LAOBAN_SYSLOG_HOST
+              value: {{ .Values.syslog.host | quote }}
+            - name: LAOBAN_SYSLOG_PORT
+              value: {{ .Values.syslog.port | quote }}
+            - name: LAOBAN_SYSLOG_TLS
+              value: {{ .Values.syslog.tls.enabled | quote }}
+            {{- if .Values.syslog.tls.enabled }}
+            - name: LAOBAN_SYSLOG_CA_FILE
+              value: {{ printf "/etc/laoban/syslog-ca/%s" .Values.syslog.tls.caKey | quote }}
+            {{- if .Values.syslog.tls.clientCertSecret }}
+            - name: LAOBAN_SYSLOG_CLIENT_CERT_FILE
+              value: /etc/laoban/syslog-client/tls.crt
+            - name: LAOBAN_SYSLOG_CLIENT_KEY_FILE
+              value: /etc/laoban/syslog-client/tls.key
+            {{- end }}
+            {{- end }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.probes.path }}
+              port: http
+            {{- toYaml .Values.probes.liveness | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.probes.path }}
+              port: http
+            {{- toYaml .Values.probes.readiness | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: spool
+              mountPath: {{ .Values.persistence.mountPath }}
+            # readOnlyRootFilesystem: give the process a writable /tmp.
+            - name: tmp
+              mountPath: /tmp
+            {{- if and .Values.syslog.enabled .Values.syslog.tls.enabled }}
+            - name: syslog-ca
+              mountPath: /etc/laoban/syslog-ca
+              readOnly: true
+            {{- if .Values.syslog.tls.clientCertSecret }}
+            - name: syslog-client
+              mountPath: /etc/laoban/syslog-client
+              readOnly: true
+            {{- end }}
+            {{- end }}
+      volumes:
+        - name: spool
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "laoban.fullname" . }}-spool
+          {{- else }}
+          # Not persistent: spooled audit records are lost when the pod is deleted.
+          emptyDir: {}
+          {{- end }}
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+        {{- if and .Values.syslog.enabled .Values.syslog.tls.enabled }}
+        - name: syslog-ca
+          configMap:
+            name: {{ .Values.syslog.tls.caConfigMap }}
+            items:
+              - key: {{ .Values.syslog.tls.caKey }}
+                path: {{ .Values.syslog.tls.caKey }}
+        {{- if .Values.syslog.tls.clientCertSecret }}
+        - name: syslog-client
+          secret:
+            secretName: {{ .Values.syslog.tls.clientCertSecret }}
+            # Group-readable: the process runs as a non-root user with fsGroup.
+            defaultMode: 0440
+        {{- end }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -1,0 +1,58 @@
+{{- /*
+Identity delegation model.
+
+The backend never acts with permissions of its own. Every Kubernetes API call
+it makes on behalf of a user carries impersonation headers (Impersonate-User,
+Impersonate-Group, Impersonate-Extra-*), so the API server authorizes the call
+with that user's RBAC and the audit log records both identities. This mirrors
+how Rancher's own cattle-impersonation-system service accounts work: their only
+permission is "impersonate".
+
+So this ClusterRole grants ONLY the "impersonate" verb on users, groups and the
+userextras that Rancher sets (principalid, username). There is deliberately no
+get/list/watch/create on any resource, and no "serviceaccounts" or "uids".
+
+Known risk: impersonate on users/groups without resourceNames lets this
+ServiceAccount impersonate any user or group, including privileged ones.
+Users and groups cannot be enumerated in advance, so they cannot be pinned
+with resourceNames. Treat the ServiceAccount token as cluster-admin-equivalent
+on the local cluster and keep the namespace locked down. Kubernetes'
+ConstrainedImpersonation feature is a candidate to narrow this later.
+
+Docs:
+  https://kubernetes.io/docs/reference/access-authn-authz/user-impersonation/
+  https://ranchermanager.docs.rancher.com/reference-guides/rancher-manager-architecture/communicating-with-downstream-user-clusters
+*/ -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "laoban.clusterRoleName" . }}
+  labels:
+    {{- include "laoban.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["users", "groups"]
+    verbs: ["impersonate"]
+  {{- with .Values.impersonation.userExtras }}
+  - apiGroups: ["authentication.k8s.io"]
+    resources:
+      {{- range . }}
+      - {{ printf "userextras/%s" . | quote }}
+      {{- end }}
+    verbs: ["impersonate"]
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "laoban.clusterRoleName" . }}
+  labels:
+    {{- include "laoban.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "laoban.clusterRoleName" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "laoban.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}

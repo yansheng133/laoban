@@ -1,0 +1,28 @@
+laoban backend {{ .Chart.AppVersion }} is installed in namespace {{ .Release.Namespace }}.
+
+Image: {{ include "laoban.image" . }}{{ with .Values.image.tag }} (tag {{ . }}, informational){{ end }}
+
+There is no Ingress. The UI extension reaches the backend through Rancher's
+Kubernetes API proxy for the local cluster:
+
+  /k8s/clusters/local/api/v1/namespaces/{{ .Release.Namespace }}/services/http:{{ include "laoban.fullname" . }}:{{ .Values.service.port }}/proxy/
+
+For that URL to work, users need "get" (and "create" for POST) on the
+services/proxy subresource of this Service in {{ .Release.Namespace }}.
+The chart does not grant this; see README.
+
+Check the pod:
+  kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+  kubectl -n {{ .Release.Namespace }} logs deploy/{{ include "laoban.fullname" . }}
+
+The backend's ServiceAccount can only impersonate users and groups
+(ClusterRole {{ include "laoban.clusterRoleName" . }}). Anyone who can read its
+token can act as any user: restrict access to namespace {{ .Release.Namespace }}.
+{{- if .Values.persistence.enabled }}
+
+The audit spool PVC {{ include "laoban.fullname" . }}-spool is kept on uninstall (helm.sh/resource-policy: keep).
+{{- end }}
+{{- if not .Values.syslog.enabled }}
+
+WARNING: syslog forwarding is disabled; audit records stay only in the local spool.
+{{- end }}
