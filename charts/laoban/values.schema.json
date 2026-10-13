@@ -114,12 +114,27 @@
         "mountPath": { "type": "string", "pattern": "^/" }
       }
     },
+    "ai": {
+      "description": "Where the AI calls go. Format and range are checked by the template, with a clear message.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "baseUrl": {
+          "description": "Empty for the Anthropic API, or the base URL of an Anthropic-compatible endpoint (LAOBAN_AI_BASE_URL).",
+          "type": "string"
+        },
+        "timeoutSeconds": {
+          "description": "Upper bound for one AI call, 30 to 1800 (LAOBAN_AI_TIMEOUT_SECONDS).",
+          "type": "integer"
+        }
+      }
+    },
     "anthropic": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
         "existingSecret": {
-          "description": "Required at render time. Name of an existing Secret with the Anthropic API key.",
+          "description": "Required at render time unless ai.baseUrl is set. Name of an existing Secret with the Anthropic API key.",
           "$ref": "#/definitions/name"
         },
         "secretKey": { "type": "string", "minLength": 1 }
@@ -146,7 +161,7 @@
       "additionalProperties": false,
       "properties": {
         "model": {
-          "description": "Required at render time. Anthropic model ID (LAOBAN_MODEL).",
+          "description": "Required at render time. Model ID (LAOBAN_MODEL): an Anthropic model ID or the endpoint's name for a local model.",
           "type": "string"
         },
         "tokenCap": {
