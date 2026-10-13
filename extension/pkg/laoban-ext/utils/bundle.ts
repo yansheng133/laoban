@@ -35,8 +35,11 @@ export interface Bundle {
 // 'missing': no bundle with the prefix yet (Fleet has not picked up the commit)
 // 'pending': found, still rolling out
 // 'error':   Fleet reports an apply error (it may still recover)
+// 'modified': applied everywhere, but Fleet sees the live objects differ from
+//             Git (its "Modified" state). The app is running, so the page can
+//             offer the link, with a warning.
 // 'ready':   every matching bundle is ready on every target
-export type ReadinessState = 'missing' | 'pending' | 'error' | 'ready';
+export type ReadinessState = 'missing' | 'pending' | 'error' | 'modified' | 'ready';
 
 export interface Readiness {
   state: ReadinessState;
@@ -103,6 +106,16 @@ export function bundleState(b: Bundle, commit?: string): { state: Exclude<Readin
     };
   }
 
+  // Every target is either ready or only modified (nothing pending or
+  // failing): Fleet will not get any further on its own.
+  const modified = Number(summary.modified) || 0;
+
+  if (desired > 0 && modified > 0 && ready + modified >= desired) {
+    return {
+      state: 'modified', ready, desired, message
+    };
+  }
+
   return {
     state: 'pending', ready, desired, message
   };
@@ -131,6 +144,8 @@ export function bundleReadiness(bundles: Bundle[], prefix: string, commit?: stri
     state = 'ready';
   } else if (states.some((s) => s.state === 'error')) {
     state = 'error';
+  } else if (states.every((s) => s.state === 'ready' || s.state === 'modified')) {
+    state = 'modified';
   }
 
   return {

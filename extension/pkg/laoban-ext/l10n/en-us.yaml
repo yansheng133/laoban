@@ -52,6 +52,7 @@ laoban:
       deploying: "Fleet is deploying: {ready} / {desired} ready…"
       bundleError: "Fleet reports a deployment error ({ready} / {desired} ready). Still checking…"
       ready: Deployed. You can open the app.
+      readyModified: "The app is deployed and running, so you can open it. Fleet reports that the live objects differ from Git (Modified); see the {workspace} workspace in Continuous Delivery."
       timeout: "Not ready after {minutes} minutes, stopped checking. Check the bundle status in the {workspace} workspace under Continuous Delivery."
       pollFailed: Could not read the Fleet status this time. Retrying in 5 seconds.
     errors:

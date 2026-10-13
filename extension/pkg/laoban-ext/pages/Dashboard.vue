@@ -129,7 +129,8 @@ export default defineComponent({
         pollError.value = true;
       }
 
-      if (readiness.value?.state === 'ready') {
+      // 'modified': running but drifted from Git; offer the app anyway.
+      if (readiness.value?.state === 'ready' || readiness.value?.state === 'modified') {
         phase.value = 'ready';
         stopElapsed();
 
@@ -219,7 +220,7 @@ export default defineComponent({
         return t('laoban.dashboard.status.deploying', { ready: r.ready, desired: r.desired });
       }
       case 'ready':
-        return t('laoban.dashboard.status.ready');
+        return readiness.value?.state === 'modified' ? t('laoban.dashboard.status.readyModified', { workspace: FLEET_WORKSPACE }) : t('laoban.dashboard.status.ready');
       case 'timeout':
         return t('laoban.dashboard.status.timeout', { minutes: Math.round(BUNDLE_POLL_TIMEOUT_MS / 60000), workspace: FLEET_WORKSPACE });
       default:
@@ -467,7 +468,7 @@ export default defineComponent({
       />
       <span>{{ statusText }}</span>
       <span
-        v-if="phase === 'deploying' && readiness && readiness.message"
+        v-if="(phase === 'deploying' || (phase === 'ready' && readiness && readiness.state === 'modified')) && readiness && readiness.message"
         class="text-muted laoban-text"
       >{{ readiness.message }}</span>
       <span

@@ -97,6 +97,19 @@ impl M0Error {
         }
     }
 
+    /// Extra detail for the server log, for errors whose cause the user
+    /// message hides (which GitHub step failed and how, why the AI call
+    /// failed). These messages never contain the token, the API key or the
+    /// user's prompt; AI output (`ai_invalid_output`) is deliberately left out.
+    pub fn log_detail(&self) -> Option<String> {
+        match self {
+            M0Error::Github(_) | M0Error::AiUnavailable(_) | M0Error::Internal(_) => {
+                Some(self.to_string())
+            }
+            _ => None,
+        }
+    }
+
     pub fn status(&self) -> u16 {
         match self {
             M0Error::BadRequest(_) => 400,
@@ -431,5 +444,25 @@ mod tests {
             assert_eq!((e.code(), e.status()), (code, status));
             assert!(!e.user_message().is_empty());
         }
+    }
+
+    #[test]
+    fn log_detail_only_for_hidden_causes() {
+        assert_eq!(
+            M0Error::Github(GithubError::BadPath)
+                .log_detail()
+                .as_deref(),
+            Some("refusing to commit an unsafe path")
+        );
+        assert!(M0Error::AiUnavailable("transport")
+            .log_detail()
+            .unwrap()
+            .contains("transport"));
+        // AI output is not logged.
+        assert_eq!(
+            M0Error::AiInvalidOutput(InvalidOutput("model said x".into())).log_detail(),
+            None
+        );
+        assert_eq!(M0Error::PlanNotFound.log_detail(), None);
     }
 }

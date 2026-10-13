@@ -52,6 +52,7 @@ laoban:
       deploying: "Fleet 部署中：{ready} / {desired} 就緒…"
       bundleError: "Fleet 回報部署錯誤（{ready} / {desired} 就緒），仍持續確認中…"
       ready: 部署完成，可以打開應用。
+      readyModified: "應用已部署並在執行，可以打開。但 Fleet 回報實際物件與 Git 內容不一致（Modified），細節請到 Continuous Delivery 的 {workspace} 工作區查看。"
       timeout: "等了 {minutes} 分鐘仍未就緒，已停止確認。請到 Continuous Delivery 的 {workspace} 工作區查看 Bundle 狀態。"
       pollFailed: 這次無法讀取 Fleet 狀態，5 秒後重試。
     errors:

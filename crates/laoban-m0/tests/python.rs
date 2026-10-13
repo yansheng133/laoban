@@ -57,6 +57,7 @@ assert fleet == {"defaultNamespace": "laoban-dev", "namespace": "laoban-dev"}, f
 for name, cm_name in (("configmap-web.yaml", "tricky-web-files"), ("configmap-api.yaml", "tricky-api-code")):
     cm = docs[name][0]
     assert cm["kind"] == "ConfigMap" and cm["metadata"]["name"] == cm_name, cm["metadata"]
+    assert "app.kubernetes.io/managed-by" not in cm["metadata"]["labels"], cm["metadata"]
     for k, v in cm["data"].items():
         assert v == expected[k], (k, v, expected[k])
     assert set(cm["data"]) == {k for k in expected if k in cm["data"]}
@@ -64,10 +65,13 @@ for name in ("web.yaml", "api.yaml"):
     dep, svc = docs[name]
     for obj in (dep, svc):
         labels = obj["metadata"]["labels"]
-        assert labels["app.kubernetes.io/managed-by"] == "laoban", labels
+        # Helm (under Fleet) owns this label on top-level objects.
+        assert "app.kubernetes.io/managed-by" not in labels, labels
         assert labels["laoban.io/app"] == "tricky", labels
         assert all(isinstance(v, str) for v in labels.values()), labels
     pod = dep["spec"]["template"]
+    assert pod["metadata"]["labels"]["app.kubernetes.io/managed-by"] == "laoban", pod["metadata"]["labels"]
+    assert pod["metadata"]["labels"]["laoban.io/app"] == "tricky", pod["metadata"]["labels"]
     assert len(pod["metadata"]["annotations"]["laoban.io/content-hash"]) == 64
     spec = pod["spec"]
     assert spec["automountServiceAccountToken"] is False
