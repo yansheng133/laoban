@@ -95,13 +95,31 @@ export interface RoundView {
   state: RoundState;
   // Unix seconds; when collecting ends.
   deadline: number;
-  opinions: { by: string; at: string; text: string }[];
+  opinions: RoundOpinion[];
   confirmers: { user: string; answer: 'pending' | 'confirmed' | 'skipped'; at?: string }[];
   plan: { planId: string; summary: string; steps: string[]; architecture: Architecture; notes?: string } | null;
   message: string;
   result: ApplyResponse | null;
   log: { at: string; by: string; event: string; code?: string; args?: Record<string, string> }[];
-  you: { user: string; isInitiator: boolean; mustConfirm: boolean; canAddOpinion: boolean };
+  you: { user: string; isInitiator: boolean; mustConfirm: boolean; canAddOpinion: boolean; canDiscuss?: boolean };
+}
+
+// One opinion: optionally about one component of the architecture, with
+// the people who +1'd it and the replies under it.
+export interface RoundOpinion {
+  id: string;
+  by: string;
+  at: string;
+  text: string;
+  target?: { id: string; name: string };
+  supporters?: string[];
+  replies?: { by: string; at: string; text: string }[];
+}
+
+// An opinion as sent; `target` is the architecture node id.
+export interface OpinionItem {
+  text: string;
+  target?: string;
 }
 
 export interface RoundResponse {
@@ -347,10 +365,34 @@ export function getRound(store: StoreLike, name: string): Promise<RoundResponse>
 }
 
 /** Open a round. With deadlineMinutes 0 the AI converges in this call. */
-export function openRound(store: StoreLike, name: string, opinion: string, deadlineMinutes: number, scope: string, timeoutMs: number): Promise<RoundResponse> {
+export function openRound(store: StoreLike, name: string, items: OpinionItem[], deadlineMinutes: number, scope: string, timeoutMs: number): Promise<RoundResponse> {
   return requestJson<RoundResponse>(store, appPath(name, '/round'), {
-    method: 'POST', body: { opinion, deadlineMinutes, scope }, timeoutMs
+    method: 'POST', body: { items, deadlineMinutes, scope }, timeoutMs
   });
+}
+
+/** Several opinions at once (up to 10), each optionally about a component. */
+export function addOpinions(store: StoreLike, name: string, items: OpinionItem[]): Promise<RoundResponse> {
+  return requestJson<RoundResponse>(store, appPath(name, '/round/opinions'), { method: 'POST', body: { items } });
+}
+
+const OPINION_ID = /^o[0-9]{1,4}$/;
+
+function opinionPath(name: string, id: string, what: string): string {
+  if (!OPINION_ID.test(id)) {
+    throw new RequestError('bad_request', null);
+  }
+
+  return appPath(name, `/round/opinions/${ id }/${ what }`);
+}
+
+/** +1 an opinion, or take the +1 back. */
+export function supportOpinion(store: StoreLike, name: string, id: string): Promise<RoundResponse> {
+  return requestJson<RoundResponse>(store, opinionPath(name, id, 'support'), { method: 'POST', body: {} });
+}
+
+export function replyToOpinion(store: StoreLike, name: string, id: string, text: string): Promise<RoundResponse> {
+  return requestJson<RoundResponse>(store, opinionPath(name, id, 'replies'), { method: 'POST', body: { text } });
 }
 
 export type RoundAction = 'opinions' | 'confirm' | 'object' | 'skip' | 'cancel' | 'converge';

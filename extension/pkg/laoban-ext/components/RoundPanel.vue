@@ -11,6 +11,8 @@ import {
 import { useStore } from 'vuex';
 import { useText } from '../composables/useText';
 import { RoundView } from '../utils/backend';
+import { OpinionDraft, MAX_BATCH } from '../utils/opinions';
+import OpinionList from './OpinionList.vue';
 import { userLabel } from '../utils/users';
 import { formatDateTime, formatClock } from '../utils/time';
 
@@ -18,6 +20,8 @@ export const DEADLINES = [0, 10, 30, 60, 240, 1440];
 
 export default defineComponent({
   name: 'LaobanRoundPanel',
+
+  components: { OpinionList },
 
   props: {
     round: {
@@ -46,6 +50,16 @@ export default defineComponent({
       type:    Boolean,
       default: false,
     },
+    // Opinions written for components in the 3D view, not sent yet.
+    drafts: {
+      type:    Array as PropType<OpinionDraft[]>,
+      default: () => [],
+    },
+    // Node selected in the 3D view.
+    selectedTarget: {
+      type:    String as PropType<string | null>,
+      default: null,
+    },
     // A note from the page (the round disappeared, the deploy's progress).
     notice: {
       type:    String,
@@ -53,7 +67,7 @@ export default defineComponent({
     },
   },
 
-  emits: ['update:draft', 'open', 'act'],
+  emits: ['update:draft', 'open', 'act', 'add', 'remove-draft', 'support', 'reply', 'select-target'],
 
   setup(props, { emit }) {
     const store = useStore();
@@ -98,12 +112,15 @@ export default defineComponent({
 
       return t('laoban.round.deadline', { time: formatClock(store, d), minutes: left });
     });
-    const canOpen = computed(() => !busy.value && !active.value && !!props.draft.trim());
-    const canAdd = computed(() => !busy.value && !!you.value?.canAddOpinion && !!props.draft.trim());
+    // The general opinion counts as one more.
+    const count = computed(() => props.drafts.length + (props.draft.trim() ? 1 : 0));
+    const tooMany = computed(() => count.value > MAX_BATCH);
+    const canOpen = computed(() => !busy.value && !active.value && count.value > 0 && !tooMany.value);
+    const canAdd = computed(() => !busy.value && !!you.value?.canAddOpinion && count.value > 0 && !tooMany.value);
 
     // Log entries in the page's language; the backend's Chinese text when
     // the code is unknown.
-    const EVENTS = ['opened', 'opinion', 'objected', 'converging', 'converged', 'failed', 'confirmed', 'skipped', 'applying', 'done', 'cancelled'];
+    const EVENTS = ['opened', 'opinion', 'objected', 'converging', 'converged', 'failed', 'confirmed', 'skipped', 'applying', 'done', 'cancelled', 'supported', 'unsupported', 'replied'];
 
     function logText(l: RoundView['log'][number]): string {
       if (!l.code || !EVENTS.includes(l.code)) {
@@ -132,7 +149,7 @@ export default defineComponent({
 
     function addOpinion() {
       if (canAdd.value) {
-        emit('act', 'opinions', { text: props.draft.trim() });
+        emit('add');
       }
     }
 
@@ -160,6 +177,9 @@ export default defineComponent({
       deadlineText,
       canOpen,
       canAdd,
+      count,
+      tooMany,
+      maxBatch: MAX_BATCH,
       formatTime,
       logText,
       open,
@@ -200,6 +220,49 @@ export default defineComponent({
       >
         {{ t('laoban.round.lastCancelled') }}
       </p>
+      <div
+        v-if="drafts.length"
+        class="laoban-drafts"
+      >
+        <span class="laoban-label">{{ t('laoban.opinions.drafts', { count: drafts.length }) }}</span>
+        <ul>
+          <li
+            v-for="d in drafts"
+            :key="d.target"
+          >
+            <button
+              type="button"
+              class="laoban-opinion-target"
+              @click="$emit('select-target', d.target)"
+            >
+              {{ d.targetName }}
+            </button>
+            <span class="laoban-text">{{ d.text }}</span>
+            <button
+              type="button"
+              class="btn btn-sm role-link"
+              :aria-label="t('laoban.opinions.removeDraft', { name: d.targetName })"
+              :disabled="busy"
+              @click="$emit('remove-draft', d.target)"
+            >
+              ✕
+            </button>
+          </li>
+        </ul>
+      </div>
+      <p
+        v-if="tooMany"
+        class="text-error laoban-hint"
+      >
+        {{ t('laoban.opinions.tooMany', { max: maxBatch }) }}
+      </p>
+      <p
+        v-else-if="!drafts.length"
+        class="text-muted laoban-hint"
+      >
+        {{ t('laoban.opinions.howTo') }}
+      </p>
+
       <details
         v-if="round && round.log.length"
         class="laoban-round-log"
@@ -273,7 +336,9 @@ export default defineComponent({
           class="icon icon-spinner icon-spin"
           aria-hidden="true"
         />
-        {{ minutes === 0 ? t('laoban.round.openNow') : t('laoban.round.open') }}
+        {{ minutes === 0 ? t('laoban.round.openNow') : t('laoban.round.open') }}<template v-if="count > 1">
+          （{{ t('laoban.opinions.count', { count }) }}）
+        </template>
       </button>
       <p
         v-if="pending === 'open' && minutes === 0"
@@ -297,15 +362,16 @@ export default defineComponent({
         >{{ deadlineText }}</span>
       </div>
 
-      <ol class="laoban-round-opinions">
-        <li
-          v-for="(o, i) in round.opinions"
-          :key="i"
-        >
-          <span class="text-muted">{{ who(o.by) }} · {{ formatTime(o.at) }}</span>
-          <span class="laoban-text">{{ o.text }}</span>
-        </li>
-      </ol>
+      <OpinionList
+        :opinions="round.opinions"
+        :me="you ? you.user : ''"
+        :can-discuss="!!you && !!you.canDiscuss"
+        :busy="busy"
+        :selected="selectedTarget"
+        @support="$emit('support', $event)"
+        @reply="(id, text) => $emit('reply', id, text)"
+        @select="$emit('select-target', $event)"
+      />
 
       <!-- Collecting: add an opinion. -->
       <form
@@ -313,6 +379,48 @@ export default defineComponent({
         class="laoban-form"
         @submit.prevent="addOpinion"
       >
+        <div
+          v-if="drafts.length"
+          class="laoban-drafts"
+        >
+          <span class="laoban-label">{{ t('laoban.opinions.drafts', { count: drafts.length }) }}</span>
+          <ul>
+            <li
+              v-for="d in drafts"
+              :key="d.target"
+            >
+              <button
+                type="button"
+                class="laoban-opinion-target"
+                @click="$emit('select-target', d.target)"
+              >
+                {{ d.targetName }}
+              </button>
+              <span class="laoban-text">{{ d.text }}</span>
+              <button
+                type="button"
+                class="btn btn-sm role-link"
+                :aria-label="t('laoban.opinions.removeDraft', { name: d.targetName })"
+                :disabled="busy"
+                @click="$emit('remove-draft', d.target)"
+              >
+                ✕
+              </button>
+            </li>
+          </ul>
+        </div>
+        <p
+          v-if="tooMany"
+          class="text-error laoban-hint"
+        >
+          {{ t('laoban.opinions.tooMany', { max: maxBatch }) }}
+        </p>
+        <p
+          v-else-if="!drafts.length"
+          class="text-muted laoban-hint"
+        >
+          {{ t('laoban.opinions.howTo') }}
+        </p>
         <label
           for="laoban-opinion"
           class="laoban-label"
@@ -330,7 +438,7 @@ export default defineComponent({
           class="btn role-primary"
           :disabled="!canAdd"
         >
-          {{ t('laoban.round.add') }}
+          {{ count > 1 ? t('laoban.opinions.sendMany', { count }) : t('laoban.round.add') }}
         </button>
       </form>
 
@@ -543,6 +651,32 @@ export default defineComponent({
   select {
     width: auto;
   }
+}
+
+.laoban-drafts {
+  ul {
+    list-style: none;
+    padding: 0;
+    margin: 4px 0 0;
+  }
+
+  li {
+    display: flex;
+    gap: 6px;
+    align-items: baseline;
+    padding: 2px 0;
+    font-size: 13px;
+  }
+}
+
+.laoban-opinion-target {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--link);
+  font-weight: bold;
+  white-space: nowrap;
+  cursor: pointer;
 }
 
 .laoban-round-opinions {

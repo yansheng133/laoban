@@ -92,7 +92,7 @@ laoban:
     hintVersion: "第 {n} 版の構成です。"
   round:
     you: あなた
-    opinionLabel: あなたの意見
+    opinionLabel: 全体への意見（アプリ全体）
     deadlineLabel: 収束
     deadlines:
       m0: すぐ（変更計画をすぐ作成）
@@ -124,7 +124,7 @@ laoban:
     startedBy: "{by}が開始"
     scope: "範囲：{scope}"
     deadline: "{time} に収束（残り {minutes} 分）"
-    addLabel: あなたの意見
+    addLabel: 全体への意見（アプリ全体）
     add: 意見を出す
     convergingCount: "AI が {count} 件の意見を収束しています…"
     planTitle: 収束した変更計画
@@ -152,7 +152,10 @@ laoban:
     logLine: "{who}：{event}"
     events:
       opened: "ラウンドを開始（{minutes} 分後に収束）"
-      opinion: 意見を追加
+      opinion: "{count} 件の意見を追加"
+      supported: "意見 {opinion} に賛成"
+      unsupported: "意見 {opinion} への賛成を取り消し"
+      replied: "意見 {opinion} に返信"
       objected: "異議あり。{minutes} 分後に再収束"
       converging: "AI が {count} 件の意見の収束を開始"
       converged: 変更計画ができ、確認待ち
@@ -176,6 +179,27 @@ laoban:
       added: 追加
       removed: 削除
       changed: 変更
+  opinions:
+    general: アプリ全体
+    showInView: 3D 図でこのコンポーネントを選択
+    supportedBy: "{names} が賛成"
+    replies: "返信（{count}）"
+    replyPlaceholder: この意見に返信
+    send: 送信
+    drafts: "コンポーネントへの下書き（{count}）"
+    removeDraft: "{name} への下書きを削除"
+    removeDraftShort: 下書きを削除
+    tooMany: "一度に送れる意見は {max} 件までです。いくつか削除してください。"
+    howTo: 特定のコンポーネントに意見を書くには、右の 3D 図でそのコンポーネントをクリックして下書きに追加します。複数のコンポーネントにそれぞれ書けます。
+    count: "{count} 件の意見"
+    sendMany: "{count} 件の意見を送信"
+    onComponent: "「{name}」への意見"
+    componentPlaceholder: 例：ここに検索を追加
+    addDraft: 下書きに追加
+    updateDraft: 下書きを更新
+    draftHint: "下書きが {count} 件あります。左の意見の収束でまとめて送信します。"
+    sideTitle: 意見
+    sideOpenHint: 拡大を閉じて左でラウンドを開始すると、下書きも一緒に送信されます。
   editor:
     hint: 4 つのファイルを直接編集します。保存すると新しいバージョン（「手動修正」）になり Fleet がデプロイします。AI は呼び出しません。AI が生成したコードと同じチェックを行います。
     hintReadOnly: 閲覧のみです。

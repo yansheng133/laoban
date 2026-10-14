@@ -4,7 +4,7 @@ import {
 import {
   parseBackendError, resolveAppUrl, safeHttpsUrl, backendUrl, aiRequestTimeoutMs, ConfigResponse,
   createPlan, getApp, listApps, listVersions, getVersion, restoreVersion, applyPlan,
-  getRound, openRound, roundAction, getFiles, saveFiles, saveLayout, parseKubeStatus
+  getRound, openRound, roundAction, addOpinions, supportOpinion, replyToOpinion, getFiles, saveFiles, saveLayout, parseKubeStatus
 } from '../backend';
 import { AI_REQUEST_TIMEOUT_MS } from '../../config/backend';
 
@@ -147,9 +147,26 @@ describe('apps and plan requests', () => {
     expect(calls[0].init.method).toBe('GET');
 
     mockFetch(200, { round: { state: 'collecting' } });
-    await openRound(store, 'todo', '要能排序', 30, 'web', 1000);
+    await openRound(store, 'todo', [{ text: '要能排序' }, { text: '加搜尋', target: 'app-web' }], 30, 'web', 1000);
     expect(calls[0].init.method).toBe('POST');
-    expect(JSON.parse(String(calls[0].init.body))).toEqual({ opinion: '要能排序', deadlineMinutes: 30, scope: 'web' });
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({
+      items: [{ text: '要能排序' }, { text: '加搜尋', target: 'app-web' }], deadlineMinutes: 30, scope: 'web'
+    });
+
+    mockFetch(200, { round: { state: 'collecting' } });
+    await addOpinions(store, 'todo', [{ text: 'a', target: 'app-api' }]);
+    expect(calls[0].url).toBe(backendUrl('/apps/todo/round/opinions'));
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ items: [{ text: 'a', target: 'app-api' }] });
+
+    mockFetch(200, { round: { state: 'collecting' } });
+    await supportOpinion(store, 'todo', 'o3');
+    expect(calls[0].url).toBe(backendUrl('/apps/todo/round/opinions/o3/support'));
+    mockFetch(200, { round: { state: 'collecting' } });
+    await replyToOpinion(store, 'todo', 'o3', '同意');
+    expect(calls[0].url).toBe(backendUrl('/apps/todo/round/opinions/o3/replies'));
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ text: '同意' });
+    // Only IDs the backend gives out go into the path.
+    expect(() => supportOpinion(store, 'todo', '../x')).toThrow();
 
     mockFetch(200, { round: { state: 'done' }, applied: { commit: 'c' } });
     const res = await roundAction(store, 'todo', 'skip', { user: 'u-b' }, 1000);

@@ -31,8 +31,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use laoban_m0::{
-    ApplyRequest, M0Error, M0Service, OpenRoundRequest, OpinionRequest, PlanRequestBody,
-    RestoreRequest, SaveFilesRequest, SaveLayoutRequest, SkipRequest,
+    AddOpinionsRequest, ApplyRequest, M0Error, M0Service, OpenRoundRequest, OpinionRequest,
+    PlanRequestBody, RestoreRequest, SaveFilesRequest, SaveLayoutRequest, SkipRequest,
 };
 use serde_json::json;
 
@@ -701,6 +701,14 @@ fn bad_request(message: &str) -> Response {
     Response::api_error(400, "bad_request", message)
 }
 
+/// Opinion IDs as the backend gives them out: "o" and up to 4 digits.
+fn valid_opinion_id(id: &str) -> bool {
+    id.len() <= 5
+        && id
+            .strip_prefix('o')
+            .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+}
+
 fn valid_plan_id(id: &str) -> bool {
     let b = id.as_bytes();
     b.len() == 17
@@ -724,6 +732,10 @@ enum Route<'a> {
     /// The app's round of 意見收斂: GET to read, POST to open one.
     Round(&'a str),
     RoundOpinions(&'a str),
+    /// `.../round/opinions/<id>/support`: +1 or take it back.
+    RoundSupport(&'a str, &'a str),
+    /// `.../round/opinions/<id>/replies`.
+    RoundReply(&'a str, &'a str),
     RoundConfirm(&'a str),
     RoundObject(&'a str),
     RoundSkip(&'a str),
@@ -764,6 +776,12 @@ impl<'a> Route<'a> {
             [name, "restore"] => Some(Route::Restore(name)),
             [name, "round"] => Some(Route::Round(name)),
             [name, "round", "opinions"] => Some(Route::RoundOpinions(name)),
+            [name, "round", "opinions", id, "support"] if valid_opinion_id(id) => {
+                Some(Route::RoundSupport(name, id))
+            }
+            [name, "round", "opinions", id, "replies"] if valid_opinion_id(id) => {
+                Some(Route::RoundReply(name, id))
+            }
             [name, "round", "confirm"] => Some(Route::RoundConfirm(name)),
             [name, "round", "object"] => Some(Route::RoundObject(name)),
             [name, "round", "skip"] => Some(Route::RoundSkip(name)),
@@ -858,6 +876,7 @@ fn route_api(api: &ApiState, head: &RequestHead, body: &[u8], caller: Option<&Ca
                                                 // These carry no body worth reading; the user is the verified caller.
     match route {
         Route::RoundConfirm(name) => return reply(service.confirm_round(name, lock)),
+        Route::RoundSupport(name, id) => return reply(service.support_opinion(name, id, lock)),
         Route::RoundCancel(name) => return reply(service.cancel_round(name, lock)),
         Route::RoundConverge(name) => return reply(service.retry_round(name, lock)),
         Route::ApplyPlan(id) => {
@@ -919,14 +938,21 @@ fn route_api(api: &ApiState, head: &RequestHead, body: &[u8], caller: Option<&Ca
             };
             reply(service.open_round(name, &req, lock))
         }
-        Route::RoundOpinions(name) | Route::RoundObject(name) => {
+        Route::RoundOpinions(name) => {
+            let Ok(req) = serde_json::from_slice::<AddOpinionsRequest>(body) else {
+                return bad_request(
+                    "請求格式不正確：需要 {\"text\": \"…\"}（可加 \"target\"），或 {\"items\": [{\"text\": \"…\", \"target\": \"…\"}]}。",
+                );
+            };
+            reply(service.add_opinion(name, &req, lock))
+        }
+        Route::RoundObject(name) | Route::RoundReply(name, _) => {
             let Ok(req) = serde_json::from_slice::<OpinionRequest>(body) else {
                 return bad_request("請求格式不正確：需要 {\"text\": \"…\"}。");
             };
-            if matches!(route, Route::RoundObject(_)) {
-                reply(service.object_in_round(name, &req, lock))
-            } else {
-                reply(service.add_opinion(name, &req, lock))
+            match route {
+                Route::RoundReply(_, id) => reply(service.reply_to_opinion(name, id, &req, lock)),
+                _ => reply(service.object_in_round(name, &req, lock)),
             }
         }
         Route::RoundSkip(name) => {
