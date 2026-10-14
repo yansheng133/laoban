@@ -90,7 +90,7 @@ laoban:
     hintVersion: "Architecture of version {n}."
   round:
     you: you
-    opinionLabel: Your opinion
+    opinionLabel: General opinion (the whole app)
     deadlineLabel: Converge
     deadlines:
       m0: now (plan the change right away)
@@ -122,7 +122,7 @@ laoban:
     startedBy: "started by {by}"
     scope: "scope: {scope}"
     deadline: "converges at {time} ({minutes} min left)"
-    addLabel: Your opinion
+    addLabel: General opinion (the whole app)
     add: Add opinion
     convergingCount: "The AI is converging {count} opinion(s)…"
     planTitle: Converged change plan
@@ -150,7 +150,10 @@ laoban:
     logLine: "{who}: {event}"
     events:
       opened: "started a round (converges in {minutes} min)"
-      opinion: gave an opinion
+      opinion: "gave {count} opinion(s)"
+      supported: "+1'd opinion {opinion}"
+      unsupported: "took back the +1 on opinion {opinion}"
+      replied: "replied to opinion {opinion}"
       objected: "disagreed; converging again in {minutes} min"
       converging: "the AI started converging {count} opinion(s)"
       converged: change plan ready, waiting for confirmation
@@ -174,6 +177,27 @@ laoban:
       added: Added
       removed: Removed
       changed: Changed
+  opinions:
+    general: The whole app
+    showInView: Select this component in the 3D view
+    supportedBy: "+1 from {names}"
+    replies: "Replies ({count})"
+    replyPlaceholder: Reply to this opinion
+    send: Send
+    drafts: "Drafts on components ({count})"
+    removeDraft: "Remove the draft on {name}"
+    removeDraftShort: Remove draft
+    tooMany: "At most {max} opinions at once; remove some first."
+    howTo: "To comment on a component, click it in the 3D view on the right and add a draft; you can write one for each of several components."
+    count: "{count} opinions"
+    sendMany: "Send {count} opinions"
+    onComponent: "Opinion on \"{name}\""
+    componentPlaceholder: "For example: add a search box here"
+    addDraft: Add draft
+    updateDraft: Update draft
+    draftHint: "{count} draft(s); send them with the opinion round on the left."
+    sideTitle: Opinions
+    sideOpenHint: Close the enlarged view and start a round on the left; the drafts are sent with it.
   editor:
     hint: Edit the four files directly. Saving creates a new version (marked "Manual edit") that Fleet deploys, without calling the AI; the files get the same checks as AI-generated code.
     hintReadOnly: View only.

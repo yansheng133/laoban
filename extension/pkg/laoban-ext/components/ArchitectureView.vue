@@ -72,11 +72,18 @@ function disposeObject(root: THREE.Object3D) {
   root.clear();
 }
 
-function makeLabel(textValue: string, cls: string): CSS2DObject {
+function makeLabel(textValue: string, cls: string, badge = 0): CSS2DObject {
   const el = document.createElement('div');
 
   el.className = cls;
   el.textContent = textValue; // never innerHTML: names may come from AI output
+  if (badge > 0) {
+    const b = document.createElement('span');
+
+    b.className = 'laoban-opinion-badge';
+    b.textContent = `💬 ${ badge }`;
+    el.appendChild(b);
+  }
 
   return new CSS2DObject(el);
 }
@@ -105,6 +112,11 @@ export default defineComponent({
     },
     selected: {
       type:    String as PropType<string | null>,
+      default: null,
+    },
+    // Opinions in the running round, by node id: shown next to the name.
+    badges: {
+      type:    Object as PropType<Record<string, number> | null>,
       default: null,
     },
   },
@@ -263,7 +275,7 @@ export default defineComponent({
           material.emissive = colors['diff-changed'];
           material.emissiveIntensity = Math.max(material.emissiveIntensity, 0.35);
         }
-        const lbl = makeLabel(`${ (status && DIFF_PREFIX[status]) || '' }${ n.name }`, cls.join(' '));
+        const lbl = makeLabel(`${ (status && DIFF_PREFIX[status]) || '' }${ n.name }`, cls.join(' '), props.badges?.[n.id] || 0);
 
         lbl.position.set(0, (KIND_HEIGHT[n.kind] ?? KIND_HEIGHT.module) + 0.2, 0);
         mesh.add(lbl);
@@ -476,7 +488,7 @@ export default defineComponent({
 
     watch(() => props.architecture, () => build());
     // Same graph, other marks, positions or selection: keep the camera.
-    watch(() => [props.diff, props.positions, props.selected], () => build(false), { deep: true });
+    watch(() => [props.diff, props.positions, props.selected, props.badges], () => build(false), { deep: true });
 
     onBeforeUnmount(() => {
       resizeObserver?.disconnect();
@@ -647,6 +659,16 @@ export default defineComponent({
   :deep(.laoban-selected) {
     outline: 2px solid var(--primary);
     font-weight: bold;
+  }
+
+  :deep(.laoban-opinion-badge) {
+    margin-left: 6px;
+    padding: 0 5px;
+    border-radius: 8px;
+    background: var(--primary);
+    color: var(--primary-text, #fff);
+    font-size: 11px;
+    font-weight: normal;
   }
 
   :deep(.laoban-edge-label) {

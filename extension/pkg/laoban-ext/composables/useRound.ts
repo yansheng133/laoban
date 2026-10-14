@@ -9,7 +9,8 @@ import {
   ref, computed, onBeforeUnmount, Ref, ComputedRef
 } from 'vue';
 import {
-  getRound, openRound, roundAction, RequestError, StoreLike, RoundView, RoundResponse, RoundAction, ApplyResponse
+  getRound, openRound, roundAction, addOpinions, supportOpinion, replyToOpinion, RequestError, StoreLike, RoundView,
+  RoundResponse, RoundAction, ApplyResponse, OpinionItem
 } from '../utils/backend';
 
 export const POLL_MS = 5 * 1000;
@@ -35,8 +36,11 @@ export interface RoundFlow {
   // A round runs: direct changes in its scope wait.
   active: ComputedRef<boolean>;
   refresh: () => Promise<void>;
-  open: (opinion: string, deadlineMinutes: number, scope: string) => Promise<boolean>;
+  open: (items: OpinionItem[], deadlineMinutes: number, scope: string) => Promise<boolean>;
   act: (action: RoundAction, body?: Record<string, string>) => Promise<boolean>;
+  add: (items: OpinionItem[]) => Promise<boolean>;
+  support: (opinionId: string) => Promise<boolean>;
+  reply: (opinionId: string, text: string) => Promise<boolean>;
   start: (app: string) => void;
   stop: () => void;
 }
@@ -144,10 +148,28 @@ export function useRound(store: StoreLike, hooks: RoundHooks): RoundFlow {
     }
   }
 
-  function open(opinion: string, deadlineMinutes: number, scope: string) {
+  function open(items: OpinionItem[], deadlineMinutes: number, scope: string) {
     const name = app;
 
-    return run('open', () => openRound(store, name, opinion, deadlineMinutes, scope, hooks.aiTimeoutMs()));
+    return run('open', () => openRound(store, name, items, deadlineMinutes, scope, hooks.aiTimeoutMs()));
+  }
+
+  function add(items: OpinionItem[]) {
+    const name = app;
+
+    return run('opinions', () => addOpinions(store, name, items));
+  }
+
+  function support(opinionId: string) {
+    const name = app;
+
+    return run('support', () => supportOpinion(store, name, opinionId));
+  }
+
+  function reply(opinionId: string, text: string) {
+    const name = app;
+
+    return run('reply', () => replyToOpinion(store, name, opinionId, text));
   }
 
   function act(action: RoundAction, body: Record<string, string> = {}) {
@@ -185,6 +207,6 @@ export function useRound(store: StoreLike, hooks: RoundHooks): RoundFlow {
   });
 
   return {
-    round, error, notice, pending, elapsed, active, refresh, open, act, start, stop
+    round, error, notice, pending, elapsed, active, refresh, open, act, add, support, reply, start, stop
   };
 }

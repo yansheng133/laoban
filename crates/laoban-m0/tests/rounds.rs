@@ -11,7 +11,9 @@ use laoban_ai::MockProvider;
 use laoban_m0::codegen::parse_generated;
 use laoban_m0::meta::{self, HistoryEntry};
 use laoban_m0::plan::parse_app_plan;
-use laoban_m0::{OpenRoundRequest, OpinionRequest, PlanRequestBody, SkipRequest};
+use laoban_m0::{
+    AddOpinionsRequest, OpenRoundRequest, OpinionItem, OpinionRequest, PlanRequestBody, SkipRequest,
+};
 use serde_json::{json, Value};
 
 fn todo_app() -> Vec<(String, Option<String>)> {
@@ -51,6 +53,7 @@ fn changed_files() -> String {
 fn open(minutes: u64, scope: &str) -> OpenRoundRequest {
     OpenRoundRequest {
         opinion: "清單要能排序".into(),
+        items: Vec::new(),
         deadline_minutes: minutes,
         scope: Some(scope.into()),
     }
@@ -125,8 +128,9 @@ fn opinions_until_the_deadline_then_everyone_confirms() {
     h.service
         .add_opinion(
             "todo",
-            &OpinionRequest {
+            &AddOpinionsRequest {
                 text: "排序要依到期日".into(),
+                ..Default::default()
             },
             Some("u-b"),
         )
@@ -287,7 +291,14 @@ fn unauthenticated_and_bad_input() {
     );
     assert_eq!(
         h.service
-            .add_opinion("todo", &OpinionRequest { text: "x".into() }, Some("u-a"))
+            .add_opinion(
+                "todo",
+                &AddOpinionsRequest {
+                    text: "x".into(),
+                    ..Default::default()
+                },
+                Some("u-a")
+            )
             .unwrap_err()
             .code(),
         "round_state",
@@ -374,4 +385,101 @@ fn hand_edits_during_a_round_are_kept_or_nothing_is_published() {
     assert!(m.files.handler_py.contains("# kept by hand"));
     // The history shows the opinions, not the request sent to the AI.
     assert_eq!(m.history.last().unwrap().request, "（u-a）清單要能排序");
+}
+
+#[test]
+fn opinions_on_several_components_with_support_and_replies() {
+    let provider = MockProvider::new().then(ok(&changed_plan()));
+    let h = harness_with(provider, RefUpdate::Ok, 1_000_000, todo_app());
+
+    // Open with two opinions on different components at once.
+    let v = h
+        .service
+        .open_round(
+            "todo",
+            &OpenRoundRequest {
+                opinion: String::new(),
+                items: vec![
+                    OpinionItem {
+                        text: "網頁加上搜尋".into(),
+                        target: Some("app-web".into()),
+                    },
+                    OpinionItem {
+                        text: "API 回傳總數".into(),
+                        target: Some("app-api".into()),
+                    },
+                ],
+                deadline_minutes: 30,
+                scope: Some("all".into()),
+            },
+            Some("u-a"),
+        )
+        .unwrap();
+    let ops = v["round"]["opinions"].as_array().unwrap();
+    assert_eq!(ops.len(), 2, "no empty general opinion: {v}");
+    assert_eq!(ops[0]["target"]["id"], "app-web");
+    assert_eq!(ops[0]["target"]["name"], "todo-web");
+
+    // An unknown component is refused; the whole batch is.
+    let err = h
+        .service
+        .add_opinion(
+            "todo",
+            &AddOpinionsRequest {
+                items: vec![
+                    OpinionItem {
+                        text: "ok".into(),
+                        target: None,
+                    },
+                    OpinionItem {
+                        text: "x".into(),
+                        target: Some("app-nope".into()),
+                    },
+                ],
+                ..Default::default()
+            },
+            Some("u-b"),
+        )
+        .unwrap_err();
+    assert_eq!(err.code(), "bad_request");
+
+    // u-b supports o1 and replies under o2.
+    h.service
+        .support_opinion("todo", "o1", Some("u-b"))
+        .unwrap();
+    let v = h
+        .service
+        .reply_to_opinion(
+            "todo",
+            "o2",
+            &OpinionRequest {
+                text: "含已完成的嗎？".into(),
+            },
+            Some("u-b"),
+        )
+        .unwrap();
+    assert_eq!(v["round"]["opinions"][0]["supporters"], json!(["u-b"]));
+    assert_eq!(v["round"]["opinions"][1]["replies"][0]["by"], "u-b");
+    assert_eq!(v["round"]["you"]["canDiscuss"], true);
+    let err = h
+        .service
+        .support_opinion("todo", "o9", Some("u-b"))
+        .unwrap_err();
+    assert_eq!((err.status(), err.code()), (404, "opinion_not_found"));
+
+    // Converge: the AI gets them grouped by component with the support.
+    h.service.tick(now() + 31 * 60);
+    let sent = &h.provider.received()[0].messages[0].content;
+    assert!(sent.contains("【元件：todo-web】"), "{sent}");
+    assert!(sent.contains("1 人附議：u-b"), "{sent}");
+    assert!(sent.contains("回覆（u-b）含已完成的嗎？"), "{sent}");
+    // Only the author confirms (u-b only supported and replied).
+    let v = h.service.round("todo", Some("u-b")).unwrap();
+    let users: Vec<&str> = v["round"]["confirmers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["user"].as_str().unwrap())
+        .collect();
+    assert_eq!(users, ["u-a"]);
 }

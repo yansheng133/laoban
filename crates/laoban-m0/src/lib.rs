@@ -25,8 +25,9 @@ mod time;
 pub use config::{from_env_with, AiEndpoint, ConfigError, EnvConfig, M0Settings, Secret};
 pub use github::{CommitFile, CommitInfo, GithubCommitter, GithubConfig, GithubError, GithubToken};
 pub use service::{
-    ApplyRequest, M0Error, M0Service, OpenRoundRequest, OpinionRequest, PlanRequestBody,
-    RestoreRequest, SaveFilesRequest, SaveLayoutRequest, SkipRequest,
+    AddOpinionsRequest, ApplyRequest, M0Error, M0Service, OpenRoundRequest, OpinionItem,
+    OpinionRequest, PlanRequestBody, RestoreRequest, SaveFilesRequest, SaveLayoutRequest,
+    SkipRequest,
 };
 
 /// The AI returned something that does not match the expected format or

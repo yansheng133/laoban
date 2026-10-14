@@ -22,6 +22,7 @@ import AppearanceMenu from '../components/AppearanceMenu.vue';
 import { useAppearance } from '../composables/useAppearance';
 import ArchitectureView from '../components/ArchitectureView.vue';
 import RoundPanel from '../components/RoundPanel.vue';
+import OpinionList from '../components/OpinionList.vue';
 import StatusBar from '../components/StatusBar.vue';
 import VersionList from '../components/VersionList.vue';
 import CodeEditor from '../components/CodeEditor.vue';
@@ -34,6 +35,9 @@ import {
 } from '../utils/backend';
 import { appendLine } from '../utils/structure';
 import { mergeForDiff, diffEntries } from '../utils/graphDiff';
+import {
+  OpinionDraft, opinionItems, opinionCounts, putDraft
+} from '../utils/opinions';
 import { APPS_ROUTE_NAME, PRODUCT_NAME, BLANK_CLUSTER } from '../config/laoban';
 import { formatDateTime } from '../utils/time';
 
@@ -41,7 +45,7 @@ export default defineComponent({
   name: 'LaobanAppDetail',
 
   components: {
-    ArchitectureView, RoundPanel, StatusBar, AppearanceMenu, VersionList, CodeEditor, StructureEdit
+    ArchitectureView, RoundPanel, OpinionList, StatusBar, AppearanceMenu, VersionList, CodeEditor, StructureEdit
   },
 
   setup() {
@@ -331,9 +335,62 @@ export default defineComponent({
       opinionDraft.value = appendLine(opinionDraft.value, line, 1000);
     }
 
+    // Opinions on components: one draft per component, written in the 3D
+    // view, sent together with the general opinion.
+    const drafts = ref<OpinionDraft[]>([]);
+    const componentText = ref('');
+    // Opinions can be written when no round runs (they open one) or while
+    // one collects; on the current version only (node ids must exist now).
+    const canComment = computed(() => !!detail.value && !selectedCommit.value &&
+      (!round.active.value || round.round.value?.state === 'collecting'));
+    const selectedNodeName = computed(() => {
+      const nodes = (detail.value?.architecture as { nodes?: { id: string; name?: string }[] } | null)?.nodes || [];
+      const n = nodes.find((x) => x.id === selectedNode.value);
+
+      return n ? (n.name || n.id) : '';
+    });
+    const selectedDraft = computed(() => drafts.value.find((d) => d.target === selectedNode.value) || null);
+    const badges = computed(() => (round.active.value ? opinionCounts(round.round.value?.opinions) : null));
+
+    watch(selectedNode, () => {
+      componentText.value = selectedDraft.value?.text || '';
+    });
+
+    function saveDraft() {
+      if (selectedNode.value && selectedNodeName.value) {
+        drafts.value = putDraft(drafts.value, { target: selectedNode.value, targetName: selectedNodeName.value, text: componentText.value });
+      }
+    }
+
+    function removeDraft(target: string) {
+      drafts.value = drafts.value.filter((d) => d.target !== target);
+      if (target === selectedNode.value) {
+        componentText.value = '';
+      }
+    }
+
+    function selectTarget(id: string) {
+      selectedNode.value = id;
+      if (!expanded.value) {
+        tab.value = 'arch';
+      }
+    }
+
+    function clearOpinions() {
+      opinionDraft.value = '';
+      drafts.value = [];
+      componentText.value = '';
+    }
+
     async function openRound(opts: { minutes: number; scope: string }) {
-      if (await round.open(opinionDraft.value.trim(), opts.minutes, opts.scope)) {
-        opinionDraft.value = '';
+      if (await round.open(opinionItems(opinionDraft.value, drafts.value), opts.minutes, opts.scope)) {
+        clearOpinions();
+      }
+    }
+
+    async function addOpinions() {
+      if (await round.add(opinionItems(opinionDraft.value, drafts.value))) {
+        clearOpinions();
       }
     }
 
@@ -386,7 +443,7 @@ export default defineComponent({
 
     watch(name, (n) => {
       flow.reset();
-      opinionDraft.value = '';
+      clearOpinions();
       selectedNode.value = null;
       tab.value = 'arch';
       reloadAll();
@@ -473,6 +530,18 @@ export default defineComponent({
       roundError: round.error,
       openRound,
       roundAct,
+      drafts,
+      componentText,
+      canComment,
+      selectedNodeName,
+      selectedDraft,
+      badges,
+      saveDraft,
+      removeDraft,
+      selectTarget,
+      addOpinions,
+      roundSupport: round.support,
+      roundReply: round.reply,
       canArrange,
       tab,
       pending,
@@ -568,8 +637,15 @@ export default defineComponent({
           :error="roundError"
           :disabled="deploying || phase === 'applying'"
           :notice="roundNotice"
+          :drafts="drafts"
+          :selected-target="selectedNode"
           @open="openRound"
           @act="roundAct"
+          @add="addOpinions"
+          @remove-draft="removeDraft"
+          @support="roundSupport"
+          @reply="roundReply"
+          @select-target="selectTarget"
         />
 
         <p
@@ -750,9 +826,45 @@ export default defineComponent({
           :positions="canArrange ? pending : null"
           :editable="canArrange"
           :selected="selectedNode"
+          :badges="badges"
           @move="onMove"
           @select="selectedNode = $event"
         />
+        <form
+          v-if="canComment && selectedNode && selectedNodeName"
+          class="laoban-component-opinion"
+          @submit.prevent="saveDraft"
+        >
+          <label
+            for="laoban-component-opinion"
+            class="laoban-label"
+          >{{ t('laoban.opinions.onComponent', { name: selectedNodeName }) }}</label>
+          <textarea
+            id="laoban-component-opinion"
+            v-model="componentText"
+            rows="2"
+            maxlength="1000"
+            :placeholder="t('laoban.opinions.componentPlaceholder')"
+          />
+          <div class="laoban-component-opinion-actions">
+            <button
+              type="submit"
+              class="btn btn-sm role-primary"
+              :disabled="!componentText.trim()"
+            >
+              {{ selectedDraft ? t('laoban.opinions.updateDraft') : t('laoban.opinions.addDraft') }}
+            </button>
+            <button
+              v-if="selectedDraft"
+              type="button"
+              class="btn btn-sm role-secondary"
+              @click="removeDraft(selectedNode)"
+            >
+              {{ t('laoban.opinions.removeDraftShort') }}
+            </button>
+            <span class="text-muted laoban-hint">{{ t('laoban.opinions.draftHint', { count: drafts.length }) }}</span>
+          </div>
+        </form>
         <StructureEdit
           v-if="canEdit && !selectedCommit"
           :architecture="detail.architecture"
@@ -802,6 +914,40 @@ export default defineComponent({
                 </button>
               </li>
             </ol>
+          </section>
+          <section v-if="(roundState && roundActive) || drafts.length">
+            <h3>{{ t('laoban.opinions.sideTitle') }}</h3>
+            <OpinionList
+              v-if="roundState && roundActive"
+              :opinions="roundState.opinions"
+              :me="roundState.you ? roundState.you.user : ''"
+              :can-discuss="!!roundState.you && !!roundState.you.canDiscuss"
+              :busy="busy"
+              :selected="selectedNode"
+              @support="roundSupport"
+              @reply="roundReply"
+              @select="selectTarget"
+            />
+            <template v-if="drafts.length">
+              <p class="laoban-hint">
+                {{ t('laoban.opinions.drafts', { count: drafts.length }) }}：{{ drafts.map((d) => d.targetName).join('、') }}
+              </p>
+              <button
+                v-if="roundState && roundState.state === 'collecting'"
+                type="button"
+                class="btn btn-sm role-primary"
+                :disabled="busy"
+                @click="addOpinions"
+              >
+                {{ t('laoban.opinions.sendMany', { count: drafts.length + (opinionDraft.trim() ? 1 : 0) }) }}
+              </button>
+              <p
+                v-else
+                class="text-muted laoban-hint"
+              >
+                {{ t('laoban.opinions.sideOpenHint') }}
+              </p>
+            </template>
           </section>
           <section>
             <h3>{{ t('laoban.expand.changes') }}</h3>
@@ -965,6 +1111,28 @@ export default defineComponent({
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+}
+
+.laoban-component-opinion {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--primary);
+  border-radius: var(--border-radius);
+
+  textarea {
+    width: 100%;
+  }
+}
+
+.laoban-component-opinion-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
 }
 
 .laoban-expand-actions {

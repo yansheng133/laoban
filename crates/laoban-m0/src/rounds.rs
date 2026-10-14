@@ -30,6 +30,10 @@ pub const MAX_OPINION_CHARS: usize = 1_000;
 /// one change request).
 pub const MAX_ROUND_CHARS: usize = 8_000;
 pub const MAX_OPINIONS: usize = 30;
+/// Opinions sent together (one per component, for example).
+pub const MAX_BATCH: usize = 10;
+/// Replies under one opinion.
+pub const MAX_REPLIES: usize = 20;
 /// Longest deadline when opening a round.
 pub const MAX_DEADLINE_MINUTES: u64 = 24 * 60;
 /// After an objection, opinions are collected again for this long.
@@ -99,11 +103,51 @@ impl State {
     }
 }
 
+/// The component of the app's architecture an opinion is about.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct Opinion {
+pub struct Target {
+    /// Node id in the architecture (as the 3D view uses it).
+    pub id: String,
+    /// The component's name, for people and the AI.
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Reply {
     pub by: String,
     pub at: String,
     pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Opinion {
+    /// "o1", "o2", … within the round.
+    pub id: String,
+    pub by: String,
+    pub at: String,
+    pub text: String,
+    /// None: about the app in general.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<Target>,
+    /// People who +1'd it (not the author).
+    pub supporters: Vec<String>,
+    pub replies: Vec<Reply>,
+}
+
+/// An opinion as sent: text and, optionally, the component.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewOpinion {
+    pub text: String,
+    pub target: Option<Target>,
+}
+
+impl NewOpinion {
+    pub fn general(text: &str) -> Self {
+        NewOpinion {
+            text: text.to_string(),
+            target: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -169,6 +213,9 @@ pub struct Round {
     /// The apply response once published.
     pub result: Option<serde_json::Value>,
     pub log: Vec<LogEntry>,
+    /// Number of the last opinion ID given out.
+    #[serde(skip)]
+    last_opinion: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -183,6 +230,8 @@ pub enum RoundError {
     NotConfirmer,
     /// The round has too many opinions or characters.
     Full,
+    /// No opinion with that ID in this round.
+    NoSuchOpinion,
 }
 
 fn clean(text: &str) -> Result<String, RoundError> {
@@ -203,7 +252,7 @@ impl Round {
         id: String,
         app: &str,
         user: &str,
-        opinion: &str,
+        opinions: Vec<NewOpinion>,
         deadline_minutes: u64,
         scope: Vec<Part>,
         now: u64,
@@ -215,7 +264,6 @@ impl Round {
         if scope.is_empty() {
             return Err(RoundError::Invalid("範圍不正確。"));
         }
-        let text = clean(opinion)?;
         let mut r = Round {
             id,
             app: app.to_string(),
@@ -223,17 +271,15 @@ impl Round {
             scope,
             state: State::Collecting,
             deadline: now + deadline_minutes * 60,
-            opinions: vec![Opinion {
-                by: user.to_string(),
-                at: at.to_string(),
-                text,
-            }],
+            opinions: Vec::new(),
             confirmers: Vec::new(),
             plan: None,
             message: String::new(),
             result: None,
             log: Vec::new(),
+            last_opinion: 0,
         };
+        r.push_opinions(user, opinions, at)?;
         r.note(
             at,
             user,
@@ -264,27 +310,170 @@ impl Round {
         }
     }
 
+    /// Opinions and replies together, in characters.
     fn total_chars(&self) -> usize {
-        self.opinions.iter().map(|o| o.text.chars().count()).sum()
+        self.opinions
+            .iter()
+            .map(|o| {
+                o.text.chars().count()
+                    + o.replies
+                        .iter()
+                        .map(|r| r.text.chars().count())
+                        .sum::<usize>()
+            })
+            .sum()
     }
 
-    /// Anyone may add an opinion while collecting.
-    pub fn add_opinion(&mut self, user: &str, text: &str, at: &str) -> Result<(), RoundError> {
-        if self.state != State::Collecting {
-            return Err(RoundError::WrongState(self.state));
+    /// Check and add opinions all together (none if one is refused).
+    fn push_opinions(
+        &mut self,
+        user: &str,
+        items: Vec<NewOpinion>,
+        at: &str,
+    ) -> Result<usize, RoundError> {
+        if items.is_empty() {
+            return Err(RoundError::Invalid("請輸入意見。"));
         }
-        let text = clean(text)?;
-        if self.opinions.len() >= MAX_OPINIONS
-            || self.total_chars() + text.chars().count() > MAX_ROUND_CHARS
+        if items.len() > MAX_BATCH {
+            return Err(RoundError::Invalid("一次最多送出 10 則意見。"));
+        }
+        let mut cleaned = Vec::with_capacity(items.len());
+        for item in items {
+            cleaned.push((clean(&item.text)?, item.target));
+        }
+        let added: usize = cleaned.iter().map(|(t, _)| t.chars().count()).sum();
+        if self.opinions.len() + cleaned.len() > MAX_OPINIONS
+            || self.total_chars() + added > MAX_ROUND_CHARS
         {
             return Err(RoundError::Full);
         }
-        self.opinions.push(Opinion {
+        let count = cleaned.len();
+        for (text, target) in cleaned {
+            self.last_opinion += 1;
+            self.opinions.push(Opinion {
+                id: format!("o{}", self.last_opinion),
+                by: user.to_string(),
+                at: at.to_string(),
+                text,
+                target,
+                supporters: Vec::new(),
+                replies: Vec::new(),
+            });
+        }
+        Ok(count)
+    }
+
+    /// Anyone may add opinions while collecting, several at once.
+    pub fn add_opinions(
+        &mut self,
+        user: &str,
+        items: Vec<NewOpinion>,
+        at: &str,
+    ) -> Result<(), RoundError> {
+        if self.state != State::Collecting {
+            return Err(RoundError::WrongState(self.state));
+        }
+        let count = self.push_opinions(user, items, at)?;
+        self.note(
+            at,
+            user,
+            "opinion",
+            &[("count", count.to_string())],
+            format!("提出 {count} 則意見"),
+        );
+        Ok(())
+    }
+
+    /// One opinion added while collecting.
+    pub fn add_opinion(&mut self, user: &str, text: &str, at: &str) -> Result<(), RoundError> {
+        self.add_opinions(user, vec![NewOpinion::general(text)], at)
+    }
+
+    fn discussable(&self) -> Result<(), RoundError> {
+        match self.state {
+            State::Collecting | State::Confirming => Ok(()),
+            s => Err(RoundError::WrongState(s)),
+        }
+    }
+
+    /// +1 an opinion, or take the +1 back. Returns whether the user now
+    /// supports it. Allowed while collecting or confirming; replies and
+    /// support while confirming are discussion only (the plan stays).
+    pub fn toggle_support(
+        &mut self,
+        user: &str,
+        opinion: &str,
+        at: &str,
+    ) -> Result<bool, RoundError> {
+        self.discussable()?;
+        let o = self
+            .opinions
+            .iter_mut()
+            .find(|o| o.id == opinion)
+            .ok_or(RoundError::NoSuchOpinion)?;
+        if o.by == user {
+            return Err(RoundError::Invalid("不能附議自己的意見。"));
+        }
+        let now = if let Some(i) = o.supporters.iter().position(|u| u == user) {
+            o.supporters.remove(i);
+            false
+        } else {
+            o.supporters.push(user.to_string());
+            true
+        };
+        let id = o.id.clone();
+        if now {
+            self.note(
+                at,
+                user,
+                "supported",
+                &[("opinion", id.clone())],
+                format!("附議意見 {id}"),
+            );
+        } else {
+            self.note(
+                at,
+                user,
+                "unsupported",
+                &[("opinion", id.clone())],
+                format!("取消附議意見 {id}"),
+            );
+        }
+        Ok(now)
+    }
+
+    /// Reply under an opinion, while collecting or confirming.
+    pub fn reply(
+        &mut self,
+        user: &str,
+        opinion: &str,
+        text: &str,
+        at: &str,
+    ) -> Result<(), RoundError> {
+        self.discussable()?;
+        let text = clean(text)?;
+        let total = self.total_chars();
+        let o = self
+            .opinions
+            .iter_mut()
+            .find(|o| o.id == opinion)
+            .ok_or(RoundError::NoSuchOpinion)?;
+        if o.replies.len() >= MAX_REPLIES || total + text.chars().count() > MAX_ROUND_CHARS {
+            return Err(RoundError::Full);
+        }
+        o.replies.push(Reply {
             by: user.to_string(),
             at: at.to_string(),
             text,
         });
-        self.note(at, user, "opinion", &[], "提出意見".into());
+        let id = o.id.clone();
+        self.note(
+            at,
+            user,
+            "replied",
+            &[("opinion", id.clone())],
+            format!("回覆意見 {id}"),
+        );
         Ok(())
     }
 
@@ -308,14 +497,45 @@ impl Round {
         );
     }
 
-    /// The change request the AI converges: every opinion with its author.
+    /// The change request the AI converges: the opinions grouped by
+    /// component (general ones first), each with its author, the people
+    /// who support it and the replies under it.
     pub fn change_request(&self) -> String {
         let mut s = format!(
-            "以下是 {} 則對這個應用的意見（可能重複或互相衝突）：\n",
+            "以下是 {} 則對這個應用的意見（可能重複或互相衝突），依針對的元件分組；附議越多的意見越多人同意：\n",
             self.opinions.len()
         );
-        for (i, o) in self.opinions.iter().enumerate() {
-            s.push_str(&format!("{}. （{}）{}\n", i + 1, o.by, o.text));
+        let mut groups: Vec<(Option<&Target>, Vec<&Opinion>)> = Vec::new();
+        for o in &self.opinions {
+            let key = o.target.as_ref();
+            match groups
+                .iter_mut()
+                .find(|(k, _)| k.map(|t| &t.id) == key.map(|t| &t.id))
+            {
+                Some((_, list)) => list.push(o),
+                None => groups.push((key, vec![o])),
+            }
+        }
+        groups.sort_by_key(|(k, _)| k.is_some());
+        for (target, list) in groups {
+            match target {
+                None => s.push_str("\n【整個應用】\n"),
+                Some(t) => s.push_str(&format!("\n【元件：{}】\n", t.name)),
+            }
+            for o in list {
+                s.push_str(&format!("- {}（{}）{}", o.id, o.by, o.text));
+                if !o.supporters.is_empty() {
+                    s.push_str(&format!(
+                        "　〔{} 人附議：{}〕",
+                        o.supporters.len(),
+                        o.supporters.join("、")
+                    ));
+                }
+                s.push('\n');
+                for r in &o.replies {
+                    s.push_str(&format!("    回覆（{}）{}\n", r.by, r.text));
+                }
+            }
         }
         s
     }
@@ -324,7 +544,10 @@ impl Round {
     pub fn opinion_list(&self) -> String {
         self.opinions
             .iter()
-            .map(|o| format!("（{}）{}", o.by, o.text))
+            .map(|o| match &o.target {
+                Some(t) => format!("（{}）［{}］{}", o.by, t.name, o.text),
+                None => format!("（{}）{}", o.by, o.text),
+            })
             .collect::<Vec<_>>()
             .join("；")
     }
@@ -412,18 +635,9 @@ impl Round {
     /// A confirmer disagrees: the comment becomes an opinion and opinions
     /// are collected again for [`OBJECTION_MINUTES`].
     pub fn object(&mut self, user: &str, text: &str, now: u64, at: &str) -> Result<(), RoundError> {
-        let text = clean(text)?;
+        clean(text)?;
         self.confirmer_mut(user)?;
-        if self.total_chars() + text.chars().count() > MAX_ROUND_CHARS
-            || self.opinions.len() >= MAX_OPINIONS
-        {
-            return Err(RoundError::Full);
-        }
-        self.opinions.push(Opinion {
-            by: user.to_string(),
-            at: at.to_string(),
-            text,
-        });
+        self.push_opinions(user, vec![NewOpinion::general(text)], at)?;
         self.state = State::Collecting;
         self.deadline = now + OBJECTION_MINUTES * 60;
         self.plan = None;
@@ -523,6 +737,7 @@ impl Round {
             "isInitiator": !me.is_empty() && me == self.initiator,
             "mustConfirm": pending.get(me).copied().unwrap_or(false),
             "canAddOpinion": self.state == State::Collecting && !me.is_empty(),
+            "canDiscuss": matches!(self.state, State::Collecting | State::Confirming) && !me.is_empty(),
         });
         v
     }
@@ -539,7 +754,7 @@ mod tests {
             "r1".into(),
             "todo",
             "u-a",
-            "加上到期日",
+            vec![NewOpinion::general("加上到期日")],
             minutes,
             vec![Part::Web],
             T0,
@@ -605,7 +820,16 @@ mod tests {
     #[test]
     fn limits_and_permissions() {
         assert!(matches!(
-            Round::open("r".into(), "a", "u", " ", 5, vec![Part::Web], T0, "t"),
+            Round::open(
+                "r".into(),
+                "a",
+                "u",
+                vec![NewOpinion::general(" ")],
+                5,
+                vec![Part::Web],
+                T0,
+                "t"
+            ),
             Err(RoundError::Invalid(_))
         ));
         assert!(matches!(
@@ -613,7 +837,7 @@ mod tests {
                 "r".into(),
                 "a",
                 "u",
-                "x",
+                vec![NewOpinion::general("x")],
                 24 * 60 + 1,
                 vec![Part::Web],
                 T0,
@@ -652,5 +876,90 @@ mod tests {
         assert_eq!(v["state"], "collecting");
         assert_eq!(v["scope"], serde_json::json!(["web", "api"]));
         assert_eq!(r.to_json_for(Some("u-b"))["you"]["isInitiator"], false);
+    }
+
+    fn on(id: &str, name: &str, text: &str) -> NewOpinion {
+        NewOpinion {
+            text: text.into(),
+            target: Some(Target {
+                id: id.into(),
+                name: name.into(),
+            }),
+        }
+    }
+
+    #[test]
+    fn opinions_on_components_support_and_replies() {
+        let mut r = open(10);
+        // Several components at once, plus a general one.
+        r.add_opinions(
+            "u-b",
+            vec![
+                on("mod-web-list", "list", "清單加上篩選"),
+                on("app-api", "todo-api", "API 回傳總數"),
+                NewOpinion::general("整體字大一點"),
+            ],
+            "t1",
+        )
+        .unwrap();
+        assert_eq!(r.opinions.len(), 4);
+        assert_eq!(r.opinions[1].id, "o2");
+        assert_eq!(r.opinions[2].target.as_ref().unwrap().name, "todo-api");
+        assert_eq!(r.log.last().unwrap().args["count"], "3");
+
+        // +1 and take it back; not on one's own.
+        assert!(r.toggle_support("u-a", "o2", "t2").unwrap());
+        assert!(r.toggle_support("u-c", "o2", "t2").unwrap());
+        assert!(!r.toggle_support("u-c", "o2", "t3").unwrap());
+        assert_eq!(r.opinions[1].supporters, ["u-a"]);
+        assert!(matches!(
+            r.toggle_support("u-b", "o2", "t"),
+            Err(RoundError::Invalid(_))
+        ));
+        assert_eq!(
+            r.toggle_support("u-a", "o99", "t"),
+            Err(RoundError::NoSuchOpinion)
+        );
+        r.reply("u-a", "o3", "要含已完成的嗎？", "t4").unwrap();
+
+        // Grouped for the AI: general first, then per component.
+        let req = r.change_request();
+        let general = req.find("【整個應用】").unwrap();
+        let list = req.find("【元件：list】").unwrap();
+        assert!(general < list, "{req}");
+        assert!(
+            req.contains("o2（u-b）清單加上篩選　〔1 人附議：u-a〕"),
+            "{req}"
+        );
+        assert!(req.contains("回覆（u-a）要含已完成的嗎？"), "{req}");
+        assert!(r.opinion_list().contains("（u-b）［list］清單加上篩選"));
+
+        // Only authors confirm; support and replies go on while confirming.
+        r.start_converging("t5");
+        r.converged(plan(), "t6");
+        let users: Vec<&str> = r.confirmers.iter().map(|c| c.user.as_str()).collect();
+        assert_eq!(users, ["u-a", "u-b"]);
+        assert!(r.toggle_support("u-c", "o1", "t7").unwrap());
+        r.reply("u-c", "o1", "同意", "t7").unwrap();
+        assert_eq!(r.state, State::Confirming);
+        // Not after the round ends.
+        r.cancel("u-a", "t8").unwrap();
+        assert!(matches!(
+            r.reply("u-c", "o1", "x", "t9"),
+            Err(RoundError::WrongState(_))
+        ));
+
+        // Batch limits: all or nothing.
+        let mut r = open(10);
+        let many: Vec<NewOpinion> = (0..11)
+            .map(|i| NewOpinion::general(&format!("x{i}")))
+            .collect();
+        assert!(matches!(
+            r.add_opinions("u", many, "t"),
+            Err(RoundError::Invalid(_))
+        ));
+        let bad = vec![NewOpinion::general("ok"), NewOpinion::general(" ")];
+        assert!(r.add_opinions("u", bad, "t").is_err());
+        assert_eq!(r.opinions.len(), 1, "nothing added");
     }
 }

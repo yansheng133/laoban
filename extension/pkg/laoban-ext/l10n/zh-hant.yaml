@@ -90,7 +90,7 @@ laoban:
     hintVersion: "第 {n} 版的架構。"
   round:
     you: 你
-    opinionLabel: 你的意見
+    opinionLabel: 一般意見（針對整個應用）
     deadlineLabel: 收斂時間
     deadlines:
       m0: 立即（直接產生修改計畫）
@@ -122,7 +122,7 @@ laoban:
     startedBy: "{by} 發起"
     scope: "範圍：{scope}"
     deadline: "{time} 收斂（還有 {minutes} 分鐘）"
-    addLabel: 你的意見
+    addLabel: 一般意見（針對整個應用）
     add: 提意見
     convergingCount: "AI 正在收斂 {count} 則意見…"
     planTitle: 收斂後的修改計畫
@@ -150,7 +150,10 @@ laoban:
     logLine: "{who}：{event}"
     events:
       opened: "開始一輪（{minutes} 分鐘後收斂）"
-      opinion: 提出意見
+      opinion: "提出 {count} 則意見"
+      supported: "附議意見 {opinion}"
+      unsupported: "取消附議意見 {opinion}"
+      replied: "回覆意見 {opinion}"
       objected: "有意見，{minutes} 分鐘後重新收斂"
       converging: "AI 開始收斂 {count} 則意見"
       converged: 修改計畫已產生，等待確認
@@ -174,6 +177,27 @@ laoban:
       added: 新增
       removed: 刪除
       changed: 修改
+  opinions:
+    general: 整個應用
+    showInView: 在 3D 圖上選取這個元件
+    supportedBy: "{names} 附議"
+    replies: "回覆（{count}）"
+    replyPlaceholder: 回覆這則意見
+    send: 送出
+    drafts: "針對元件的草稿（{count}）"
+    removeDraft: "移除對 {name} 的草稿"
+    removeDraftShort: 移除草稿
+    tooMany: "一次最多送出 {max} 則意見，請先移除一些。"
+    howTo: 想針對某個元件提意見：在右邊的 3D 圖點那個元件，寫好後加入草稿，可以一次對好幾個元件各寫一則。
+    count: "{count} 則意見"
+    sendMany: "送出 {count} 則意見"
+    onComponent: "對「{name}」提意見"
+    componentPlaceholder: 例如：這裡要加上搜尋
+    addDraft: 加入草稿
+    updateDraft: 更新草稿
+    draftHint: "目前有 {count} 則草稿，到左邊的意見收斂一起送出。"
+    sideTitle: 意見
+    sideOpenHint: 關閉放大後，在左邊的意見收斂開一輪，草稿會一起送出。
   editor:
     hint: 直接修改這四個檔案。儲存後會成為新的一版（標記「手動修改」）並由 Fleet 部署，不呼叫 AI；儲存前會做和 AI 產生的程式一樣的檢查。
     hintReadOnly: 目前只能看。

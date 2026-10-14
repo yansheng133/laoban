@@ -85,8 +85,12 @@ pub struct RestoreRequest {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct OpenRoundRequest {
-    /// The first opinion.
+    /// The first opinion (general). Either this or `items`, or both.
+    #[serde(default)]
     pub opinion: String,
+    /// First opinions, each optionally about one component.
+    #[serde(default)]
+    pub items: Vec<OpinionItem>,
     /// Minutes until the AI converges; 0 converges right away.
     pub deadline_minutes: u64,
     /// "web", "api" or "all" (default).
@@ -94,11 +98,34 @@ pub struct OpenRoundRequest {
     pub scope: Option<String>,
 }
 
-/// `POST .../round/opinions` and `.../round/object` body.
+/// `POST .../round/object` and `.../round/opinions/<id>/replies` body.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OpinionRequest {
     pub text: String,
+}
+
+/// One opinion as sent: text and, optionally, the architecture node it is
+/// about (the node id from the app's architecture).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OpinionItem {
+    pub text: String,
+    #[serde(default)]
+    pub target: Option<String>,
+}
+
+/// `POST .../round/opinions` body: one opinion (`text`, optional
+/// `target`) or several (`items`, up to 10).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AddOpinionsRequest {
+    #[serde(default)]
+    pub text: String,
+    #[serde(default)]
+    pub target: Option<String>,
+    #[serde(default)]
+    pub items: Vec<OpinionItem>,
 }
 
 /// `POST .../round/skip` body.
@@ -222,6 +249,7 @@ impl M0Error {
             M0Error::Round(RoundError::WrongState(_)) => "round_state",
             M0Error::Round(RoundError::NotInitiator) => "not_initiator",
             M0Error::Round(RoundError::NotConfirmer) => "not_confirmer",
+            M0Error::Round(RoundError::NoSuchOpinion) => "opinion_not_found",
             M0Error::Unauthenticated => "unauthenticated",
             M0Error::VersionConflict => "version_conflict",
             M0Error::InvalidFiles(_) => "invalid_files",
@@ -261,6 +289,7 @@ impl M0Error {
             | M0Error::Round(RoundError::NotConfirmer) => 409,
             M0Error::Round(RoundError::Invalid(_)) | M0Error::Round(RoundError::Full) => 400,
             M0Error::Round(RoundError::NotInitiator) => 403,
+            M0Error::Round(RoundError::NoSuchOpinion) => 404,
             M0Error::Unauthenticated => 401,
             M0Error::InvalidFiles(_) => 400,
         }
@@ -314,6 +343,9 @@ impl M0Error {
                 state_label(*st)
             ),
             M0Error::Round(RoundError::NotInitiator) => "只有發起這一輪的人可以這樣做。".into(),
+            M0Error::Round(RoundError::NoSuchOpinion) => {
+                "找不到這則意見，請重新整理頁面。".into()
+            }
             M0Error::Round(RoundError::NotConfirmer) => {
                 "你不需要確認這一輪：你沒有在這一輪提意見，或已經回覆過。".into()
             }
@@ -1023,7 +1055,17 @@ impl M0Service {
         let scope = rounds::parse_scope(body.scope.as_deref().unwrap_or("all"))
             .ok_or(M0Error::BadRequest("範圍只能是 web、api 或 all。"))?;
         // Only apps laoban can change.
-        let start_files = self.load_app(app)?.files;
+        let current = self.load_app(app)?;
+        let mut items: Vec<OpinionItem> = Vec::new();
+        if !body.opinion.trim().is_empty() || body.items.is_empty() {
+            items.push(OpinionItem {
+                text: body.opinion.clone(),
+                target: None,
+            });
+        }
+        items.extend(body.items.iter().cloned());
+        let opinions = self.new_opinions(app, &current, &items)?;
+        let start_files = current.files;
         let now = SystemTime::now();
         let at = time::rfc3339(now);
         let id = time::plan_id(now).replacen("p-", "r-", 1);
@@ -1036,7 +1078,7 @@ impl M0Service {
                 id,
                 app,
                 user,
-                &body.opinion,
+                opinions,
                 body.deadline_minutes,
                 scope,
                 unix(now),
@@ -1059,13 +1101,106 @@ impl M0Service {
     pub fn add_opinion(
         &self,
         app: &str,
+        body: &AddOpinionsRequest,
+        user: Option<&str>,
+    ) -> Result<Value, M0Error> {
+        let user = require_user(user)?;
+        let mut items = body.items.clone();
+        if !body.text.trim().is_empty() || body.target.is_some() || items.is_empty() {
+            items.insert(
+                0,
+                OpinionItem {
+                    text: body.text.clone(),
+                    target: body.target.clone(),
+                },
+            );
+        }
+        // Targets are checked against the app as it is now.
+        let needs_app = items.iter().any(|i| i.target.is_some());
+        let opinions = if needs_app {
+            let current = self.load_app(app)?;
+            self.new_opinions(app, &current, &items)?
+        } else {
+            items
+                .iter()
+                .map(|i| rounds::NewOpinion::general(&i.text))
+                .collect()
+        };
+        let at = time::rfc3339(SystemTime::now());
+        self.with_round(app, |r| r.add_opinions(user, opinions, &at))?;
+        self.round(app, Some(user))
+    }
+
+    /// `POST .../round/opinions/<id>/support`: +1 an opinion or take it back.
+    pub fn support_opinion(
+        &self,
+        app: &str,
+        opinion: &str,
+        user: Option<&str>,
+    ) -> Result<Value, M0Error> {
+        let user = require_user(user)?;
+        let at = time::rfc3339(SystemTime::now());
+        self.with_round(app, |r| r.toggle_support(user, opinion, &at).map(|_| ()))?;
+        self.round(app, Some(user))
+    }
+
+    /// `POST .../round/opinions/<id>/replies` `{text}`.
+    pub fn reply_to_opinion(
+        &self,
+        app: &str,
+        opinion: &str,
         body: &OpinionRequest,
         user: Option<&str>,
     ) -> Result<Value, M0Error> {
         let user = require_user(user)?;
         let at = time::rfc3339(SystemTime::now());
-        self.with_round(app, |r| r.add_opinion(user, &body.text, &at))?;
+        self.with_round(app, |r| r.reply(user, opinion, &body.text, &at))?;
         self.round(app, Some(user))
+    }
+
+    /// Opinions as sent, with each target checked against the app's
+    /// architecture and named as the 3D view names it.
+    fn new_opinions(
+        &self,
+        app: &str,
+        current: &AppMeta,
+        items: &[OpinionItem],
+    ) -> Result<Vec<rounds::NewOpinion>, M0Error> {
+        let arch = architecture_with_layout(&current.plan, app, &current.layout);
+        let names: HashMap<String, String> = arch["nodes"]
+            .as_array()
+            .map(|nodes| {
+                nodes
+                    .iter()
+                    .filter_map(|n| {
+                        let id = n["id"].as_str()?;
+                        let name = n["name"].as_str().unwrap_or(id);
+                        Some((id.to_string(), name.to_string()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        items
+            .iter()
+            .map(|i| {
+                let target = match i.target.as_deref().map(str::trim) {
+                    None | Some("") => None,
+                    Some(id) => {
+                        let name = names.get(id).ok_or(M0Error::BadRequest(
+                            "意見針對的元件不在這個應用的架構裡，請重新整理頁面。",
+                        ))?;
+                        Some(rounds::Target {
+                            id: id.to_string(),
+                            name: name.clone(),
+                        })
+                    }
+                };
+                Ok(rounds::NewOpinion {
+                    text: i.text.clone(),
+                    target,
+                })
+            })
+            .collect()
     }
 
     /// `POST .../round/confirm`. The last answer starts the AI writing the
