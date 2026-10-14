@@ -42,7 +42,7 @@ laoban:
     back: ← Apps
     source: Code (GitHub)
     loading: Loading…
-    changeTitle: Change this app
+    changeTitle: Change this app (opinion round)
     currentSteps: Current build steps
     tabs:
       arch: Architecture
@@ -83,17 +83,63 @@ laoban:
     hintPlan: "Change plan compared with the current version: marked parts are added, removed or changed once deployed."
     hintCompare: "Version {n} compared with the current version: marked parts are added, removed or changed by restoring version {n}."
     hintVersion: "Architecture of version {n}."
-  lock:
-    acquiring: Getting the edit lock…
-    held: "You ({name}) are editing this app; others can only view it. Released when you leave the page or after 3 minutes without activity."
-    other: "{name} is editing this app."
-    otherUnknown: Someone else is editing this app.
-    readOnly: View only.
-    lost: The edit lock expired (idle too long, or this app was opened in another tab). View only.
-    error: Could not get the edit lock. View only.
-    retry: Get the edit lock again
+  round:
+    you: you
+    opinionLabel: Your opinion
+    deadlineLabel: Converge
+    deadlines:
+      m0: now (plan the change right away)
+      m10: in 10 minutes
+      m30: in 30 minutes
+      m60: in 1 hour
+      m240: in 4 hours
+      m1440: in 24 hours
+    scopeLabel: Scope
+    scopes:
+      all: whole app
+      web: web
+      api: API
+    hintNow: The AI turns your opinion into a change plan right away; the work starts when you confirm.
+    hintLater: Until the deadline others can add opinions on this app's page; then the AI converges them into one change plan, and the work starts when everyone who gave an opinion has confirmed. Meanwhile code in the scope cannot be edited directly and versions cannot be restored.
+    open: Start a round
+    openNow: Plan the change
+    converging: "The AI is planning the change ({seconds}s)…"
+    lastDone: "The last round (started by {by}) was deployed."
+    lastCancelled: The last round was cancelled.
+    states:
+      collecting: Collecting opinions
+      converging: AI converging
+      confirming: Waiting for confirmation
+      applying: All confirmed, the AI is changing the code
+      done: Done
+      failed: Failed
+      cancelled: Cancelled
+    startedBy: "started by {by}"
+    scope: "scope: {scope}"
+    deadline: "converges at {time} ({minutes} min left)"
+    addLabel: Your opinion
+    add: Add opinion
+    convergingCount: "The AI is converging {count} opinion(s)…"
+    planTitle: Converged change plan
+    planHint: The 3D view marks what this plan adds, removes and changes. The AI changes the code and deploys once everyone who gave an opinion has confirmed.
+    answers:
+      pending: waiting
+      confirmed: confirmed
+      skipped: skipped
+    skip: Skip
+    confirm: Confirm
+    object: I disagree
+    objectPlaceholder: What is wrong? This becomes an opinion; the round converges again in 10 minutes.
+    objectSend: Send and collect again
+    applying: "The AI is changing the code and committing to GitHub ({seconds}s)…"
+    retry: Converge again
+    cancel: Cancel this round
+    log: "Log ({count})"
+    hintPlan: "The converged plan compared with the current version: marked parts are added, removed or changed by deploying it."
   editor:
     hint: Edit the four files directly. Saving creates a new version (marked "Manual edit") that Fleet deploys, without calling the AI; the files get the same checks as AI-generated code.
+    hintReadOnly: View only.
+    blocked: "The running round is about {files}: view only until it ends; other files can be edited."
     files: Files
     changedFile: Changed
     note: What changed (optional)
@@ -112,7 +158,7 @@ laoban:
     save: Save layout
   structure:
     title: Change structure
-    hint: These changes are added to "What should change" on the left; then "Plan the change" lets the AI change the code, and nothing is deployed until you confirm.
+    hint: These changes are added to "Your opinion" on the left; start a round (or add it while opinions are collected) and the AI turns it into a change plan, deployed only after confirmation.
     nameRule: "Letters, digits, '.', '-' and '_' only, up to 40 characters."
     select: Module
     none: Click one in the 3D view or pick one here

@@ -158,11 +158,11 @@ fn tls_request(
 }
 
 fn lock_req(user: Option<&str>) -> String {
-    let path = format!("/apis/{GROUP}/{VERSION}/namespaces/laoban-dev/apps/todo/lock");
+    let path = format!("/apis/{GROUP}/{VERSION}/namespaces/laoban-dev/apps/todo/round");
     let user = user
         .map(|u| format!("X-Remote-User: {u}\r\nX-Remote-Group: system:authenticated\r\n"))
         .unwrap_or_default();
-    format!("POST {path} HTTP/1.1\r\nHost: x\r\n{user}Content-Type: application/json\r\nContent-Length: 2\r\n\r\n{{}}")
+    format!("POST {path} HTTP/1.1\r\nHost: x\r\n{user}Content-Type: application/json\r\nContent-Length: 35\r\n\r\n{{\"opinion\":\"x\",\"deadlineMinutes\":5}}")
 }
 
 #[test]

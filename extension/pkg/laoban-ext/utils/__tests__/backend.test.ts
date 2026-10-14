@@ -4,7 +4,7 @@ import {
 import {
   parseBackendError, resolveAppUrl, safeHttpsUrl, backendUrl, aiRequestTimeoutMs, ConfigResponse,
   createPlan, getApp, listApps, listVersions, getVersion, restoreVersion, applyPlan,
-  acquireLock, renewLock, releaseLock, getFiles, saveFiles, saveLayout, parseKubeStatus
+  getRound, openRound, roundAction, getFiles, saveFiles, saveLayout, parseKubeStatus
 } from '../backend';
 import { AI_REQUEST_TIMEOUT_MS } from '../../config/backend';
 
@@ -140,20 +140,22 @@ describe('apps and plan requests', () => {
     expect(JSON.parse(String(calls[0].init.body))).toEqual({ commit: sha });
   });
 
-  it('takes, renews and releases the lock as the signed-in user', async() => {
-    mockFetch(200, { holder: 'u-abc12', ttlSeconds: 180 });
-    await acquireLock(store, 'todo');
-    expect(calls[0].url).toBe(backendUrl('/apps/todo/lock'));
-    expect(JSON.parse(String(calls[0].init.body))).toEqual({});
+  it('reads and acts on a round of 意見收斂', async() => {
+    mockFetch(200, { round: null });
+    await getRound(store, 'todo');
+    expect(calls[0].url).toBe(backendUrl('/apps/todo/round'));
+    expect(calls[0].init.method).toBe('GET');
 
-    mockFetch(200, { ttlSeconds: 180 });
-    await renewLock(store, 'todo');
-    expect(calls[0].url).toBe(backendUrl('/apps/todo/lock/renew'));
+    mockFetch(200, { round: { state: 'collecting' } });
+    await openRound(store, 'todo', '要能排序', 30, 'web', 1000);
+    expect(calls[0].init.method).toBe('POST');
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ opinion: '要能排序', deadlineMinutes: 30, scope: 'web' });
 
-    mockFetch(200, { released: true });
-    await releaseLock(store, 'todo');
-    expect(calls[0].url).toBe(backendUrl('/apps/todo/unlock'));
-    expect(calls[0].init.keepalive).toBe(true);
+    mockFetch(200, { round: { state: 'done' }, applied: { commit: 'c' } });
+    const res = await roundAction(store, 'todo', 'skip', { user: 'u-b' }, 1000);
+    expect(calls[0].url).toBe(backendUrl('/apps/todo/round/skip'));
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ user: 'u-b' });
+    expect(res.applied?.commit).toBe('c');
   });
 
   it('applies a plan by its ID in the path', async() => {

@@ -44,7 +44,7 @@ laoban:
     back: ← アプリ
     source: コード（GitHub）
     loading: 読み込み中…
-    changeTitle: このアプリを変更
+    changeTitle: このアプリを変更（意見の収束）
     currentSteps: 現在の構築手順
     tabs:
       arch: 構成図
@@ -85,17 +85,63 @@ laoban:
     hintPlan: 変更計画と現在の版の差分：デプロイ後に追加・削除・変更される部分を示します。
     hintCompare: "第 {n} 版と現在の版の差分：第 {n} 版に戻すと追加・削除・変更される部分を示します。"
     hintVersion: "第 {n} 版の構成です。"
-  lock:
-    acquiring: 編集権を取得しています…
-    held: "あなた（{name}）がこのアプリを編集中です。ほかの人は閲覧のみです。ページを離れるか、3 分間操作がないと解放されます。"
-    other: "{name} がこのアプリを編集中です。"
-    otherUnknown: ほかの人がこのアプリを編集中です。
-    readOnly: 閲覧のみです。
-    lost: 編集権が切れました（長時間操作がない、またはほかのタブで開いた）。閲覧のみです。
-    error: 編集権を取得できませんでした。閲覧のみです。
-    retry: 編集権を取り直す
+  round:
+    you: あなた
+    opinionLabel: あなたの意見
+    deadlineLabel: 収束
+    deadlines:
+      m0: すぐ（変更計画をすぐ作成）
+      m10: 10 分後
+      m30: 30 分後
+      m60: 1 時間後
+      m240: 4 時間後
+      m1440: 24 時間後
+    scopeLabel: 範囲
+    scopes:
+      all: アプリ全体
+      web: Web
+      api: API
+    hintNow: AI がすぐにあなたの意見から変更計画を作ります。確認すると作業が始まります。
+    hintLater: 締め切りまでほかの人もこのアプリのページで意見を出せます。時間になると AI がすべての意見を一つの変更計画にまとめ、意見を出した全員が確認してから作業が始まります。その間、範囲内のコードは直接編集できず、バージョンの復元もできません。
+    open: 意見の収束を始める
+    openNow: 変更計画を作成
+    converging: "AI が変更計画を作成しています（{seconds} 秒）…"
+    lastDone: "前回（{by} が開始）はデプロイ済みです。"
+    lastCancelled: 前回は取り消されました。
+    states:
+      collecting: 意見の収集中
+      converging: AI が収束中
+      confirming: 確認待ち
+      applying: 全員確認済み、AI がコードを変更中
+      done: 完了
+      failed: 失敗
+      cancelled: 取り消し
+    startedBy: "{by} が開始"
+    scope: "範囲：{scope}"
+    deadline: "{time} に収束（残り {minutes} 分）"
+    addLabel: あなたの意見
+    add: 意見を出す
+    convergingCount: "AI が {count} 件の意見を収束しています…"
+    planTitle: 収束した変更計画
+    planHint: 3D 図にこの計画で追加・削除・変更される部分を示しています。意見を出した全員が確認すると、AI がコードを変更してデプロイします。
+    answers:
+      pending: 待ち
+      confirmed: 確認済み
+      skipped: スキップ
+    skip: スキップ
+    confirm: 確認
+    object: 意見あり
+    objectPlaceholder: どこが違いますか？意見として追加され、10 分後に再び収束します。
+    objectSend: 送信して再収集
+    applying: "AI がコードを変更して GitHub に書き込んでいます（{seconds} 秒）…"
+    retry: もう一度収束
+    cancel: この回を取り消す
+    log: "記録（{count}）"
+    hintPlan: 収束した計画と現在のバージョンの差分です。
   editor:
     hint: 4 つのファイルを直接編集します。保存すると新しいバージョン（「手動修正」）になり Fleet がデプロイします。AI は呼び出しません。AI が生成したコードと同じチェックを行います。
+    hintReadOnly: 閲覧のみです。
+    blocked: "進行中の収束が {files} を扱っています。終わるまで閲覧のみで、ほかのファイルは編集できます。"
     files: ファイル
     changedFile: 変更あり
     note: 変更内容（任意）
@@ -114,7 +160,7 @@ laoban:
     save: レイアウトを保存
   structure:
     title: 構成を変更
-    hint: ここでの変更は左の「どう変更しますか」に追加されます。「変更計画を作成」で AI がコードを変更し、確認するまでデプロイされません。
+    hint: ここでの変更は左の「あなたの意見」に追加されます。収束を始める（または収集中に意見を出す）と AI が変更計画にまとめ、確認後にデプロイされます。
     nameRule: 文字、数字、「.」「-」「_」のみ、40 文字まで。
     select: モジュール
     none: 3D 図でクリックするか、ここで選択

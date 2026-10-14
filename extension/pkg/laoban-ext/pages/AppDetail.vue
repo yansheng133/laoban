@@ -1,17 +1,15 @@
 <script lang="ts">
-// One app (GET /api/apps/<name>): what it does, its versions and its 3D
-// architecture, plus "要怎麼修改" which runs the shared plan/deploy flow with
-// baseApp. A version can be viewed (optionally compared with the current
-// one in the 3D view) and restored, which publishes it again as a new
-// version. A change plan is always shown compared with the current version.
-// After a change or restore runs, the app and its versions are reloaded.
+// One app (GET .../apps/<name>): what it does, its versions and its 3D
+// architecture. Changes go through 意見收斂 (components/RoundPanel.vue,
+// composables/useRound.ts): opinions from everyone, converged by the AI
+// into one plan, confirmed by those who gave them, then published. The
+// converged plan is shown in the 3D view compared with the current version.
 //
-// Editing needs the app's edit lock (composables/useEditLock.ts), taken
-// when the page opens. Without it the page is read-only. With it, besides
-// "要怎麼修改", the code can be edited by hand (程式碼 tab) and the 3D view
-// of the latest version can be rearranged (儲存版面) or changed in
-// structure (sentences added to "要怎麼修改"); hand edits and layout are
-// saved as new versions without AI.
+// Without AI: the code can be edited by hand (程式碼 tab; files in a running
+// round's scope wait for it), the latest version's 3D layout rearranged
+// (儲存版面), and an earlier version restored (not while a round runs).
+// Structure changes in the 3D view become sentences in the opinion.
+// After any change is deployed, the app and its versions are reloaded.
 //
 // Text from the backend or AI is rendered with {{ }} only, never v-html.
 import {
@@ -23,16 +21,16 @@ import { useText } from '../composables/useText';
 import AppearanceMenu from '../components/AppearanceMenu.vue';
 import { useAppearance } from '../composables/useAppearance';
 import ArchitectureView from '../components/ArchitectureView.vue';
-import PlanResult from '../components/PlanResult.vue';
+import RoundPanel from '../components/RoundPanel.vue';
 import StatusBar from '../components/StatusBar.vue';
 import VersionList from '../components/VersionList.vue';
 import CodeEditor from '../components/CodeEditor.vue';
 import StructureEdit from '../components/StructureEdit.vue';
 import { useDeployFlow } from '../composables/useDeployFlow';
-import { useEditLock } from '../composables/useEditLock';
+import { useRound } from '../composables/useRound';
 import {
-  getApp, listVersions, getVersion, resolveAppUrl, safeHttpsUrl, saveFiles, saveLayout,
-  AppDetail, VersionEntry, VersionDetail, AppFiles, Position
+  getApp, listVersions, getVersion, resolveAppUrl, safeHttpsUrl, saveFiles, saveLayout, aiRequestTimeoutMs,
+  AppDetail, VersionEntry, VersionDetail, AppFiles, Position, RoundAction
 } from '../utils/backend';
 import { appendLine } from '../utils/structure';
 import { mergeForDiff } from '../utils/graphDiff';
@@ -42,7 +40,7 @@ export default defineComponent({
   name: 'LaobanAppDetail',
 
   components: {
-    ArchitectureView, PlanResult, StatusBar, AppearanceMenu, VersionList, CodeEditor, StructureEdit
+    ArchitectureView, RoundPanel, StatusBar, AppearanceMenu, VersionList, CodeEditor, StructureEdit
   },
 
   setup() {
@@ -54,7 +52,8 @@ export default defineComponent({
     const detail = ref<AppDetail | null>(null);
     const loading = ref(false);
     const loadError = ref('');
-    const prompt = ref('');
+    // The opinion being typed (structure changes add sentences to it).
+    const opinionDraft = ref('');
     const versions = ref<VersionEntry[]>([]);
     const versionsTruncated = ref(false);
     const versionsLoading = ref(false);
@@ -133,15 +132,32 @@ export default defineComponent({
       loadVersions();
     }
 
-    const lock = useEditLock(store);
-    const flow = useDeployFlow(store, t, { onReady: reloadAll, onError: lock.noteError });
+    const flow = useDeployFlow(store, t, { onReady: reloadAll });
+    const round = useRound(store, {
+      onApplied:    (applied) => flow.watchApplied(applied),
+      messageFor:   flow.messageFor,
+      aiTimeoutMs:  () => aiRequestTimeoutMs(flow.config.value),
+    });
 
-    const busy = computed(() => flow.busy.value || loading.value);
-    const canEdit = computed(() => lock.canEdit.value && !!detail.value);
-    const canPlan = computed(() => canEdit.value && !busy.value && !!prompt.value.trim());
+    // Permissions are checked by the Kubernetes API server; the page lets
+    // everyone try and shows its answer.
+    const canEdit = computed(() => !!detail.value);
+    const busy = computed(() => flow.busy.value || loading.value || !!round.pending.value);
+    const deploying = computed(() => flow.phase.value === 'deploying');
     const currentCommit = computed(() => versions.value.find((v) => v.current)?.commit || '');
+    const roundPlan = computed(() => (round.round.value?.state === 'confirming' ? round.round.value.plan : null));
+    // Files a running round is about: the code editor leaves them alone.
+    const blockedFiles = computed(() => {
+      const r = round.round.value;
+
+      if (!r || !round.active.value) {
+        return [];
+      }
+
+      return r.scope.flatMap((p) => (p === 'web' ? ['web/index.html', 'web/app.js', 'web/style.css'] : ['api/handler.py']));
+    });
     // Only the latest version, as it is, can be rearranged.
-    const canArrange = computed(() => canEdit.value && !busy.value && !flow.plan.value && !selectedVersion.value && !selectedCommit.value);
+    const canArrange = computed(() => canEdit.value && !busy.value && !roundPlan.value && !selectedVersion.value && !selectedCommit.value);
     const pendingCount = computed(() => Object.keys(pending.value).length);
     const appsRoute = { name: APPS_ROUTE_NAME, params: { product: PRODUCT_NAME, cluster: BLANK_CLUSTER } };
     const openLink = computed(() => resolveAppUrl(detail.value?.appUrl, window.location.origin));
@@ -161,10 +177,10 @@ export default defineComponent({
     const view = computed(() => {
       const current = detail.value?.architecture || null;
 
-      if (flow.plan.value) {
-        const d = mergeForDiff(current, flow.plan.value.architecture);
+      if (roundPlan.value && !selectedVersion.value) {
+        const d = mergeForDiff(current, roundPlan.value.architecture);
 
-        return { architecture: d.architecture, diff: d, hint: t('laoban.versions.hintPlan') };
+        return { architecture: d.architecture, diff: d, hint: t('laoban.round.hintPlan') };
       }
       if (selectedVersion.value) {
         if (compare.value) {
@@ -180,7 +196,7 @@ export default defineComponent({
     });
 
     function restore(commit: string) {
-      if (!busy.value && canEdit.value && detail.value) {
+      if (!busy.value && canEdit.value && detail.value && !round.active.value) {
         flow.restore(detail.value.appName, commit);
       }
     }
@@ -222,38 +238,22 @@ export default defineComponent({
     }
 
     function addStructure(line: string) {
-      prompt.value = appendLine(prompt.value, line);
+      opinionDraft.value = appendLine(opinionDraft.value, line, 1000);
     }
 
-    function retryLock() {
-      if (name.value) {
-        lock.acquire(name.value);
+    async function openRound(opts: { minutes: number; scope: string }) {
+      if (await round.open(opinionDraft.value.trim(), opts.minutes, opts.scope)) {
+        opinionDraft.value = '';
       }
     }
 
-    const lockText = computed(() => {
-      switch (lock.state.value) {
-      case 'acquiring':
-        return t('laoban.lock.acquiring');
-      case 'held':
-        return t('laoban.lock.held', { name: lock.holder.value });
-      case 'other':
-        return lock.otherHolder.value ? `${ t('laoban.lock.other', { name: lock.otherHolder.value }) } ${ t('laoban.lock.readOnly') }` : `${ lock.otherMessage.value || t('laoban.lock.otherUnknown') } ${ t('laoban.lock.readOnly') }`;
-      case 'lost':
-        return t('laoban.lock.lost');
-      case 'error':
-        return t('laoban.lock.error');
-      default:
-        return '';
+    async function roundAct(action: RoundAction, body: Record<string, string>) {
+      if (await round.act(action, body) && action === 'opinions') {
+        opinionDraft.value = '';
       }
-    });
+    }
+
     const currentSteps = computed(() => (Array.isArray(detail.value?.steps) ? detail.value!.steps.map(String) : []));
-
-    function generatePlan() {
-      if (canPlan.value && detail.value) {
-        flow.generatePlan(prompt.value, { baseApp: detail.value.appName });
-      }
-    }
 
     function formatTime(at: string): string {
       const d = new Date(at);
@@ -263,12 +263,12 @@ export default defineComponent({
 
     watch(name, (n) => {
       flow.reset();
-      prompt.value = '';
+      opinionDraft.value = '';
       selectedNode.value = null;
       tab.value = 'arch';
       reloadAll();
       if (n) {
-        lock.acquire(n);
+        round.start(n);
       }
     });
 
@@ -284,7 +284,7 @@ export default defineComponent({
       load();
       loadVersions();
       if (name.value) {
-        lock.acquire(name.value);
+        round.start(name.value);
       }
       window.addEventListener('beforeunload', beforeUnload);
     });
@@ -299,9 +299,8 @@ export default defineComponent({
       detail,
       loading,
       loadError,
-      prompt,
+      opinionDraft,
       name,
-      canPlan,
       appsRoute,
       openLink,
       sourceLink,
@@ -317,12 +316,18 @@ export default defineComponent({
       selectVersion,
       restore,
       currentSteps,
-      generatePlan,
       formatTime,
-      lockState: lock.state,
-      lockText,
-      retryLock,
       canEdit,
+      deploying,
+      blockedFiles,
+      roundPlan,
+      roundState: round.round,
+      roundActive: round.active,
+      roundPending: round.pending,
+      roundElapsed: round.elapsed,
+      roundError: round.error,
+      openRound,
+      roundAct,
       canArrange,
       tab,
       pending,
@@ -402,28 +407,6 @@ export default defineComponent({
     </p>
 
     <div
-      v-if="detail && lockText"
-      class="laoban-lock"
-      :class="`laoban-lock-${ lockState }`"
-      role="status"
-      data-testid="laoban-lock"
-    >
-      <i
-        :class="lockState === 'held' ? 'icon icon-edit' : 'icon icon-lock'"
-        aria-hidden="true"
-      />
-      <span>{{ lockText }}</span>
-      <button
-        v-if="lockState === 'other' || lockState === 'lost' || lockState === 'error'"
-        type="button"
-        class="btn btn-sm role-secondary"
-        @click="retryLock"
-      >
-        {{ t('laoban.lock.retry') }}
-      </button>
-    </div>
-
-    <div
       v-if="detail"
       class="laoban-work"
     >
@@ -432,35 +415,16 @@ export default defineComponent({
         :aria-label="t('laoban.edit.promptLabel')"
       >
         <h2>{{ t('laoban.detail.changeTitle') }}</h2>
-        <form
-          class="laoban-form"
-          @submit.prevent="generatePlan"
-        >
-          <label
-            for="laoban-change"
-            class="laoban-label"
-          >{{ t('laoban.edit.promptLabel') }}</label>
-          <textarea
-            id="laoban-change"
-            v-model="prompt"
-            rows="4"
-            maxlength="4000"
-            :placeholder="t('laoban.edit.promptPlaceholder')"
-            :disabled="busy || !canEdit"
-          />
-          <button
-            type="submit"
-            class="btn role-primary"
-            :disabled="!canPlan"
-          >
-            <i
-              v-if="phase === 'planning'"
-              class="icon icon-spinner icon-spin"
-              aria-hidden="true"
-            />
-            {{ t('laoban.edit.generate') }}
-          </button>
-        </form>
+        <RoundPanel
+          v-model:draft="opinionDraft"
+          :round="roundState"
+          :pending="roundPending"
+          :elapsed="roundElapsed"
+          :error="roundError"
+          :disabled="deploying || phase === 'applying'"
+          @open="openRound"
+          @act="roundAct"
+        />
 
         <p
           v-if="errorText"
@@ -470,21 +434,9 @@ export default defineComponent({
           {{ errorText }}
         </p>
 
-        <PlanResult
-          :plan="plan"
-          :steps="steps"
-          :applied="applied"
-          :phase="phase"
-          :can-apply="canApply"
-          :commit-link="commitLink"
-          :short-commit="shortCommit"
-          :app-link="appLink"
-          @apply="confirmAndDeploy"
-        />
-
         <details
           class="laoban-detail-section"
-          :open="!plan"
+          :open="!roundPlan"
         >
           <summary>{{ t('laoban.detail.currentSteps') }}</summary>
           <ol>
@@ -507,7 +459,7 @@ export default defineComponent({
             :loading="versionsLoading"
             :error="versionsError"
             :truncated="versionsTruncated"
-            :read-only="!canEdit"
+            :read-only="!canEdit || roundActive"
             @select="selectVersion"
             @restore="restore"
           />
@@ -554,6 +506,7 @@ export default defineComponent({
             :visible="tab === 'code'"
             :editable="canEdit"
             :busy="busy || phase === 'deploying'"
+            :blocked-files="blockedFiles"
             :reload-key="editorReload"
             @save="saveCode"
             @dirty="editorDirty = $event"
@@ -570,7 +523,7 @@ export default defineComponent({
             {{ view.hint }}
           </p>
           <label
-            v-if="selectedVersion && !plan"
+            v-if="selectedVersion"
             class="laoban-compare"
           >
             <input
@@ -580,7 +533,7 @@ export default defineComponent({
             {{ t('laoban.versions.compare') }}
           </label>
           <button
-            v-if="selectedVersion && !plan"
+            v-if="selectedVersion"
             type="button"
             class="btn btn-sm role-secondary"
             @click="selectVersion(null)"
@@ -589,7 +542,7 @@ export default defineComponent({
           </button>
         </div>
         <p
-          v-if="selectedVersion && !plan"
+          v-if="selectedVersion"
           class="laoban-text laoban-hint"
         >
           {{ selectedVersion.summary }}
@@ -628,7 +581,7 @@ export default defineComponent({
           v-if="canEdit && !selectedCommit"
           :architecture="detail.architecture"
           :selected="selectedNode"
-          :disabled="busy || !!plan"
+          :disabled="busy || (roundActive && !!roundState && roundState.state !== 'collecting')"
           @add="addStructure"
           @select="selectedNode = $event"
         />

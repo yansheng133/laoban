@@ -71,6 +71,12 @@ export default defineComponent({
       type:    Number,
       default: 0,
     },
+    // Files a running round of 意見收斂 is about ("web/app.js", ...): shown
+    // read-only until it ends.
+    blockedFiles: {
+      type:    Array as PropType<string[]>,
+      default: () => [],
+    },
     // The page shows this tab. CodeMirror measures its box when it is
     // created, so it is only created while visible (inside display:none it
     // would measure zero and draw a single line).
@@ -94,7 +100,8 @@ export default defineComponent({
     const error = ref('');
 
     const changed = computed(() => FILES.filter((f) => base.value && draft.value[f.key] !== read(base.value.files, f)).map((f) => f.key));
-    const canSave = computed(() => props.editable && !props.busy && !!base.value && changed.value.length > 0);
+    const canSave = computed(() => props.editable && !props.busy && !!base.value && changed.value.length > 0 &&
+      !changed.value.some((k) => props.blockedFiles.includes(k)));
 
     watch(() => changed.value.length > 0, (dirty) => emit('dirty', dirty));
 
@@ -160,7 +167,7 @@ export default defineComponent({
       error,
       changed,
       canSave,
-      editMode: computed(() => (props.editable && !props.busy ? _EDIT : _VIEW)),
+      editMode: computed(() => (props.editable && !props.busy && !props.blockedFiles.includes(active.value) ? _EDIT : _VIEW)),
       activeFile: computed(() => FILES.find((f) => f.key === active.value) || null),
       onInput,
       discard,
@@ -174,7 +181,14 @@ export default defineComponent({
 <template>
   <div class="laoban-editor">
     <p class="text-muted laoban-hint">
-      {{ t('laoban.editor.hint') }}
+      {{ editable ? t('laoban.editor.hint') : t('laoban.editor.hintReadOnly') }}
+    </p>
+    <p
+      v-if="blockedFiles.length"
+      class="text-warning laoban-hint"
+      role="status"
+    >
+      {{ t('laoban.editor.blocked', { files: blockedFiles.map((f) => f.split('/').pop()).join('、') }) }}
     </p>
     <p
       v-if="loading && !base"

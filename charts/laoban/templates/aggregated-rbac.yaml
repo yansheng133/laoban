@@ -48,8 +48,7 @@ rules:
       - apps/files
       - apps/layout
       - apps/restore
-      - apps/lock
-      - apps/unlock
+      - apps/round
       - plans
       - plans/apply
     verbs: ["get", "list", "create"]
@@ -63,7 +62,7 @@ metadata:
     rbac.authorization.k8s.io/aggregate-to-view: "true"
 rules:
   - apiGroups: ["api.laoban.yansheng133.github.io"]
-    resources: ["config", "apps", "apps/versions", "apps/files"]
+    resources: ["config", "apps", "apps/versions", "apps/files", "apps/round"]
     verbs: ["get", "list"]
 {{- end }}
 {{- end }}

@@ -72,7 +72,12 @@ fn api_from_env() -> (ApiState, String) {
         s.target_namespace
     );
     match M0Service::new(s, Box::new(provider), github) {
-        Ok(service) => (ApiState::Ready(Arc::new(service)), status),
+        Ok(service) => {
+            let service = Arc::new(service);
+            // Rounds of 意見收斂 converge at their deadline.
+            service.start_round_timer();
+            (ApiState::Ready(service), status)
+        }
         Err(e) => (
             ApiState::Unconfigured("後端初始化失敗。".into()),
             format!("/api disabled: {e}"),

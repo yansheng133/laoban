@@ -14,10 +14,10 @@
 pub mod codegen;
 pub mod config;
 pub mod github;
-pub mod lock;
 pub mod meta;
 pub mod plan;
 pub mod render;
+pub mod rounds;
 pub mod service;
 pub mod store;
 mod time;
@@ -25,8 +25,8 @@ mod time;
 pub use config::{from_env_with, AiEndpoint, ConfigError, EnvConfig, M0Settings, Secret};
 pub use github::{CommitFile, CommitInfo, GithubCommitter, GithubConfig, GithubError, GithubToken};
 pub use service::{
-    ApplyRequest, M0Error, M0Service, PlanRequestBody, RestoreRequest, SaveFilesRequest,
-    SaveLayoutRequest,
+    ApplyRequest, M0Error, M0Service, OpenRoundRequest, OpinionRequest, PlanRequestBody,
+    RestoreRequest, SaveFilesRequest, SaveLayoutRequest, SkipRequest,
 };
 
 /// The AI returned something that does not match the expected format or

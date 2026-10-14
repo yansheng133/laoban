@@ -8,7 +8,7 @@ import { defineComponent, ref, PropType } from 'vue';
 import { useStore } from 'vuex';
 import { useText } from '../composables/useText';
 import { safeHttpsUrl, VersionEntry } from '../utils/backend';
-import { userLabel } from '../composables/useEditLock';
+import { userLabel } from '../utils/users';
 
 export default defineComponent({
   name: 'LaobanVersionList',

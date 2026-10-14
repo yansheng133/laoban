@@ -162,6 +162,10 @@ export default defineComponent({
             <td class="laoban-text">
               <span v-if="app.editable">{{ app.summary }}</span>
               <span
+                v-if="app.round"
+                class="laoban-apps-round"
+              >{{ t(`laoban.round.states.${ app.round }`) }}</span>
+              <span
                 v-else
                 class="text-muted"
               >{{ t('laoban.apps.legacy') }}</span>
@@ -199,6 +203,16 @@ export default defineComponent({
 </template>
 
 <style lang="scss" scoped>
+.laoban-apps-round {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border: 1px solid var(--primary);
+  border-radius: var(--border-radius);
+  font-size: 11px;
+  color: var(--link);
+}
+
 // Rancher's text-warning yellow is too light on white; see palettes.scss.
 .laoban-state-modified {
   color: var(--laoban-text-warning);
