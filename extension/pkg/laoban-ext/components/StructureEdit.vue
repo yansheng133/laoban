@@ -55,6 +55,8 @@ export default defineComponent({
 
     const renameValid = computed(() => !!moduleName(renameTo.value) && moduleName(renameTo.value) !== selectedModule.value?.name);
     const addValid = computed(() => !!moduleName(addName.value));
+    // Typed something that is not a valid name: say why the button is off.
+    const nameProblem = computed(() => [renameTo.value, addName.value].some((v) => v.trim() && !moduleName(v)));
 
     function push(action: StructureAction) {
       const s = structureSentence(action, t);
@@ -119,6 +121,7 @@ export default defineComponent({
       addName,
       addPurpose,
       addValid,
+      nameProblem,
       connectTo,
       rename,
       remove,
@@ -253,6 +256,14 @@ export default defineComponent({
         {{ t('laoban.structure.add') }}
       </button>
     </div>
+
+    <p
+      v-if="nameProblem"
+      class="text-warning laoban-hint"
+      role="status"
+    >
+      {{ t('laoban.structure.nameRule') }}
+    </p>
 
     <div class="laoban-structure-row">
       <button

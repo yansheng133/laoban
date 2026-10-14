@@ -353,10 +353,25 @@ fn request_validation() {
     let (status, err) = post(r.addr, "/api/plan", &big);
     assert_eq!(status, 413);
     assert_error(&err, "bad_request");
-    // Chunked bodies are refused.
-    let (status, _, _) = raw(
+    // Chunked bodies are read (the API server may forward that way); an
+    // empty one is still a bad plan request.
+    let (status, _, body) = raw(
         r.addr,
         b"POST /api/plan HTTP/1.1\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
+    );
+    assert_eq!(status, 400);
+    assert_error(&serde_json::from_str(&body).unwrap(), "bad_request");
+    // A chunked lock request, as kubectl's goes through the API server.
+    let (status, _, body) = raw(
+        r.addr,
+        b"POST /api/apps/breakfast/lock HTTP/1.1\r\nX-Remote-User: u-test01\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n2\r\n{}\r\n0\r\n\r\n",
+    );
+    assert_eq!(status, 404, "{body}");
+    assert_error(&serde_json::from_str(&body).unwrap(), "app_not_found");
+    // Both framings at once: refused.
+    let (status, _, _) = raw(
+        r.addr,
+        b"POST /api/plan HTTP/1.1\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\nContent-Length: 5\r\n\r\n0\r\n\r\n",
     );
     assert_eq!(status, 400);
     // Wrong method and unknown path.

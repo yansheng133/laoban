@@ -378,6 +378,53 @@ pub fn architecture_with_layout(plan: &AppPlan, app: &str, layout: &crate::meta:
     arch
 }
 
+fn node_ids(plan: &AppPlan, app: &str) -> Vec<String> {
+    architecture(plan, app)["nodes"]
+        .as_array()
+        .map(|n| {
+            n.iter()
+                .filter_map(|n| n["id"].as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Dragged positions for a changed plan. Positions of nodes that still
+/// exist are kept, others dropped. A module id follows its name, so a
+/// renamed module looks like one removed and one added: when exactly one
+/// positioned module disappears from a component and exactly one new one
+/// appears there, the new one takes its position.
+pub fn carry_layout(
+    old: &AppPlan,
+    new: &AppPlan,
+    app: &str,
+    layout: &crate::meta::Layout,
+) -> crate::meta::Layout {
+    let old_ids = node_ids(old, app);
+    let new_ids = node_ids(new, app);
+    let mut out: crate::meta::Layout = layout
+        .iter()
+        .filter(|(id, _)| new_ids.contains(id))
+        .map(|(id, p)| (id.clone(), *p))
+        .collect();
+    for prefix in ["mod-web-", "mod-api-"] {
+        let removed: Vec<&String> = old_ids
+            .iter()
+            .filter(|id| {
+                id.starts_with(prefix) && !new_ids.contains(id) && layout.contains_key(*id)
+            })
+            .collect();
+        let added: Vec<&String> = new_ids
+            .iter()
+            .filter(|id| id.starts_with(prefix) && !old_ids.contains(id))
+            .collect();
+        if let ([gone], [new_id]) = (removed.as_slice(), added.as_slice()) {
+            out.insert((*new_id).clone(), layout[*gone]);
+        }
+    }
+    out
+}
+
 /// The architecture graph in the viewer model. Deterministic: same plan
 /// and app name, same graph.
 pub fn architecture(plan: &AppPlan, app: &str) -> Value {
@@ -433,6 +480,53 @@ mod tests {
         ] {
             assert!(!valid_app_name(bad), "{bad:?}");
         }
+    }
+
+    fn plan_with(web: &[&str], api: &[&str]) -> AppPlan {
+        let m = |names: &[&str]| -> Vec<serde_json::Value> {
+            names
+                .iter()
+                .map(|n| json!({"name": n, "purpose": "p"}))
+                .collect()
+        };
+        parse_app_plan(
+            &json!({
+                "appName": "todo",
+                "summary": "s",
+                "steps": ["a"],
+                "components": {
+                    "web": {"modules": m(web)},
+                    "api": {"modules": m(api), "endpoints": [{"method": "GET", "path": "/x", "purpose": "p"}]}
+                }
+            })
+            .to_string(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn layout_follows_a_renamed_module() {
+        use crate::meta::{Layout, Pos};
+        let old = plan_with(&["list", "form"], &["todo_api.py"]);
+        let layout: Layout = [
+            ("mod-api-todo-api-py".to_string(), Pos { x: 5.0, z: 1.0 }),
+            ("mod-web-list".to_string(), Pos { x: -3.0, z: 2.0 }),
+            ("svc-web".to_string(), Pos { x: -9.0, z: 0.0 }),
+        ]
+        .into_iter()
+        .collect();
+        // api module renamed, web "list" removed and nothing added there.
+        let new = plan_with(&["form"], &["todo_logic.py"]);
+        let out = carry_layout(&old, &new, "todo", &layout);
+        let p = out["mod-api-todo-logic-py"];
+        assert_eq!((p.x, p.z), (5.0, 1.0));
+        assert!(!out.contains_key("mod-api-todo-api-py"));
+        assert!(!out.contains_key("mod-web-list"), "removed module dropped");
+        assert!(out.contains_key("svc-web"), "unchanged nodes kept");
+        // Two new modules in the component: ambiguous, not carried.
+        let new2 = plan_with(&["list", "form"], &["a", "b"]);
+        let out2 = carry_layout(&old, &new2, "todo", &layout);
+        assert!(!out2.keys().any(|k| k.starts_with("mod-api-")));
     }
 
     #[test]

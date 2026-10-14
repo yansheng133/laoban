@@ -112,7 +112,8 @@ laoban:
     save: Save layout
   structure:
     title: Change structure
-    hint: These changes are added to "How to change it" on the left; then "Generate change plan" lets the AI change the code, and nothing is deployed until you confirm.
+    hint: These changes are added to "What should change" on the left; then "Plan the change" lets the AI change the code, and nothing is deployed until you confirm.
+    nameRule: "Letters, digits, '.', '-' and '_' only, up to 40 characters."
     select: Module
     none: Click one in the 3D view or pick one here
     renameTo: New name

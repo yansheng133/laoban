@@ -40,6 +40,9 @@
   --laoban-diff-added: #1e8e4e;
   --laoban-diff-removed: #c43d32;
   --laoban-diff-changed: #c27c00;
+  // Text in amber (e.g. Fleet "Modified"): darker than the 3D mark so it
+  // reads on a white background (about 5.9:1).
+  --laoban-text-warning: #8a5a00;
 }
 
 .theme-dark .laoban-m0 {
@@ -48,6 +51,7 @@
   --laoban-diff-added: #5fd38d;
   --laoban-diff-removed: #ff7b6b;
   --laoban-diff-changed: #f5b942;
+  --laoban-text-warning: #f5b942;
 }
 
 // 海洋：blue.
