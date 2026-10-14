@@ -44,6 +44,9 @@ laoban:
     loading: Loading…
     changeTitle: Change this app
     currentSteps: Current build steps
+    tabs:
+      arch: Architecture
+      code: Code
   appearance:
     theme: Theme
     themes:
@@ -65,6 +68,8 @@ laoban:
       edit: Changed
       restore: Restored
       commit: Other change
+      manual: Manual edit
+      layout: Layout change
     view: View
     viewCurrent: Current version
     restore: Restore this version
@@ -78,6 +83,80 @@ laoban:
     hintPlan: "Change plan compared with the current version: marked parts are added, removed or changed once deployed."
     hintCompare: "Version {n} compared with the current version: marked parts are added, removed or changed by restoring version {n}."
     hintVersion: "Architecture of version {n}."
+  lock:
+    acquiring: Getting the edit lock…
+    held: "You ({name}) are editing this app; others can only view it. Released when you leave the page or after 3 minutes without activity."
+    otherUnknown: Someone else is editing this app.
+    readOnly: View only.
+    lost: The edit lock expired (idle too long, or this app was opened in another tab). View only.
+    error: Could not get the edit lock. View only.
+    retry: Get the edit lock again
+  editor:
+    hint: Edit the four files directly. Saving creates a new version (marked "Manual edit") that Fleet deploys, without calling the AI; the files get the same checks as AI-generated code.
+    files: Files
+    changedFile: Changed
+    note: What changed (optional)
+    notePlaceholder: "e.g. new page title"
+    defaultNote: Manual code edit
+    changed: "{count} file(s) changed"
+    unchanged: No changes yet.
+    discard: Discard changes
+    reload: Reload
+    save: Save as new version
+    saving: "Checking and committing to GitHub (no AI, {seconds}s)…"
+  layout:
+    dragHint: Drag a component to move it, drag empty space to rotate, scroll to zoom; click a component to select it.
+    moved: "{count} component(s) moved (not saved)"
+    discard: Reset positions
+    save: Save layout
+  structure:
+    title: Change structure
+    hint: These changes are added to "How to change it" on the left; then "Generate change plan" lets the AI change the code, and nothing is deployed until you confirm.
+    select: Module
+    none: Click one in the 3D view or pick one here
+    renameTo: New name
+    rename: Rename
+    connectTo: Connect to…
+    connect: Add connection
+    delete: Delete this module
+    addTo: Add to
+    addName: New module name
+    addPurpose: Purpose (optional)
+    add: Add module
+    parts:
+      web: the web part
+      api: the API part
+    addKind:
+      database: Add database
+      queue: Add message queue
+      ingress: Add Ingress
+    unsupported: not in the preview
+    lines:
+      rename: "Rename module \"{from}\" to \"{to}\"."
+      delete: "Remove module \"{name}\" and the code only it uses."
+      connect: "Make \"{from}\" call \"{to}\"."
+      add: "Add module \"{name}\" to {part}."
+      addWithPurpose: "Add module \"{name}\" to {part}, for: {purpose}."
+  kinds:
+    title: Component kinds (seven)
+    ingress: Ingress
+    service: Network service
+    netpol: Network policy
+    app: Program
+    module: Program module
+    database: Database
+    table: Table
+    queue: Message queue
+    external: External dependency
+    storage: Storage
+    shape:
+      app: box, code layer
+      service: cylinder, network layer
+      database: tall cylinder, data layer
+      ingress: octahedron, network layer
+      external: dodecahedron, code layer
+      storage: flat hexagonal prism, data layer
+      queue: capsule, data layer
   diff:
     added: "Added {count}"
     removed: "Removed {count}"

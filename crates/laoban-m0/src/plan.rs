@@ -364,6 +364,20 @@ fn routes(plan: &AppPlan) -> String {
     r.join(", ")
 }
 
+/// [`architecture`] with dragged positions applied to the nodes they name.
+pub fn architecture_with_layout(plan: &AppPlan, app: &str, layout: &crate::meta::Layout) -> Value {
+    let mut arch = architecture(plan, app);
+    if let Some(nodes) = arch["nodes"].as_array_mut() {
+        for n in nodes {
+            let Some(id) = n["id"].as_str() else { continue };
+            if let Some(p) = layout.get(id) {
+                n["pos"] = json!({ "x": p.x, "z": p.z });
+            }
+        }
+    }
+    arch
+}
+
 /// The architecture graph in the viewer model. Deterministic: same plan
 /// and app name, same graph.
 pub fn architecture(plan: &AppPlan, app: &str) -> Value {

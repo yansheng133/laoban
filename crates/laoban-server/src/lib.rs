@@ -30,7 +30,10 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use laoban_m0::{ApplyRequest, M0Error, M0Service, PlanRequestBody, RestoreRequest};
+use laoban_m0::{
+    ApplyRequest, LockRequest, M0Error, M0Service, PlanRequestBody, RestoreRequest,
+    SaveFilesRequest, SaveLayoutRequest,
+};
 use serde_json::json;
 
 /// Package name, baked in at compile time.
@@ -60,7 +63,10 @@ pub fn version_json() -> String {
 /// Largest request head (request line plus headers) accepted, in bytes.
 const MAX_HEAD_BYTES: usize = 8 * 1024;
 /// Largest request body accepted on `/api/*`, in bytes.
-pub const MAX_BODY_BYTES: usize = 64 * 1024;
+/// Hand-edited code (up to 192 KiB of files, JSON-escaped) must fit.
+pub const MAX_BODY_BYTES: usize = 512 * 1024;
+/// Request header carrying the edit lock token.
+const LOCK_HEADER: &str = "x-laoban-lock";
 /// Upper bound on connections handled at the same time.
 const MAX_CONNECTIONS: usize = 64;
 /// Read and write timeout per socket operation while receiving a request
@@ -346,6 +352,8 @@ struct RequestHead {
     content_length: Option<usize>,
     chunked: bool,
     json_content_type: bool,
+    /// `X-Laoban-Lock`, when it looks like a token.
+    lock_token: Option<String>,
 }
 
 fn parse_head(head: &[u8]) -> Result<RequestHead, u16> {
@@ -365,6 +373,7 @@ fn parse_head(head: &[u8]) -> Result<RequestHead, u16> {
     let mut content_length: Option<usize> = None;
     let mut chunked = false;
     let mut json_content_type = false;
+    let mut lock_token = None;
     for line in lines {
         let line = line.trim_end_matches('\r');
         let Some((name, value)) = line.split_once(':') else {
@@ -387,6 +396,11 @@ fn parse_head(head: &[u8]) -> Result<RequestHead, u16> {
         } else if name.eq_ignore_ascii_case("content-type") {
             let mime = value.split(';').next().unwrap_or("").trim();
             json_content_type = mime.eq_ignore_ascii_case("application/json");
+        } else if name.eq_ignore_ascii_case(LOCK_HEADER)
+            && value.len() <= 64
+            && value.bytes().all(|b| b.is_ascii_hexdigit())
+        {
+            lock_token = Some(value.to_string());
         }
     }
     Ok(RequestHead {
@@ -395,6 +409,7 @@ fn parse_head(head: &[u8]) -> Result<RequestHead, u16> {
         content_length,
         chunked,
         json_content_type,
+        lock_token,
     })
 }
 
@@ -466,6 +481,11 @@ enum Route<'a> {
     Versions(&'a str),
     Version(&'a str, &'a str),
     Restore(&'a str),
+    Lock(&'a str),
+    RenewLock(&'a str),
+    Unlock(&'a str),
+    Files(&'a str),
+    Layout(&'a str),
     Plan,
     Apply,
 }
@@ -489,14 +509,26 @@ impl<'a> Route<'a> {
             [name, "versions"] => Some(Route::Versions(name)),
             [name, "versions", commit] => Some(Route::Version(name, commit)),
             [name, "restore"] => Some(Route::Restore(name)),
+            [name, "lock"] => Some(Route::Lock(name)),
+            [name, "lock", "renew"] => Some(Route::RenewLock(name)),
+            [name, "unlock"] => Some(Route::Unlock(name)),
+            [name, "files"] => Some(Route::Files(name)),
+            [name, "layout"] => Some(Route::Layout(name)),
             _ => None,
         }
     }
 
-    fn method(&self) -> &'static str {
+    fn method(&self, request_method: &str) -> &'static str {
         match self {
-            Route::Plan | Route::Apply | Route::Restore(_) => "POST",
-            _ => "GET",
+            // Read for the editor, POST to save.
+            Route::Files(_) if request_method == "POST" => "POST",
+            Route::Config
+            | Route::Apps
+            | Route::App(_)
+            | Route::Versions(_)
+            | Route::Version(..)
+            | Route::Files(_) => "GET",
+            _ => "POST",
         }
     }
 }
@@ -506,10 +538,15 @@ fn route_api(api: &ApiState, head: &RequestHead, body: &[u8]) -> Response {
     let Some(route) = Route::parse(head.path.as_str()) else {
         return Response::api_error(404, "bad_request", "找不到這個 API。");
     };
-    let allowed = route.method();
+    let allowed = route.method(&head.method);
     if head.method != allowed {
+        let allow = if matches!(route, Route::Files(_)) {
+            "GET, POST"
+        } else {
+            allowed
+        };
         return Response {
-            allow: Some(allowed),
+            allow: Some(allow),
             ..Response::api_error(405, "bad_request", "不支援這個 HTTP 方法。")
         };
     }
@@ -528,8 +565,16 @@ fn route_api(api: &ApiState, head: &RequestHead, body: &[u8]) -> Response {
             Route::App(name) => service.get_app(name),
             Route::Versions(name) => service.versions(name),
             Route::Version(name, commit) => service.version(name, commit),
+            Route::Files(name) => service.files(name),
             _ => return Response::api_error(404, "bad_request", "找不到這個 API。"),
         });
+    }
+    let lock = head.lock_token.as_deref();
+    // Renew and unlock carry only the header; no body to check.
+    match route {
+        Route::RenewLock(name) => return reply(service.renew_lock(name, lock)),
+        Route::Unlock(name) => return reply(service.unlock(name, lock)),
+        _ => {}
     }
     // Requiring a JSON content type also keeps plain cross-site form
     // posts (which cannot set it without a CORS preflight) out.
@@ -543,7 +588,7 @@ fn route_api(api: &ApiState, head: &RequestHead, body: &[u8]) -> Response {
                     "請求格式不正確：需要 {\"prompt\": \"…\"}，可加 \"appName\" 或 \"baseApp\"。",
                 );
             };
-            match service.plan(&req) {
+            match service.plan(&req, lock) {
                 Ok(v) => Response {
                     plan_id: v["planId"].as_str().map(str::to_string),
                     ..Response::json(200, v.to_string())
@@ -555,7 +600,7 @@ fn route_api(api: &ApiState, head: &RequestHead, body: &[u8]) -> Response {
             let Ok(req) = serde_json::from_slice::<ApplyRequest>(body) else {
                 return bad_request("請求格式不正確：需要 {\"planId\": \"…\"}。");
             };
-            let mut resp = reply(service.apply(&req));
+            let mut resp = reply(service.apply(&req, lock));
             // Only log IDs that look like ours; the field is client input.
             resp.plan_id = Some(req.plan_id).filter(|id| valid_plan_id(id));
             resp
@@ -564,7 +609,29 @@ fn route_api(api: &ApiState, head: &RequestHead, body: &[u8]) -> Response {
             let Ok(req) = serde_json::from_slice::<RestoreRequest>(body) else {
                 return bad_request("請求格式不正確：需要 {\"commit\": \"…\"}。");
             };
-            reply(service.restore(name, &req))
+            reply(service.restore(name, &req, lock))
+        }
+        Route::Lock(name) => {
+            let Ok(req) = serde_json::from_slice::<LockRequest>(body) else {
+                return bad_request("請求格式不正確：需要 {\"holder\": \"…\"}。");
+            };
+            reply(service.lock(name, &req))
+        }
+        Route::Files(name) => {
+            let Ok(req) = serde_json::from_slice::<SaveFilesRequest>(body) else {
+                return bad_request(
+                    "請求格式不正確：需要 {\"baseCommit\": \"…\", \"files\": {…}}。",
+                );
+            };
+            reply(service.save_files(name, &req, lock))
+        }
+        Route::Layout(name) => {
+            let Ok(req) = serde_json::from_slice::<SaveLayoutRequest>(body) else {
+                return bad_request(
+                    "請求格式不正確：需要 {\"baseCommit\": \"…\", \"positions\": {…}}。",
+                );
+            };
+            reply(service.save_layout(name, &req, lock))
         }
         _ => Response::api_error(404, "bad_request", "找不到這個 API。"),
     }
@@ -674,7 +741,7 @@ fn linger_close(mut stream: TcpStream) {
     let mut sink = [0u8; 4096];
     let mut drained = 0usize;
     let deadline = Instant::now() + Duration::from_secs(1);
-    while drained < 64 * 1024 && Instant::now() < deadline {
+    while drained < MAX_BODY_BYTES + 64 * 1024 && Instant::now() < deadline {
         match stream.read(&mut sink) {
             Ok(0) | Err(_) => break,
             Ok(n) => drained += n,

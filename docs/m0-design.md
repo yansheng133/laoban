@@ -95,12 +95,12 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 
 ### `GET /api/apps/<appName>`
 
-`{appName, summary, steps, architecture, updatedAt, history, appUrl, path, fleet}`，`history` 新的在前，每筆 `{at, kind: create|edit, request, summary, model}`（文字都已遮蔽）。不存在回 `404 app_not_found`；沒有 `laoban.json` 回 `409 not_editable`。
+`{appName, summary, steps, architecture, updatedAt, history, appUrl, path, fleet, lock}`，`history` 新的在前，每筆 `{at, kind: create|edit|restore|manual|layout, request, summary, model}`（文字都已遮蔽）。`architecture` 的位置已套用存過的版面；`lock` 是 `{holder, since}` 或 `null`。不存在回 `404 app_not_found`；沒有 `laoban.json` 回 `409 not_editable`。
 
 
 ### `GET /api/apps/<appName>/versions`
 
-每一版就是改到該應用 `laoban.json` 的一個 commit（GitHub commits API），新的在前，最多 50 版：`{appName, versions: [{version, commit, commitUrl, at, kind: create|edit|restore|commit, request, summary, model, current}], truncated}`。需求、摘要、模型取自目前 `laoban.json` 的紀錄（最新的紀錄對應最新的 commit）；對不上時用 commit 訊息。
+每一版就是改到該應用 `laoban.json` 的一個 commit（GitHub commits API），新的在前，最多 50 版：`{appName, versions: [{version, commit, commitUrl, at, kind: create|edit|restore|manual|layout|commit, request, summary, model, current}], truncated}`。需求、摘要、模型取自目前 `laoban.json` 的紀錄（最新的紀錄對應最新的 commit）；對不上時用 commit 訊息。
 
 ### `GET /api/apps/<appName>/versions/<commit>`
 
@@ -108,10 +108,31 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 
 ### `POST /api/apps/<appName>/restore`
 
-請求：`{ "commit": "<完整 SHA>" }`。把那一版的計畫與程式當成新的一版再發布（不呼叫 AI、不改寫 Git 歷史，紀錄多一筆 `kind: restore`），回應格式同 `/api/apply`（`mode: "restore"`）。內容與目前版本相同時回 `400`。
+請求：`{ "commit": "<完整 SHA>" }`。把那一版的計畫與程式當成新的一版再發布（不呼叫 AI、不改寫 Git 歷史，紀錄多一筆 `kind: restore`），回應格式同 `/api/apply`（`mode: "restore"`）。內容與目前版本相同時回 `400`。版面也一起還原。
+
+### 編輯鎖：`POST /api/apps/<appName>/lock`、`.../lock/renew`、`.../unlock`
+
+同一時間只有一個人能改同一個應用（需求「同一 Project 編輯鎖」；M0 沒有 Project，以應用為單位）。
+
+- `lock` 請求 `{ "holder": "<顯示名稱>" }`，回 `{token, holder, ttlSeconds: 180}`。別人持有時回 `409 locked`，訊息寫出是誰、從何時開始。同一個名稱再取一次會接手（例如重新整理頁面），舊 token 隨即失效。
+- 之後的請求在 header `X-Laoban-Lock: <token>` 帶 token。`renew` 延長 180 秒；`unlock` 放開（不是持有人時什麼都不做）。
+- 要求持有鎖的動作：有 `baseApp` 的 `/api/plan`、修改計畫的 `/api/apply`、`restore`、存程式、存版面。沒有鎖回 `409 lock_required`；別人持有回 `409 locked`。新增應用不需要。
+- 鎖只在後端記憶體（與計畫一樣，單一 replica；重啟後全部失效）。頁面開著時每 60 秒續約；3 分鐘沒有操作就不再續約，讓鎖自然過期。
+- **限制**：M0 的後端不知道呼叫者是誰（頁面經 Rancher service proxy 呼叫），`holder` 由頁面帶 Rancher 使用者名稱，只用來顯示，可以被偽造；真正擋住的是 token。第一階段改用 Rancher 的身分。
+
+### `GET /api/apps/<appName>/files`、`POST /api/apps/<appName>/files`
+
+`GET` 回 `{appName, commit, files}`：目前的四個檔（格式同 AI 產生程式的回應）與最新版本的 commit，給網頁編輯器用。
+
+`POST` 請求 `{ "baseCommit": "<GET 拿到的 commit>", "files": {…}, "note": "這次改了什麼（選填）" }`：把手動修改的程式存成新的一版（`kind: manual`，commit 訊息「手動修改：…」），**不呼叫 AI**，計畫與版面不變。檔案要通過與 AI 產生的程式相同的檢查（只能是那四個檔、每檔 64 KiB、合計 192 KiB、`handler.py` 要定義 `handle(...)`），不通過回 `400 invalid_files`；與目前內容相同回 `400`；`baseCommit` 不是最新版本（編輯期間有人存了新版）回 `409 version_conflict`。請求本體上限因此提高到 512 KiB。
+
+### `POST /api/apps/<appName>/layout`
+
+請求 `{ "baseCommit": "…", "positions": { "<node id>": {"x": …, "z": …} } }`：3D 圖拖曳後的位置存成新的一版（`kind: layout`，需求「調整 3D 版面」），**不呼叫 AI**，程式不變。node id 必須是目前架構裡的元件，座標絕對值 ≤ 100，最多 100 筆；與既有版面合併。位置存在 `laoban.json` 的 `layout`（只有拖過才有），之後的修改、手動修改都會帶著；還原時用那一版的版面。
+
 ### 錯誤
 
-一律 `{"error": {"code": "…", "message": "…"}}`，`message` 是給使用者看的繁中句子。代碼：`bad_request`（400）、`plan_not_found`（404）、`already_applied`（409）、`app_exists`（409）、`app_not_found`（404）、`not_editable`（409）、`version_not_found`（404）、`budget_exceeded`（429，laoban 自己的 token 上限）、`spend_limit`（402，Anthropic 花費上限，**不重試**）、`ai_invalid_output`（502，AI 回應不合格式或碰到禁止的資源）、`github_failed`（502）、`internal`（500）。
+一律 `{"error": {"code": "…", "message": "…"}}`，`message` 是給使用者看的繁中句子。代碼：`bad_request`（400）、`plan_not_found`（404）、`already_applied`（409）、`app_exists`（409）、`app_not_found`（404）、`not_editable`（409）、`version_not_found`（404）、`locked`（409，別人正在編輯）、`lock_required`（409，沒有或已失效的編輯鎖）、`version_conflict`（409）、`invalid_files`（400）、`budget_exceeded`（429，laoban 自己的 token 上限）、`spend_limit`（402，Anthropic 花費上限，**不重試**）、`ai_invalid_output`（502，AI 回應不合格式或碰到禁止的資源）、`github_failed`（502）、`internal`（500）。
 
 ### 其他
 
@@ -173,7 +194,10 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 - 點應用名稱進**應用詳細頁**（`/laoban/c/_/apps/<名稱>`）：摘要、目前的建置步驟、完整修改紀錄、目前的 3D 架構圖、GitHub 程式碼連結與「打開應用」；在「要怎麼修改」輸入後產生修改計畫（`baseApp`），確認後 commit 到同一個目錄，完成後頁面重新讀取這個應用。新增與修改共用同一套計畫／部署／等待流程（`composables/useDeployFlow.ts`）。
 - 詳細頁的**版本**清單：每一版的時間、建立／修改／還原、當時的需求與 commit。「查看」把那一版的架構放進 3D 圖，預設與目前版本比較（`utils/graphDiff.ts`：元件以 id、連線以 from/to/kind 對應，標示新增、刪除、修改；模組 id 由名稱產生，所以同名模組跨版本對得上）；「還原到這一版」先在頁面上確認，再呼叫 restore，之後跟部署一樣等新版跑起來。產生修改計畫時，3D 圖也一律與目前版本比較，部署前就看得到會改到哪裡。
 - 外觀：每頁右上角可切換**亮色／自動／暗色**與**配色**。亮暗走 Rancher 自己的使用者偏好（`prefs/setTheme`，與 User Preferences 同一個設定，Rancher 跟著換 `<body>` 的 theme class）；管理者用全域設定強制主題時以全域設定為準。配色有「Rancher 預設」與海洋、夕陽、葡萄三組，只在 laoban 頁面內覆寫 Rancher 的 primary／link 變數與 3D 圖的分層顏色，亮暗各一組，對比都在 WCAG AA（4.5:1）以上；選擇記在瀏覽器的 localStorage（換瀏覽器或清除網站資料會回到預設）。
-- 3D 圖沿用 `web/viewer-prototype` 的程式（three.js 0.160.0、`graph-diff.mjs`）；M0 只需要顯示與縮放，不需要版本比較與拖曳。
+- 3D 圖沿用 `web/viewer-prototype` 的程式（three.js 0.160.0、`graph-diff.mjs`）。可以顯示七類元件：程式（方塊）、網路服務（圓柱）、資料庫（高圓柱）、Ingress（八面體）、外部相依服務（十二面體）、儲存空間（扁六角柱）、訊息佇列（膠囊）；M0 產生的應用只會用到其中幾類。
+- 詳細頁打開時取得**編輯鎖**（`composables/useEditLock.ts`，名稱用 Rancher 使用者名稱），上方顯示「你正在編輯」或「某某正在編輯，目前只能看」；沒有鎖時修改、還原、存程式、拖曳都停用。離開頁面時放開。
+- 詳細頁右邊分**架構圖**與**程式碼**兩個分頁。程式碼分頁用 Rancher 內建的 CodeMirror 編輯四個檔，「儲存成新版本」走 `POST .../files`，之後跟部署一樣等新版跑起來。
+- 架構圖在**最新版本**（沒有在看舊版、沒有修改計畫）時可以拖曳元件，「儲存版面」走 `POST .../layout`。點選元件後可在「改結構」改名、刪除、新增連線，或新增模組：這些會變成句子加進「要怎麼修改」，再走一般的 AI 計畫／確認流程。新增資料庫、訊息佇列、Ingress 不在 M0 的固定範本內，按鈕顯示「試吃版不支援」。歷史版本唯讀。
 - 「確認並部署」按下後顯示 commit 連結，接著每 5 秒讀 Fleet Bundle（Bundle 只剩 Modified、沒有待部署或錯誤時，也視為應用已在執行，顯示連結並附上 Fleet 的訊息）（`/v1/fleet.cattle.io.bundles`，篩 `laoban.io` 前綴或 bundlePrefix）的 Ready 狀態，Ready 後顯示「打開應用」連結。
 - 所有 AI 產生的文字用文字方式顯示，不用 `v-html`。
 - 錯誤顯示後端回的繁中 `message`。

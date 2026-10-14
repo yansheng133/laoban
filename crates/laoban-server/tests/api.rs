@@ -241,6 +241,46 @@ fn apps_endpoints() {
     assert_error(&v, "bad_request");
     let (status, _) = get(r.addr, "/api/apps/breakfast/other");
     assert_eq!(status, 404);
+
+    // Edit lock, code and layout.
+    let (status, _) = get(r.addr, "/api/apps/breakfast/lock");
+    assert_eq!(status, 405);
+    let (status, v) = post(r.addr, "/api/apps/breakfast/lock", "{}");
+    assert_eq!(status, 400);
+    assert_error(&v, "bad_request");
+    let (status, v) = post(r.addr, "/api/apps/breakfast/lock", r#"{"holder":"tester"}"#);
+    assert_eq!(status, 404);
+    assert_error(&v, "app_not_found");
+    let (status, v) = post(r.addr, "/api/apps/breakfast/lock/renew", "");
+    assert_eq!(status, 409);
+    assert_error(&v, "lock_required");
+    let (status, v) = post(r.addr, "/api/apps/breakfast/unlock", "");
+    assert_eq!(status, 200);
+    assert_eq!(v["released"], true);
+    let (status, body) = get(r.addr, "/api/apps/breakfast/files");
+    assert_eq!(status, 404);
+    assert_error(&serde_json::from_str(&body).unwrap(), "app_not_found");
+    let (status, head, _) = raw(r.addr, b"PUT /api/apps/breakfast/files HTTP/1.1\r\n\r\n");
+    assert_eq!(status, 405);
+    assert!(head.contains("Allow: GET, POST"));
+    let (status, v) = post(r.addr, "/api/apps/breakfast/files", r#"{"files":{}}"#);
+    assert_eq!(status, 400);
+    assert_error(&v, "bad_request");
+    let (status, v) = post(
+        r.addr,
+        "/api/apps/breakfast/layout",
+        r#"{"baseCommit":"x","positions":{"web":{"x":1}}}"#,
+    );
+    assert_eq!(status, 400);
+    assert_error(&v, "bad_request");
+    // Saving without the lock is refused before anything is read.
+    let (status, v) = post(
+        r.addr,
+        "/api/apps/breakfast/layout",
+        r#"{"baseCommit":"x","positions":{"web":{"x":1,"z":2}}}"#,
+    );
+    assert_eq!(status, 409);
+    assert_error(&v, "lock_required");
 }
 
 #[test]
@@ -264,7 +304,7 @@ fn request_validation() {
     assert_eq!(status, 400);
     assert_error(&serde_json::from_str(&body).unwrap(), "bad_request");
     // Too large.
-    let big = format!(r#"{{"prompt":"{}"}}"#, "a".repeat(70 * 1024));
+    let big = format!(r#"{{"prompt":"{}"}}"#, "a".repeat(513 * 1024));
     let (status, err) = post(r.addr, "/api/plan", &big);
     assert_eq!(status, 413);
     assert_error(&err, "bad_request");

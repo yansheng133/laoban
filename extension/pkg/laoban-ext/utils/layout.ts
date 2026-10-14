@@ -8,8 +8,8 @@
 //           parent?: node id, props?: {...}, pos: {x, z} }
 //   edge: { from, to, kind, label? }
 //
-// M0 only renders the latest architecture; version diff, detail levels and
-// dragging from the prototype are not used.
+// Kinds: ingress, service, netpol (network); app, module, external (code);
+// database, table, queue, storage (data). Unknown kinds draw as modules.
 
 export const LAYERS = ['network', 'code', 'data'] as const;
 
@@ -30,6 +30,8 @@ export const KIND_HEIGHT: Record<string, number> = {
   database: 0.55,
   table:    0.15,
   queue:    0.35,
+  external: 0.6,
+  storage:  0.18,
 };
 
 export const MAX_NODES = 100;
@@ -289,5 +291,28 @@ export function layoutArchitecture(arch: unknown): SceneLayout {
       centerX: (minX + maxX) / 2,
       centerZ: (minZ + maxZ) / 2,
     },
+  };
+}
+
+export type Positions = Record<string, { x: number; z: number }>;
+
+/** The architecture with dragged positions applied (not yet saved). */
+export function withPositions(arch: unknown, positions: Positions | null): unknown {
+  if (!positions || !Object.keys(positions).length || !arch || typeof arch !== 'object') {
+    return arch;
+  }
+  const a = arch as { nodes?: unknown };
+
+  if (!Array.isArray(a.nodes)) {
+    return arch;
+  }
+
+  return {
+    ...a,
+    nodes: a.nodes.map((n) => {
+      const id = n && typeof n === 'object' ? (n as { id?: unknown }).id : undefined;
+
+      return typeof id === 'string' && Object.prototype.hasOwnProperty.call(positions, id) ? { ...n, pos: positions[id] } : n;
+    }),
   };
 }

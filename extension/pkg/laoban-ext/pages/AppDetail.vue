@@ -6,9 +6,16 @@
 // version. A change plan is always shown compared with the current version.
 // After a change or restore runs, the app and its versions are reloaded.
 //
+// Editing needs the app's edit lock (composables/useEditLock.ts), taken
+// when the page opens. Without it the page is read-only. With it, besides
+// "要怎麼修改", the code can be edited by hand (程式碼 tab) and the 3D view
+// of the latest version can be rearranged (儲存版面) or changed in
+// structure (sentences added to "要怎麼修改"); hand edits and layout are
+// saved as new versions without AI.
+//
 // Text from the backend or AI is rendered with {{ }} only, never v-html.
 import {
-  defineComponent, ref, computed, onMounted, watch
+  defineComponent, ref, computed, onMounted, onBeforeUnmount, watch
 } from 'vue';
 import { useStore } from 'vuex';
 import { useRoute } from 'vue-router';
@@ -19,10 +26,15 @@ import ArchitectureView from '../components/ArchitectureView.vue';
 import PlanResult from '../components/PlanResult.vue';
 import StatusBar from '../components/StatusBar.vue';
 import VersionList from '../components/VersionList.vue';
+import CodeEditor from '../components/CodeEditor.vue';
+import StructureEdit from '../components/StructureEdit.vue';
 import { useDeployFlow } from '../composables/useDeployFlow';
+import { useEditLock } from '../composables/useEditLock';
 import {
-  getApp, listVersions, getVersion, resolveAppUrl, safeHttpsUrl, AppDetail, VersionEntry, VersionDetail
+  getApp, listVersions, getVersion, resolveAppUrl, safeHttpsUrl, saveFiles, saveLayout,
+  AppDetail, VersionEntry, VersionDetail, AppFiles, Position
 } from '../utils/backend';
+import { appendLine } from '../utils/structure';
 import { mergeForDiff } from '../utils/graphDiff';
 import { APPS_ROUTE_NAME, PRODUCT_NAME, BLANK_CLUSTER } from '../config/laoban';
 
@@ -30,7 +42,7 @@ export default defineComponent({
   name: 'LaobanAppDetail',
 
   components: {
-    ArchitectureView, PlanResult, StatusBar, AppearanceMenu, VersionList
+    ArchitectureView, PlanResult, StatusBar, AppearanceMenu, VersionList, CodeEditor, StructureEdit
   },
 
   setup() {
@@ -51,6 +63,12 @@ export default defineComponent({
     const selectedCommit = ref<string | null>(null);
     const selectedVersion = ref<VersionDetail | null>(null);
     const compare = ref(true);
+    const tab = ref<'arch' | 'code'>('arch');
+    // Dragged but not yet saved positions, by node id.
+    const pending = ref<Record<string, Position>>({});
+    const selectedNode = ref<string | null>(null);
+    const editorReload = ref(0);
+    const editorDirty = ref(false);
 
     const name = computed(() => String(route.params.name || ''));
 
@@ -109,14 +127,24 @@ export default defineComponent({
 
     function reloadAll() {
       selectVersion(null);
+      pending.value = {};
+      editorReload.value++;
       load();
       loadVersions();
     }
 
-    const flow = useDeployFlow(store, t, { onReady: reloadAll });
+    const lock = useEditLock(store);
+    const flow = useDeployFlow(store, t, {
+      onReady: reloadAll, lockToken: lock.token, onError: lock.noteError
+    });
 
     const busy = computed(() => flow.busy.value || loading.value);
-    const canPlan = computed(() => !busy.value && !!detail.value && !!prompt.value.trim());
+    const canEdit = computed(() => lock.canEdit.value && !!detail.value);
+    const canPlan = computed(() => canEdit.value && !busy.value && !!prompt.value.trim());
+    const currentCommit = computed(() => versions.value.find((v) => v.current)?.commit || '');
+    // Only the latest version, as it is, can be rearranged.
+    const canArrange = computed(() => canEdit.value && !busy.value && !flow.plan.value && !selectedVersion.value && !selectedCommit.value);
+    const pendingCount = computed(() => Object.keys(pending.value).length);
     const appsRoute = { name: APPS_ROUTE_NAME, params: { product: PRODUCT_NAME, cluster: BLANK_CLUSTER } };
     const openLink = computed(() => resolveAppUrl(detail.value?.appUrl, window.location.origin));
     const sourceLink = computed(() => {
@@ -154,10 +182,67 @@ export default defineComponent({
     });
 
     function restore(commit: string) {
-      if (!busy.value && detail.value) {
+      if (!busy.value && canEdit.value && detail.value) {
         flow.restore(detail.value.appName, commit);
       }
     }
+
+    function onMove(id: string, pos: Position) {
+      if (canArrange.value) {
+        pending.value = { ...pending.value, [id]: pos };
+      }
+    }
+
+    function discardLayout() {
+      pending.value = {};
+    }
+
+    function saveLayoutNow() {
+      const app = detail.value?.appName;
+
+      if (!app || !pendingCount.value || !canArrange.value || !currentCommit.value) {
+        return;
+      }
+      const positions = { ...pending.value };
+
+      flow.publishDirect('layout', (timeoutMs, l) => saveLayout(store, app, currentCommit.value, positions, timeoutMs, l));
+    }
+
+    function saveCode(payload: { baseCommit: string; files: AppFiles; note: string }) {
+      const app = detail.value?.appName;
+
+      if (!app || !canEdit.value || busy.value) {
+        return;
+      }
+      flow.publishDirect('manual', (timeoutMs, l) => saveFiles(store, app, payload.baseCommit, payload.files, payload.note || t('laoban.editor.defaultNote'), timeoutMs, l));
+    }
+
+    function addStructure(line: string) {
+      prompt.value = appendLine(prompt.value, line);
+    }
+
+    function retryLock() {
+      if (name.value) {
+        lock.acquire(name.value);
+      }
+    }
+
+    const lockText = computed(() => {
+      switch (lock.state.value) {
+      case 'acquiring':
+        return t('laoban.lock.acquiring');
+      case 'held':
+        return t('laoban.lock.held', { name: lock.holder.value });
+      case 'other':
+        return `${ lock.otherMessage.value || t('laoban.lock.otherUnknown') } ${ t('laoban.lock.readOnly') }`;
+      case 'lost':
+        return t('laoban.lock.lost');
+      case 'error':
+        return t('laoban.lock.error');
+      default:
+        return '';
+      }
+    });
     const currentSteps = computed(() => (Array.isArray(detail.value?.steps) ? detail.value!.steps.map(String) : []));
 
     function generatePlan() {
@@ -172,17 +257,35 @@ export default defineComponent({
       return Number.isNaN(d.getTime()) ? at : d.toLocaleString();
     }
 
-    watch(name, () => {
+    watch(name, (n) => {
       flow.reset();
       prompt.value = '';
+      selectedNode.value = null;
+      tab.value = 'arch';
       reloadAll();
+      if (n) {
+        lock.acquire(n);
+      }
     });
+
+    // Leaving with unsaved code: the browser's own "leave page?" prompt.
+    function beforeUnload(ev: BeforeUnloadEvent) {
+      if (editorDirty.value || pendingCount.value) {
+        ev.preventDefault();
+      }
+    }
 
     onMounted(() => {
       flow.loadConfig();
       load();
       loadVersions();
+      if (name.value) {
+        lock.acquire(name.value);
+      }
+      window.addEventListener('beforeunload', beforeUnload);
     });
+
+    onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload));
 
     return {
       t,
@@ -212,6 +315,22 @@ export default defineComponent({
       currentSteps,
       generatePlan,
       formatTime,
+      lockState: lock.state,
+      lockText,
+      retryLock,
+      canEdit,
+      canArrange,
+      tab,
+      pending,
+      pendingCount,
+      selectedNode,
+      editorReload,
+      editorDirty,
+      onMove,
+      discardLayout,
+      saveLayoutNow,
+      saveCode,
+      addStructure,
     };
   },
 });
@@ -278,6 +397,28 @@ export default defineComponent({
     </p>
 
     <div
+      v-if="detail && lockText"
+      class="laoban-lock"
+      :class="`laoban-lock-${ lockState }`"
+      role="status"
+      data-testid="laoban-lock"
+    >
+      <i
+        :class="lockState === 'held' ? 'icon icon-edit' : 'icon icon-lock'"
+        aria-hidden="true"
+      />
+      <span>{{ lockText }}</span>
+      <button
+        v-if="lockState === 'other' || lockState === 'lost' || lockState === 'error'"
+        type="button"
+        class="btn btn-sm role-secondary"
+        @click="retryLock"
+      >
+        {{ t('laoban.lock.retry') }}
+      </button>
+    </div>
+
+    <div
       v-if="detail"
       class="laoban-work"
     >
@@ -300,7 +441,7 @@ export default defineComponent({
             rows="4"
             maxlength="4000"
             :placeholder="t('laoban.edit.promptPlaceholder')"
-            :disabled="busy"
+            :disabled="busy || !canEdit"
           />
           <button
             type="submit"
@@ -361,6 +502,7 @@ export default defineComponent({
             :loading="versionsLoading"
             :error="versionsError"
             :truncated="versionsTruncated"
+            :read-only="!canEdit"
             @select="selectVersion"
             @restore="restore"
           />
@@ -371,7 +513,51 @@ export default defineComponent({
         class="laoban-panel laoban-view"
         :aria-label="t('laoban.dashboard.arch.title')"
       >
-        <h2>{{ t('laoban.dashboard.arch.title') }}</h2>
+        <div
+          class="laoban-tabs"
+          role="tablist"
+        >
+          <button
+            v-for="k in ['arch', 'code']"
+            :key="k"
+            type="button"
+            role="tab"
+            class="laoban-tab"
+            :class="{ active: tab === k }"
+            :aria-selected="tab === k"
+            @click="tab = k"
+          >
+            {{ t(`laoban.detail.tabs.${ k }`) }}<span
+              v-if="k === 'code' && editorDirty"
+              aria-hidden="true"
+            > ●</span>
+          </button>
+        </div>
+        <div
+          v-show="tab === 'code'"
+          role="tabpanel"
+        >
+          <p
+            v-if="errorText"
+            class="laoban-error text-error"
+            role="alert"
+          >
+            {{ errorText }}
+          </p>
+          <CodeEditor
+            :app-name="detail.appName"
+            :editable="canEdit"
+            :busy="busy || phase === 'deploying'"
+            :reload-key="editorReload"
+            @save="saveCode"
+            @dirty="editorDirty = $event"
+          />
+        </div>
+        <div
+          v-show="tab === 'arch'"
+          role="tabpanel"
+          class="laoban-arch-panel"
+        >
         <div class="laoban-view-head">
           <p class="text-muted laoban-hint">
             {{ view.hint }}
@@ -401,11 +587,45 @@ export default defineComponent({
         >
           {{ selectedVersion.summary }}
         </p>
+        <div
+          v-if="canArrange && pendingCount"
+          class="laoban-layout-bar"
+        >
+          <span>{{ t('laoban.layout.moved', { count: pendingCount }) }}</span>
+          <button
+            type="button"
+            class="btn btn-sm role-secondary"
+            @click="discardLayout"
+          >
+            {{ t('laoban.layout.discard') }}
+          </button>
+          <button
+            type="button"
+            class="btn btn-sm role-primary"
+            @click="saveLayoutNow"
+          >
+            {{ t('laoban.layout.save') }}
+          </button>
+        </div>
         <ArchitectureView
           v-if="view.architecture"
           :architecture="view.architecture"
           :diff="view.diff"
+          :positions="canArrange ? pending : null"
+          :editable="canArrange"
+          :selected="selectedNode"
+          @move="onMove"
+          @select="selectedNode = $event"
         />
+        <StructureEdit
+          v-if="canEdit && !selectedCommit"
+          :architecture="detail.architecture"
+          :selected="selectedNode"
+          :disabled="busy || !!plan"
+          @add="addStructure"
+          @select="selectedNode = $event"
+        />
+        </div>
       </section>
     </div>
 
@@ -463,6 +683,67 @@ export default defineComponent({
   gap: 6px 12px;
   align-items: center;
   margin-bottom: 6px;
+}
+
+.laoban-lock {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--primary);
+  border-radius: var(--border-radius);
+  font-size: 13px;
+
+  &.laoban-lock-other,
+  &.laoban-lock-lost,
+  &.laoban-lock-error {
+    border-left-color: var(--warning);
+  }
+}
+
+.laoban-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.laoban-tab {
+  background: none;
+  border: none;
+  border-bottom: 3px solid transparent;
+  padding: 6px 12px;
+  color: var(--body-text);
+  font-weight: bold;
+  cursor: pointer;
+
+  &.active {
+    border-bottom-color: var(--primary);
+    color: var(--link);
+  }
+}
+
+.laoban-arch-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.laoban-layout-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+  font-size: 12px;
+
+  span {
+    margin-right: auto;
+  }
 }
 
 .laoban-compare {

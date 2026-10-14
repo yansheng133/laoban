@@ -48,7 +48,10 @@ fn happy_path_plan_then_apply() {
 
     let plan = h
         .service
-        .plan(&plan_req("做一個早餐店點餐頁面，可以選餐點和送出訂單"))
+        .plan(
+            &plan_req("做一個早餐店點餐頁面，可以選餐點和送出訂單"),
+            None,
+        )
         .unwrap();
     let id = plan_id(&plan);
     assert!(id.starts_with("p-") && id.len() == 17, "{id}");
@@ -94,7 +97,7 @@ fn happy_path_plan_then_apply() {
     assert_eq!(nodes[7]["props"]["storage"], "memory");
     assert_eq!(plan["architecture"]["edges"].as_array().unwrap().len(), 4);
 
-    let mut applied = h.service.apply(&apply_req(&id)).unwrap();
+    let mut applied = h.service.apply(&apply_req(&id), None).unwrap();
     let rollout = applied.as_object_mut().unwrap().remove("rollout").unwrap();
     assert_eq!(
         applied,
@@ -225,9 +228,9 @@ fn apply_twice_is_409() {
         .then(ok(&plan_json()))
         .then(ok(&files_json()));
     let h = harness(provider, RefUpdate::Ok, 1_000_000);
-    let id = plan_id(&h.service.plan(&plan_req("x 需求")).unwrap());
-    h.service.apply(&apply_req(&id)).unwrap();
-    let err = h.service.apply(&apply_req(&id)).unwrap_err();
+    let id = plan_id(&h.service.plan(&plan_req("x 需求"), None).unwrap());
+    h.service.apply(&apply_req(&id), None).unwrap();
+    let err = h.service.apply(&apply_req(&id), None).unwrap_err();
     assert!(matches!(err, M0Error::AlreadyApplied), "{err:?}");
     assert_eq!((err.status(), err.code()), (409, "already_applied"));
     assert_eq!(h.provider.call_count(), 2, "no third AI call");
@@ -246,7 +249,7 @@ fn unknown_plan_is_404() {
     let h = harness(MockProvider::new(), RefUpdate::Ok, 1_000_000);
     let err = h
         .service
-        .apply(&apply_req("p-20261013-abcdef"))
+        .apply(&apply_req("p-20261013-abcdef"), None)
         .unwrap_err();
     assert_eq!((err.status(), err.code()), (404, "plan_not_found"));
     assert_eq!(h.provider.call_count(), 0);
@@ -261,12 +264,12 @@ fn extra_file_key_is_502_and_nothing_is_committed() {
         .then(ok(&extra.to_string()))
         .then(ok(&files_json()));
     let h = harness(provider, RefUpdate::Ok, 1_000_000);
-    let id = plan_id(&h.service.plan(&plan_req("x 需求")).unwrap());
-    let err = h.service.apply(&apply_req(&id)).unwrap_err();
+    let id = plan_id(&h.service.plan(&plan_req("x 需求"), None).unwrap());
+    let err = h.service.apply(&apply_req(&id), None).unwrap_err();
     assert_eq!((err.status(), err.code()), (502, "ai_invalid_output"));
     assert_eq!(writes(&h.github), 0);
     // A failed apply can be retried.
-    assert!(h.service.apply(&apply_req(&id)).is_ok());
+    assert!(h.service.apply(&apply_req(&id), None).is_ok());
 }
 
 #[test]
@@ -277,8 +280,8 @@ fn extra_top_level_key_is_502() {
         .then(ok(&plan_json()))
         .then(ok(&extra.to_string()));
     let h = harness(provider, RefUpdate::Ok, 1_000_000);
-    let id = plan_id(&h.service.plan(&plan_req("x 需求")).unwrap());
-    let err = h.service.apply(&apply_req(&id)).unwrap_err();
+    let id = plan_id(&h.service.plan(&plan_req("x 需求"), None).unwrap());
+    let err = h.service.apply(&apply_req(&id), None).unwrap_err();
     assert_eq!(err.code(), "ai_invalid_output");
     assert_eq!(writes(&h.github), 0);
 }
@@ -291,8 +294,8 @@ fn oversize_file_is_502() {
         .then(ok(&plan_json()))
         .then(ok(&big.to_string()));
     let h = harness(provider, RefUpdate::Ok, 1_000_000);
-    let id = plan_id(&h.service.plan(&plan_req("x 需求")).unwrap());
-    let err = h.service.apply(&apply_req(&id)).unwrap_err();
+    let id = plan_id(&h.service.plan(&plan_req("x 需求"), None).unwrap());
+    let err = h.service.apply(&apply_req(&id), None).unwrap_err();
     assert_eq!((err.status(), err.code()), (502, "ai_invalid_output"));
     assert_eq!(writes(&h.github), 0);
 }
@@ -305,7 +308,7 @@ fn spend_limit_is_402_and_not_retried() {
             message: "You have reached your specified API usage limits".into(),
         }));
         let h = harness(provider, RefUpdate::Ok, 1_000_000);
-        let err = h.service.plan(&plan_req("x 需求")).unwrap_err();
+        let err = h.service.plan(&plan_req("x 需求"), None).unwrap_err();
         assert_eq!((err.status(), err.code()), (402, "spend_limit"));
         assert_eq!(h.provider.call_count(), 1, "provider called exactly once");
     }
@@ -318,7 +321,7 @@ fn budget_exceeded_is_429_before_provider_call() {
         RefUpdate::Ok,
         100,
     );
-    let err = h.service.plan(&plan_req("x 需求")).unwrap_err();
+    let err = h.service.plan(&plan_req("x 需求"), None).unwrap_err();
     assert_eq!((err.status(), err.code()), (429, "budget_exceeded"));
     assert_eq!(h.provider.call_count(), 0);
 }
@@ -331,9 +334,9 @@ fn national_id_never_reaches_provider_or_readme() {
         .then(ok(&files_json()));
     let h = harness(provider, RefUpdate::Ok, 1_000_000);
     let prompt = format!("做一個會員查詢頁，測試帳號的身分證字號是 {id_number}。");
-    let plan = h.service.plan(&plan_req(&prompt)).unwrap();
+    let plan = h.service.plan(&plan_req(&prompt), None).unwrap();
     assert_eq!(plan["maskedFindings"], 1);
-    h.service.apply(&apply_req(&plan_id(&plan))).unwrap();
+    h.service.apply(&apply_req(&plan_id(&plan)), None).unwrap();
 
     for req in h.provider.received() {
         let all = format!("{}{}", req.system, req.messages[0].content);
@@ -355,8 +358,8 @@ fn stale_ref_is_github_failed_without_retry() {
             .then(ok(&plan_json()))
             .then(ok(&files_json()));
         let h = harness(provider, RefUpdate::Status(status), 1_000_000);
-        let id = plan_id(&h.service.plan(&plan_req("x 需求")).unwrap());
-        let err = h.service.apply(&apply_req(&id)).unwrap_err();
+        let id = plan_id(&h.service.plan(&plan_req("x 需求"), None).unwrap());
+        let err = h.service.apply(&apply_req(&id), None).unwrap_err();
         assert_eq!((err.status(), err.code()), (502, "github_failed"));
         assert!(!format!("{err} {err:?}").contains(GH_TOKEN));
         let patches = h
@@ -381,7 +384,7 @@ fn bad_requests() {
             base_app: None,
         },
     ] {
-        let err = h.service.plan(&body).unwrap_err();
+        let err = h.service.plan(&body, None).unwrap_err();
         assert_eq!((err.status(), err.code()), (400, "bad_request"));
     }
     assert_eq!(h.provider.call_count(), 0);
@@ -393,11 +396,14 @@ fn user_app_name_wins_and_invalid_ai_name_is_502() {
     let h = harness(provider, RefUpdate::Ok, 1_000_000);
     let plan = h
         .service
-        .plan(&PlanRequestBody {
-            prompt: "x 需求".into(),
-            app_name: Some("my-shop".into()),
-            base_app: None,
-        })
+        .plan(
+            &PlanRequestBody {
+                prompt: "x 需求".into(),
+                app_name: Some("my-shop".into()),
+                base_app: None,
+            },
+            None,
+        )
         .unwrap();
     assert_eq!(plan["appName"], "my-shop");
     assert_eq!(plan["architecture"]["nodes"][0]["name"], "my-shop-web");
@@ -409,7 +415,7 @@ fn user_app_name_wins_and_invalid_ai_name_is_502() {
         RefUpdate::Ok,
         1_000_000,
     );
-    let err = h.service.plan(&plan_req("x 需求")).unwrap_err();
+    let err = h.service.plan(&plan_req("x 需求"), None).unwrap_err();
     assert_eq!(err.code(), "ai_invalid_output");
 }
 
@@ -421,7 +427,7 @@ fn malformed_plan_is_502() {
         json!({"appName":"ab","summary":"s","steps":["a"],"components":{"web":{},"api":{"endpoints":[{"method":"TRACE","path":"/x"}]}}}).to_string(),
     ] {
         let h = harness(MockProvider::new().then(ok(&content)), RefUpdate::Ok, 1_000_000);
-        let err = h.service.plan(&plan_req("x 需求")).unwrap_err();
+        let err = h.service.plan(&plan_req("x 需求"), None).unwrap_err();
         assert_eq!(err.code(), "ai_invalid_output", "{content}");
     }
 }

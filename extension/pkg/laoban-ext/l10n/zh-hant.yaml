@@ -44,6 +44,9 @@ laoban:
     loading: 讀取中…
     changeTitle: 修改這個應用
     currentSteps: 目前的建置步驟
+    tabs:
+      arch: 架構圖
+      code: 程式碼
   appearance:
     theme: 外觀
     themes:
@@ -65,6 +68,8 @@ laoban:
       edit: 修改
       restore: 還原
       commit: 其他變更
+      manual: 手動修改
+      layout: 調整版面
     view: 查看
     viewCurrent: 目前版本
     restore: 還原到這一版
@@ -78,6 +83,80 @@ laoban:
     hintPlan: 修改計畫與目前版本的差異：標示的是部署後會新增、刪除、修改的部分。
     hintCompare: "第 {n} 版與目前版本的差異：標示的是還原到第 {n} 版後會新增、刪除、修改的部分。"
     hintVersion: "第 {n} 版的架構。"
+  lock:
+    acquiring: 正在取得編輯權…
+    held: "你（{name}）正在編輯這個應用，其他人只能看。離開頁面或 3 分鐘沒有動作後會自動放開。"
+    otherUnknown: 其他人正在編輯這個應用。
+    readOnly: 目前只能看，不能修改。
+    lost: 編輯權已失效（閒置太久，或在其他分頁打開了這個應用）。目前只能看。
+    error: 無法取得編輯權，目前只能看。
+    retry: 重新取得編輯權
+  editor:
+    hint: 直接修改這四個檔案。儲存後會成為新的一版（標記「手動修改」）並由 Fleet 部署，不呼叫 AI；儲存前會做和 AI 產生的程式一樣的檢查。
+    files: 檔案
+    changedFile: 已修改
+    note: 這次改了什麼（選填）
+    notePlaceholder: 例如：改標題文字
+    defaultNote: 手動修改程式
+    changed: "已修改 {count} 個檔案"
+    unchanged: 還沒有修改。
+    discard: 放棄修改
+    reload: 重新讀取
+    save: 儲存成新版本
+    saving: "正在檢查並寫進 GitHub（不呼叫 AI，已 {seconds} 秒）…"
+  layout:
+    dragHint: 拖曳元件可以移動位置，拖曳空白處旋轉，滾輪縮放；點元件可以選取。
+    moved: "已移動 {count} 個元件（尚未儲存）"
+    discard: 還原位置
+    save: 儲存版面
+  structure:
+    title: 改結構
+    hint: 這裡的變更會寫進左邊的「要怎麼修改」，再按「產生修改計畫」由 AI 依新結構修改程式，確認後才部署。
+    select: 模組
+    none: 在 3D 圖點選，或從這裡選一個模組
+    renameTo: 新名稱
+    rename: 改名
+    connectTo: 要連到…
+    connect: 新增連線
+    delete: 刪除這個模組
+    addTo: 新增到
+    addName: 新模組名稱
+    addPurpose: 用途（選填）
+    add: 新增模組
+    parts:
+      web: 網頁（web）
+      api: API（api）
+    addKind:
+      database: 新增資料庫
+      queue: 新增訊息佇列
+      ingress: 新增 Ingress
+    unsupported: 試吃版不支援
+    lines:
+      rename: "把模組「{from}」改名為「{to}」。"
+      delete: "刪除模組「{name}」以及只有它用到的程式。"
+      connect: "讓「{from}」呼叫「{to}」。"
+      add: "在{part}新增模組「{name}」。"
+      addWithPurpose: "在{part}新增模組「{name}」，用途：{purpose}。"
+  kinds:
+    title: 元件種類（七類）
+    ingress: Ingress
+    service: 網路服務
+    netpol: 網路政策
+    app: 程式
+    module: 程式模組
+    database: 資料庫
+    table: 資料表
+    queue: 訊息佇列
+    external: 外部相依服務
+    storage: 儲存空間
+    shape:
+      app: 方塊，在程式層
+      service: 圓柱，在網路層
+      database: 高圓柱，在資料層
+      ingress: 八面體，在網路層
+      external: 十二面體，在程式層
+      storage: 扁六角柱，在資料層
+      queue: 膠囊，在資料層
   diff:
     added: "新增 {count}"
     removed: "刪除 {count}"

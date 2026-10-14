@@ -23,7 +23,17 @@ jobs:
           grep PRETTY_NAME /etc/os-release
           cargo --version && cargo fmt --version && cargo clippy --version
       - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
+      # Findings are also written as annotations, readable without the
+      # job log.
+      - name: cargo clippy
+        shell: bash
+        run: |
+          set -o pipefail
+          if ! cargo clippy --workspace --all-targets --message-format=short -- -D warnings 2>&1 | tee clippy.txt; then
+            grep -E '^[^ ]+:[0-9]+:[0-9]+: (error|warning)' clippy.txt \
+              | sed -E 's/^([^:]+):([0-9]+):([0-9]+): (.*)$/::error file=\1,line=\2,col=\3::\4/' || true
+            exit 1
+          fi
       - run: cargo test --workspace
 
   viewer:

@@ -133,7 +133,18 @@ fn edit_plan_then_apply() {
         .then(ok(&new_files.to_string()));
     let h = harness_with(provider, RefUpdate::Ok, 1_000_000, apps());
 
-    let plan = h.service.plan(&edit_req("加上飲料", "breakfast")).unwrap();
+    // Without the edit lock nothing happens.
+    let err = h
+        .service
+        .plan(&edit_req("加上飲料", "breakfast"), None)
+        .unwrap_err();
+    assert_eq!((err.status(), err.code()), (409, "lock_required"));
+    assert_eq!(h.provider.call_count(), 0);
+    let token = lock(&h, "breakfast");
+    let plan = h
+        .service
+        .plan(&edit_req("加上飲料", "breakfast"), Some(&token))
+        .unwrap();
     assert_eq!(plan["mode"], "edit");
     assert_eq!(plan["appName"], "breakfast");
     let sent = h.provider.received();
@@ -143,7 +154,10 @@ fn edit_plan_then_apply() {
     assert!(sent[0].system.contains("existing application"));
 
     let id = plan["planId"].as_str().unwrap().to_string();
-    let applied = h.service.apply(&ApplyRequest { plan_id: id }).unwrap();
+    let applied = h
+        .service
+        .apply(&ApplyRequest { plan_id: id }, Some(&token))
+        .unwrap();
     assert_eq!(applied["mode"], "edit");
     assert_eq!(applied["appName"], "breakfast");
 
@@ -176,17 +190,23 @@ fn edit_plan_then_apply() {
 #[test]
 fn edit_errors() {
     let h = harness_with(MockProvider::new(), RefUpdate::Ok, 1_000_000, apps());
-    let err = h.service.plan(&edit_req("x", "legacy-shop")).unwrap_err();
+    let err = h
+        .service
+        .plan(&edit_req("x", "legacy-shop"), None)
+        .unwrap_err();
     assert_eq!(err.code(), "not_editable");
-    let err = h.service.plan(&edit_req("x", "nope")).unwrap_err();
+    let err = h.service.plan(&edit_req("x", "nope"), None).unwrap_err();
     assert_eq!(err.code(), "app_not_found");
     let err = h
         .service
-        .plan(&PlanRequestBody {
-            prompt: "x".into(),
-            app_name: Some("other".into()),
-            base_app: Some("breakfast".into()),
-        })
+        .plan(
+            &PlanRequestBody {
+                prompt: "x".into(),
+                app_name: Some("other".into()),
+                base_app: Some("breakfast".into()),
+            },
+            None,
+        )
         .unwrap_err();
     assert_eq!(err.code(), "bad_request");
     assert_eq!(h.provider.call_count(), 0);
@@ -212,7 +232,11 @@ fn edit_refused_when_code_is_too_large() {
         1_000_000,
         vec![("big".into(), Some(meta))],
     );
-    let err = h.service.plan(&edit_req("x", "big")).unwrap_err();
+    let token = lock(&h, "big");
+    let err = h
+        .service
+        .plan(&edit_req("x", "big"), Some(&token))
+        .unwrap_err();
     assert_eq!(err.code(), "bad_request");
     assert_eq!(h.provider.call_count(), 0);
 }
@@ -223,7 +247,7 @@ fn new_app_with_taken_name() {
     let h = harness_with(MockProvider::new(), RefUpdate::Ok, 1_000_000, apps());
     let err = h
         .service
-        .plan(&new_req("x", Some("breakfast")))
+        .plan(&new_req("x", Some("breakfast")), None)
         .unwrap_err();
     assert_eq!((err.status(), err.code()), (409, "app_exists"));
     assert!(err.user_message().contains("breakfast"));
@@ -233,7 +257,7 @@ fn new_app_with_taken_name() {
     // Chosen by the AI: a free variant is used.
     let provider = MockProvider::new().then(ok(&plan_json()));
     let h = harness_with(provider, RefUpdate::Ok, 1_000_000, apps());
-    let plan = h.service.plan(&new_req("x", None)).unwrap();
+    let plan = h.service.plan(&new_req("x", None), None).unwrap();
     assert_eq!(plan["mode"], "create");
     assert_eq!(plan["appName"], "breakfast-2");
 }
@@ -374,9 +398,14 @@ fn restore_publishes_an_old_version_without_ai() {
         apps,
         versions,
     );
+    let token = lock(&h, "todo");
     let out = h
         .service
-        .restore("todo", &laoban_m0::RestoreRequest { commit: V1.into() })
+        .restore(
+            "todo",
+            &laoban_m0::RestoreRequest { commit: V1.into() },
+            Some(&token),
+        )
         .unwrap();
     assert_eq!(out["mode"], "restore");
     assert_eq!(out["appName"], "todo");
@@ -420,7 +449,21 @@ fn restore_refuses_the_current_content_and_bad_input() {
     );
     let err = h
         .service
-        .restore("todo", &laoban_m0::RestoreRequest { commit: V2.into() })
+        .restore(
+            "todo",
+            &laoban_m0::RestoreRequest { commit: V1.into() },
+            None,
+        )
+        .unwrap_err();
+    assert_eq!(err.code(), "lock_required");
+    let token = lock(&h, "todo");
+    let err = h
+        .service
+        .restore(
+            "todo",
+            &laoban_m0::RestoreRequest { commit: V2.into() },
+            Some(&token),
+        )
         .unwrap_err();
     assert_eq!(err.code(), "bad_request");
     for (app, commit, code) in [
@@ -439,9 +482,196 @@ fn restore_refuses_the_current_content_and_bad_input() {
                 &laoban_m0::RestoreRequest {
                     commit: commit.into(),
                 },
+                Some(&token),
             )
             .unwrap_err();
         assert_eq!(err.code(), code, "{app} {commit}");
     }
     assert_eq!(writes(&h.github), 0);
+}
+
+fn todo_harness() -> Harness {
+    let (apps, versions) = todo_versions();
+    harness_versions(
+        MockProvider::new(),
+        RefUpdate::Ok,
+        1_000_000,
+        apps,
+        versions,
+    )
+}
+
+fn save_files(
+    h: &Harness,
+    files: Value,
+    base: &str,
+    token: Option<&str>,
+) -> Result<Value, laoban_m0::M0Error> {
+    h.service.save_files(
+        "todo",
+        &laoban_m0::SaveFilesRequest {
+            base_commit: base.into(),
+            files,
+            note: Some("改標題".into()),
+        },
+        token,
+    )
+}
+
+#[test]
+fn edit_lock_is_one_person_at_a_time() {
+    let h = todo_harness();
+    let token = lock(&h, "todo");
+    assert_eq!(
+        h.service.get_app("todo").unwrap()["lock"]["holder"],
+        "tester"
+    );
+    let err = h
+        .service
+        .lock(
+            "todo",
+            &laoban_m0::LockRequest {
+                holder: "someone".into(),
+            },
+        )
+        .unwrap_err();
+    assert_eq!((err.status(), err.code()), (409, "locked"));
+    assert!(err.user_message().contains("tester"));
+    // Wrong token: refused, naming the holder.
+    let err = save_files(&h, files_value(), V2, Some("00ff")).unwrap_err();
+    assert_eq!(err.code(), "locked");
+    h.service.renew_lock("todo", Some(&token)).unwrap();
+    h.service.unlock("todo", Some(&token)).unwrap();
+    assert!(h.service.get_app("todo").unwrap()["lock"].is_null());
+    assert!(h
+        .service
+        .lock(
+            "todo",
+            &laoban_m0::LockRequest {
+                holder: "someone".into()
+            }
+        )
+        .is_ok());
+    let err = h
+        .service
+        .lock("nope", &laoban_m0::LockRequest { holder: "x".into() })
+        .unwrap_err();
+    assert_eq!(err.code(), "app_not_found");
+    assert_eq!(writes(&h.github), 0);
+}
+
+#[test]
+fn files_read_and_manual_save_without_ai() {
+    let h = todo_harness();
+    let v = h.service.files("todo").unwrap();
+    assert_eq!(v["commit"], V2);
+    assert!(v["files"]["api"]["handler.py"]
+        .as_str()
+        .unwrap()
+        .contains("DRINKS"));
+
+    let token = lock(&h, "todo");
+    let mut files = v["files"].clone();
+    files["web"]["index.html"] = json!("<!doctype html><title>新標題</title>\n");
+    let out = save_files(&h, files, V2, Some(&token)).unwrap();
+    assert_eq!(out["appName"], "todo");
+    assert_eq!(h.provider.call_count(), 0, "no AI call");
+    let blobs = blob_contents(&h.github);
+    let m = meta::parse("todo", &blobs[6]).unwrap();
+    assert!(m.files.index_html.contains("新標題"));
+    assert!(
+        m.plan.web_modules.iter().any(|x| x.name == "drinks"),
+        "plan unchanged"
+    );
+    let last = m.history.last().unwrap();
+    assert_eq!(
+        (last.kind.as_str(), last.request.as_str()),
+        ("manual", "改標題")
+    );
+    assert_eq!(last.model, "");
+}
+
+#[test]
+fn manual_save_checks() {
+    let h = todo_harness();
+    let token = lock(&h, "todo");
+    let current = h.service.files("todo").unwrap()["files"].clone();
+    // Same as now.
+    let err = save_files(&h, current.clone(), V2, Some(&token)).unwrap_err();
+    assert_eq!(err.code(), "bad_request");
+    // Someone saved in between.
+    let mut changed = current.clone();
+    changed["web"]["style.css"] = json!("body { color: red; }\n");
+    let err = save_files(&h, changed, V1, Some(&token)).unwrap_err();
+    assert_eq!((err.status(), err.code()), (409, "version_conflict"));
+    // Same checks as AI output.
+    let mut bad = current.clone();
+    bad["api"]["handler.py"] = json!("print('hi')\n");
+    let err = save_files(&h, bad, V2, Some(&token)).unwrap_err();
+    assert_eq!(err.code(), "invalid_files");
+    assert!(err.user_message().contains("handle("));
+    let mut big = current.clone();
+    big["web"]["app.js"] = json!("a".repeat(70 * 1024));
+    let err = save_files(&h, big, V2, Some(&token)).unwrap_err();
+    assert!(err.user_message().contains("太大"));
+    let mut extra = current;
+    extra["web"]["x.js"] = json!("");
+    assert_eq!(
+        save_files(&h, extra, V2, Some(&token)).unwrap_err().code(),
+        "invalid_files"
+    );
+    assert_eq!(writes(&h.github), 0);
+}
+
+#[test]
+fn layout_save_is_a_new_version_and_shows_in_the_architecture() {
+    let h = todo_harness();
+    let token = lock(&h, "todo");
+    let positions: meta::Layout =
+        serde_json::from_value(json!({"mod-web-drinks": {"x": 7.5, "z": -3}})).unwrap();
+    let req = |positions: meta::Layout, base: &str| laoban_m0::SaveLayoutRequest {
+        base_commit: base.into(),
+        positions,
+    };
+    let err = h
+        .service
+        .save_layout("todo", &req(positions.clone(), V2), None)
+        .unwrap_err();
+    assert_eq!(err.code(), "locked", "held by someone, no token sent");
+    let bad: meta::Layout =
+        serde_json::from_value(json!({"no-such-node": {"x": 1, "z": 1}})).unwrap();
+    assert_eq!(
+        h.service
+            .save_layout("todo", &req(bad, V2), Some(&token))
+            .unwrap_err()
+            .code(),
+        "bad_request"
+    );
+    assert_eq!(
+        h.service
+            .save_layout("todo", &req(positions.clone(), V1), Some(&token))
+            .unwrap_err()
+            .code(),
+        "version_conflict"
+    );
+
+    h.service
+        .save_layout("todo", &req(positions, V2), Some(&token))
+        .unwrap();
+    assert_eq!(h.provider.call_count(), 0);
+    let blobs = blob_contents(&h.github);
+    let m = meta::parse("todo", &blobs[6]).unwrap();
+    let p = m.layout["mod-web-drinks"];
+    assert_eq!((p.x, p.z), (7.5, -3.0));
+    assert_eq!(m.history.last().unwrap().kind, "layout");
+
+    let arch = laoban_m0::plan::architecture_with_layout(&m.plan, "todo", &m.layout);
+    let node = arch["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["id"] == "mod-web-drinks")
+        .unwrap()
+        .clone();
+    assert_eq!(node["pos"], json!({"x": 7.5, "z": -3.0}));
 }
