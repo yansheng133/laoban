@@ -12,7 +12,7 @@ pub const PLAN_TTL: Duration = Duration::from_secs(60 * 60);
 pub const MAX_PLANS: usize = 20;
 
 /// What apply needs from the plan step. Holds only masked user text.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct StoredPlan {
     pub id: String,
     pub app: String,
@@ -24,10 +24,12 @@ pub struct StoredPlan {
 }
 
 /// The existing app a plan changes, as read when the plan was made.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BaseApp {
     pub files: GeneratedFiles,
     pub history: Vec<HistoryEntry>,
+    /// Dragged 3D positions, carried over to the new version.
+    pub layout: crate::meta::Layout,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

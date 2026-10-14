@@ -7,6 +7,8 @@
 //! short history of (masked) requests. Fleet is told to skip it with a
 //! `.fleetignore` in the same directory.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -34,13 +36,38 @@ pub struct HistoryEntry {
     pub model: String,
 }
 
+/// A 3D position on the layer plane, set by dragging in the page.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Pos {
+    pub x: f64,
+    pub z: f64,
+}
+
+/// Largest coordinate accepted (same bound as the page's layout code).
+pub const MAX_COORD: f64 = 100.0;
+/// Most positions kept.
+pub const MAX_LAYOUT_ENTRIES: usize = 100;
+
+/// Node id to dragged position. Applied over the computed layout.
+pub type Layout = BTreeMap<String, Pos>;
+
+impl Pos {
+    pub fn valid(&self) -> bool {
+        self.x.is_finite()
+            && self.z.is_finite()
+            && self.x.abs() <= MAX_COORD
+            && self.z.abs() <= MAX_COORD
+    }
+}
+
 /// An app read back from the repository.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AppMeta {
     pub app: String,
     pub plan: AppPlan,
     pub files: GeneratedFiles,
     pub history: Vec<HistoryEntry>,
+    pub layout: Layout,
 }
 
 impl AppMeta {
@@ -56,14 +83,28 @@ pub fn to_json(
     files: &GeneratedFiles,
     history: &[HistoryEntry],
 ) -> String {
+    to_json_with_layout(app, plan, files, history, &Layout::new())
+}
+
+/// [`to_json`] plus dragged 3D positions (omitted when empty).
+pub fn to_json_with_layout(
+    app: &str,
+    plan: &AppPlan,
+    files: &GeneratedFiles,
+    history: &[HistoryEntry],
+    layout: &Layout,
+) -> String {
     let start = history.len().saturating_sub(MAX_HISTORY);
-    let v = json!({
+    let mut v = json!({
         "schema": SCHEMA,
         "appName": app,
         "plan": plan.to_codegen_json(app),
         "files": files.to_json(),
         "history": &history[start..],
     });
+    if !layout.is_empty() {
+        v["layout"] = json!(layout);
+    }
     let mut s = serde_json::to_string_pretty(&v).unwrap_or_default();
     s.push('\n');
     s
@@ -78,6 +119,8 @@ struct RawMeta {
     files: Value,
     #[serde(default)]
     history: Vec<HistoryEntry>,
+    #[serde(default)]
+    layout: Layout,
 }
 
 /// Parse `laoban.json` for `app`. Anything unexpected is rejected.
@@ -98,11 +141,19 @@ pub fn parse(app: &str, text: &str) -> Result<AppMeta, InvalidOutput> {
     let mut history = raw.history;
     let start = history.len().saturating_sub(MAX_HISTORY);
     history.drain(..start);
+    // Positions are display hints: drop anything out of bounds.
+    let layout: Layout = raw
+        .layout
+        .into_iter()
+        .filter(|(id, p)| p.valid() && id.len() <= 100)
+        .take(MAX_LAYOUT_ENTRIES)
+        .collect();
     Ok(AppMeta {
         app: app.to_string(),
         plan,
         files,
         history,
+        layout,
     })
 }
 
@@ -151,6 +202,21 @@ mod tests {
         assert_eq!(m.files, files());
         assert_eq!(m.history.len(), 2);
         assert_eq!(m.updated_at(), "2026-10-13T00:00:01Z");
+    }
+
+    #[test]
+    fn layout_round_trip_and_bad_positions_dropped() {
+        let mut layout = Layout::new();
+        layout.insert("app-web".into(), Pos { x: 1.5, z: -2.0 });
+        let text = to_json_with_layout("todo", &plan(), &files(), &[entry(0)], &layout);
+        assert_eq!(parse("todo", &text).unwrap().layout, layout);
+        let mut v: Value = serde_json::from_str(&text).unwrap();
+        v["layout"]["far"] = json!({"x": 1000.0, "z": 0.0});
+        assert_eq!(parse("todo", &v.to_string()).unwrap().layout, layout);
+        // No layout key at all is an empty layout.
+        let plain = to_json("todo", &plan(), &files(), &[entry(0)]);
+        assert!(!plain.contains("\"layout\""));
+        assert!(parse("todo", &plain).unwrap().layout.is_empty());
     }
 
     #[test]
