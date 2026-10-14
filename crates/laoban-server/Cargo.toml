@@ -23,4 +23,4 @@ signal-hook = { version = "0.4", default-features = false, features = ["iterator
 libc = "0.2"
 laoban-mockhttp = { path = "../laoban-mockhttp" }
 # Test certificates for the TLS port.
-rcgen = "0.13"
+rcgen = "0.14"
