@@ -64,6 +64,7 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 }
 ```
 
+- 端點路徑是 API 程式（`handler.handle()`）看到的路徑；AI 寫成 `/api/orders` 這種瀏覽器端路徑時，後端會去掉開頭的 `/api`（實測本機模型偶爾會這樣寫，與它產生的程式不一致）。
 - `architecture` 用 `web/viewer-prototype/graph-diff.mjs` 的模型：`node = {id, layer: network|code|data, kind, name, detail: 1..3, parent?, props?, pos:{x,z}}`，`edge = {from, to, kind, label?}`。
 - 試吃版的架構固定是：network 層一個 `service` web、一個 `service` api；code 層一個 `app` web、一個 `app` api，各自可以有 `module`（detail 3）；data 層在 M0 可以有一個 `table` 代表 API 的記憶體資料（`props.storage: "memory"`）。AI 只決定名稱、模組、說明和連線標籤；**位置由後端依層與順序排**，不信任 AI 給的座標。
 - 計畫存在後端記憶體（以 `planId` 為鍵，保留 1 小時，最多 20 筆）。後端重啟就消失，可以接受。
@@ -84,7 +85,8 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 }
 ```
 
-- 同一個 `planId` 只能 apply 一次（第二次回 `409`）。
+- 同一個 `planId` 只能成功 apply 一次（成功後再送回 `409`）；apply 失敗（例如 `ai_invalid_output`）時可以用同一個 `planId` 重送，不必重新產生計畫。
+- 回應的 `rollout` 列出兩個 Deployment：`{deployment, path, contentHash}`，`path` 是經 Rancher 代理讀這個 Deployment 的 Steve 路徑，`contentHash` 是它的 Pod 範本該有的 `laoban.io/content-hash`。頁面在 Fleet Bundle 就緒之後，還會確認兩個 Deployment 都已換成這個範本、舊 Pod 都已退場，才顯示「打開應用」（實測曾遇到 Bundle 先報就緒、新 Pod 一分鐘後才起來）。
 - 回應多 `mode` 與 `appName`。新應用在 commit 前再確認一次名稱沒被占用。修改現有應用時，產生程式那一步另外帶 `current_code` 資料區塊（目前的四個檔案），要求在保留其餘行為的前提下改出完整的四個檔案。
 
 ### `GET /api/apps`
@@ -95,9 +97,21 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 
 `{appName, summary, steps, architecture, updatedAt, history, appUrl, path, fleet}`，`history` 新的在前，每筆 `{at, kind: create|edit, request, summary, model}`（文字都已遮蔽）。不存在回 `404 app_not_found`；沒有 `laoban.json` 回 `409 not_editable`。
 
+
+### `GET /api/apps/<appName>/versions`
+
+每一版就是改到該應用 `laoban.json` 的一個 commit（GitHub commits API），新的在前，最多 50 版：`{appName, versions: [{version, commit, commitUrl, at, kind: create|edit|restore|commit, request, summary, model, current}], truncated}`。需求、摘要、模型取自目前 `laoban.json` 的紀錄（最新的紀錄對應最新的 commit）；對不上時用 commit 訊息。
+
+### `GET /api/apps/<appName>/versions/<commit>`
+
+那一版的 `{appName, commit, summary, steps, architecture, updatedAt}`（讀那個 commit 的 `laoban.json`；不含程式）。`commit` 必須是完整 SHA；找不到回 `404 version_not_found`。
+
+### `POST /api/apps/<appName>/restore`
+
+請求：`{ "commit": "<完整 SHA>" }`。把那一版的計畫與程式當成新的一版再發布（不呼叫 AI、不改寫 Git 歷史，紀錄多一筆 `kind: restore`），回應格式同 `/api/apply`（`mode: "restore"`）。內容與目前版本相同時回 `400`。
 ### 錯誤
 
-一律 `{"error": {"code": "…", "message": "…"}}`，`message` 是給使用者看的繁中句子。代碼：`bad_request`（400）、`plan_not_found`（404）、`already_applied`（409）、`app_exists`（409）、`app_not_found`（404）、`not_editable`（409）、`budget_exceeded`（429，laoban 自己的 token 上限）、`spend_limit`（402，Anthropic 花費上限，**不重試**）、`ai_invalid_output`（502，AI 回應不合格式或碰到禁止的資源）、`github_failed`（502）、`internal`（500）。
+一律 `{"error": {"code": "…", "message": "…"}}`，`message` 是給使用者看的繁中句子。代碼：`bad_request`（400）、`plan_not_found`（404）、`already_applied`（409）、`app_exists`（409）、`app_not_found`（404）、`not_editable`（409）、`version_not_found`（404）、`budget_exceeded`（429，laoban 自己的 token 上限）、`spend_limit`（402，Anthropic 花費上限，**不重試**）、`ai_invalid_output`（502，AI 回應不合格式或碰到禁止的資源）、`github_failed`（502）、`internal`（500）。
 
 ### 其他
 
@@ -155,7 +169,10 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 ## 頁面（Rancher UI extension）
 
 - 一個頁面，三個區塊：左邊對話（輸入需求、送出、顯示計畫摘要與步驟）、右邊 3D 架構圖、下方狀態列。
-- 總覽頁下方是**應用清單**（`GET /api/apps`）：名稱、摘要、最後更新、Fleet 狀態，以及「打開」「編輯」。按「編輯」後，上方切換成編輯模式：顯示目前摘要、最近 5 筆修改紀錄與目前的 3D 架構圖，輸入「要怎麼修改」後產生修改計畫（`baseApp`），確認後 commit 到同一個目錄。可以隨時取消、回到新增模式。
+- 左側選單兩頁：**總覽**（新增應用：上面的對話與 3D 圖）與**應用**（`GET /api/apps` 的清單：名稱、摘要、最後更新、Fleet 狀態，「打開」「編輯／詳細」，右上角「新增應用」回到總覽）。
+- 點應用名稱進**應用詳細頁**（`/laoban/c/_/apps/<名稱>`）：摘要、目前的建置步驟、完整修改紀錄、目前的 3D 架構圖、GitHub 程式碼連結與「打開應用」；在「要怎麼修改」輸入後產生修改計畫（`baseApp`），確認後 commit 到同一個目錄，完成後頁面重新讀取這個應用。新增與修改共用同一套計畫／部署／等待流程（`composables/useDeployFlow.ts`）。
+- 詳細頁的**版本**清單：每一版的時間、建立／修改／還原、當時的需求與 commit。「查看」把那一版的架構放進 3D 圖，預設與目前版本比較（`utils/graphDiff.ts`：元件以 id、連線以 from/to/kind 對應，標示新增、刪除、修改；模組 id 由名稱產生，所以同名模組跨版本對得上）；「還原到這一版」先在頁面上確認，再呼叫 restore，之後跟部署一樣等新版跑起來。產生修改計畫時，3D 圖也一律與目前版本比較，部署前就看得到會改到哪裡。
+- 外觀：每頁右上角可切換**亮色／自動／暗色**與**配色**。亮暗走 Rancher 自己的使用者偏好（`prefs/setTheme`，與 User Preferences 同一個設定，Rancher 跟著換 `<body>` 的 theme class）；管理者用全域設定強制主題時以全域設定為準。配色有「Rancher 預設」與海洋、夕陽、葡萄三組，只在 laoban 頁面內覆寫 Rancher 的 primary／link 變數與 3D 圖的分層顏色，亮暗各一組，對比都在 WCAG AA（4.5:1）以上；選擇記在瀏覽器的 localStorage（換瀏覽器或清除網站資料會回到預設）。
 - 3D 圖沿用 `web/viewer-prototype` 的程式（three.js 0.160.0、`graph-diff.mjs`）；M0 只需要顯示與縮放，不需要版本比較與拖曳。
 - 「確認並部署」按下後顯示 commit 連結，接著每 5 秒讀 Fleet Bundle（Bundle 只剩 Modified、沒有待部署或錯誤時，也視為應用已在執行，顯示連結並附上 Fleet 的訊息）（`/v1/fleet.cattle.io.bundles`，篩 `laoban.io` 前綴或 bundlePrefix）的 Ready 狀態，Ready 後顯示「打開應用」連結。
 - 所有 AI 產生的文字用文字方式顯示，不用 `v-html`。

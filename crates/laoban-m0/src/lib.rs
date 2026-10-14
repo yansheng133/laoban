@@ -22,8 +22,8 @@ pub mod store;
 mod time;
 
 pub use config::{from_env_with, AiEndpoint, ConfigError, EnvConfig, M0Settings, Secret};
-pub use github::{CommitFile, GithubCommitter, GithubConfig, GithubError, GithubToken};
-pub use service::{ApplyRequest, M0Error, M0Service, PlanRequestBody};
+pub use github::{CommitFile, CommitInfo, GithubCommitter, GithubConfig, GithubError, GithubToken};
+pub use service::{ApplyRequest, M0Error, M0Service, PlanRequestBody, RestoreRequest};
 
 /// The AI returned something that does not match the expected format or
 /// limits. The detail is for tests and debugging; it is not shown to users

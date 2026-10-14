@@ -71,9 +71,9 @@ fn happy_path_plan_then_apply() {
             "svc-api",
             "app-web",
             "app-api",
-            "mod-web-1",
-            "mod-web-2",
-            "mod-api-1",
+            "mod-web-menu-view",
+            "mod-web-order-form",
+            "mod-api-orders",
             "tbl-data"
         ]
     );
@@ -94,7 +94,8 @@ fn happy_path_plan_then_apply() {
     assert_eq!(nodes[7]["props"]["storage"], "memory");
     assert_eq!(plan["architecture"]["edges"].as_array().unwrap().len(), 4);
 
-    let applied = h.service.apply(&apply_req(&id)).unwrap();
+    let mut applied = h.service.apply(&apply_req(&id)).unwrap();
+    let rollout = applied.as_object_mut().unwrap().remove("rollout").unwrap();
     assert_eq!(
         applied,
         json!({
@@ -178,6 +179,25 @@ fn happy_path_plan_then_apply() {
     assert!(blobs[3].contains("laoban.io/content-hash:"));
     assert!(blobs[3].contains("http://breakfast-api:8080/"));
     assert!(blobs[4].contains("\"/app/main.py\""));
+    // The page compares these with the live Deployments' pod templates.
+    let rollout = rollout.as_array().unwrap();
+    assert_eq!(rollout.len(), 2);
+    for (r, (name, blob)) in rollout
+        .iter()
+        .zip([("breakfast-web", &blobs[3]), ("breakfast-api", &blobs[4])])
+    {
+        assert_eq!(r["deployment"], name);
+        assert_eq!(
+            r["path"],
+            format!("/k8s/clusters/c-m-test0001/v1/apps.deployments/laoban-dev/{name}")
+        );
+        let hash = r["contentHash"].as_str().unwrap();
+        assert_eq!(hash.len(), 64);
+        assert!(
+            blob.contains(&format!("laoban.io/content-hash: \"{hash}\"")),
+            "{blob}"
+        );
+    }
     assert!(blobs[5].contains("做一個早餐店點餐頁面"));
     assert!(blobs[5].contains(MODEL));
     // laoban.json reads back with the same validation as an AI response.

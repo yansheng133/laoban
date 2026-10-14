@@ -16,7 +16,7 @@ use crate::InvalidOutput;
 /// Response format appended to the system prompt for the plan call.
 pub const PLAN_INSTRUCTIONS: &str = r#"Task: plan a small web application from the user requirement in the data block. The application always has exactly two components: a static web front end (index.html, app.js, style.css) and a JSON HTTP API written as one Python module using only the standard library, keeping its data in memory. There is no database, queue or other component.
 Respond with exactly one JSON object and nothing else (no Markdown fences), with these fields:
-{"appName": string matching ^[a-z][a-z0-9-]{1,30}$, "summary": string, "steps": [string], "components": {"web": {"modules": [{"name": string, "purpose": string}]}, "api": {"modules": [{"name": string, "purpose": string}], "endpoints": [{"method": "GET"|"POST"|"PUT"|"PATCH"|"DELETE", "path": string starting with "/", "purpose": string}]}}, "notes": string}
+{"appName": string matching ^[a-z][a-z0-9-]{1,30}$, "summary": string, "steps": [string], "components": {"web": {"modules": [{"name": string, "purpose": string}]}, "api": {"modules": [{"name": string, "purpose": string}], "endpoints": [{"method": "GET"|"POST"|"PUT"|"PATCH"|"DELETE", "path": string starting with "/" as the API module sees it, without any /api prefix (for example "/orders"), "purpose": string}]}}, "notes": string}
 Write summary, steps, purposes and notes in Traditional Chinese (Taiwan). Use at most 8 modules per component, at most 16 endpoints and at most 20 steps. Do not include positions or coordinates."#;
 
 /// Extra instructions for the plan call when an existing app is changed.
@@ -198,14 +198,34 @@ fn check_endpoint(e: Endpoint) -> Result<Endpoint, InvalidOutput> {
     if !matches!(method.as_str(), "GET" | "POST" | "PUT" | "PATCH" | "DELETE") {
         return Err(InvalidOutput("endpoint method not allowed".into()));
     }
-    if !path_re.is_match(e.path.trim()) || e.path.contains("..") {
+    let path = normalize_endpoint_path(e.path.trim());
+    if !path_re.is_match(&path) || path.contains("..") {
         return Err(InvalidOutput("endpoint path is not allowed".into()));
     }
     Ok(Endpoint {
         method,
-        path: e.path.trim().to_string(),
+        path,
         purpose: check_text("endpoint purpose", &e.purpose, MAX_TEXT, false)?,
     })
+}
+
+/// Endpoint paths are as `handler.handle()` sees them: the web server
+/// forwards `api/<x>` to the API's `/<x>`. Models sometimes write the
+/// browser-side path (`/api/orders`) instead, which then disagrees with the
+/// code; drop that prefix (repeatedly, case-insensitively).
+pub(crate) fn normalize_endpoint_path(path: &str) -> String {
+    let mut p = path.trim().to_string();
+    loop {
+        let lower = p.to_ascii_lowercase();
+        if lower == "/api" || lower == "/api/" {
+            return "/".into();
+        }
+        if lower.starts_with("/api/") {
+            p = p[4..].to_string();
+        } else {
+            return p;
+        }
+    }
 }
 
 /// Parse and validate the AI's plan response.
@@ -279,14 +299,44 @@ fn module_pos(parent_x: f64, index: usize, total: usize) -> (f64, f64) {
     (x, z)
 }
 
+/// Module node id from its name, so the same module keeps its id across
+/// versions (the version diff matches nodes by id). Lowercase ASCII
+/// letters and digits, other characters as `-`; the index when the name
+/// has none of those or the id is already taken.
+fn module_id(prefix: &str, name: &str, index: usize, taken: &mut Vec<String>) -> String {
+    let mut slug = String::new();
+    for c in name.chars().flat_map(char::to_lowercase) {
+        if c.is_ascii_alphanumeric() {
+            slug.push(c);
+        } else if !slug.ends_with('-') {
+            slug.push('-');
+        }
+        if slug.len() >= 40 {
+            break;
+        }
+    }
+    let slug = slug.trim_matches('-');
+    let mut id = if slug.is_empty() {
+        format!("{prefix}-{}", index + 1)
+    } else {
+        format!("{prefix}-{slug}")
+    };
+    if taken.contains(&id) {
+        id = format!("{id}-{}", index + 1);
+    }
+    taken.push(id.clone());
+    id
+}
+
 fn module_nodes(prefix: &str, parent: &str, parent_x: f64, modules: &[Module]) -> Vec<Value> {
+    let mut taken = Vec::new();
     modules
         .iter()
         .enumerate()
         .map(|(i, m)| {
             let (x, z) = module_pos(parent_x, i, modules.len());
             let mut node = json!({
-                "id": format!("{prefix}-{}", i + 1),
+                "id": module_id(prefix, &m.name, i, &mut taken),
                 "layer": "code",
                 "kind": "module",
                 "name": m.name,
@@ -300,6 +350,18 @@ fn module_nodes(prefix: &str, parent: &str, parent_x: f64, modules: &[Module]) -
             node
         })
         .collect()
+}
+
+/// The API's endpoints as one sorted line (`GET /menu, POST /orders`), so a
+/// version diff shows when they change.
+fn routes(plan: &AppPlan) -> String {
+    let mut r: Vec<String> = plan
+        .endpoints
+        .iter()
+        .map(|e| format!("{} {}", e.method, e.path))
+        .collect();
+    r.sort();
+    r.join(", ")
 }
 
 /// The architecture graph in the viewer model. Deterministic: same plan
@@ -316,7 +378,8 @@ pub fn architecture(plan: &AppPlan, app: &str) -> Value {
                "detail": 1, "props": {"lang": "HTML/JavaScript", "replicas": 1},
                "pos": {"x": WEB_X, "z": 0.0}}),
         json!({"id": "app-api", "layer": "code", "kind": "app", "name": format!("{app}-api"),
-               "detail": 1, "props": {"lang": "Python", "replicas": 1, "endpoints": plan.endpoints.len()},
+               "detail": 1, "props": {"lang": "Python", "replicas": 1, "endpoints": plan.endpoints.len(),
+                                      "routes": routes(plan)},
                "pos": {"x": API_X, "z": 0.0}}),
     ];
     nodes.extend(module_nodes("mod-web", "app-web", WEB_X, &plan.web_modules));
@@ -355,6 +418,40 @@ mod tests {
             "ab\n",
         ] {
             assert!(!valid_app_name(bad), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn module_ids_follow_names() {
+        let mut taken = Vec::new();
+        assert_eq!(
+            module_id("mod-web", "Menu View", 0, &mut taken),
+            "mod-web-menu-view"
+        );
+        assert_eq!(
+            module_id("mod-web", "menu_view", 1, &mut taken),
+            "mod-web-menu-view-2"
+        );
+        assert_eq!(module_id("mod-web", "訂單", 2, &mut taken), "mod-web-3");
+        assert_eq!(
+            module_id("mod-api", "orders", 0, &mut Vec::new()),
+            "mod-api-orders"
+        );
+    }
+
+    #[test]
+    fn api_prefix_is_dropped_from_endpoint_paths() {
+        for (given, want) in [
+            ("/api/polls", "/polls"),
+            ("/API/polls/{id}", "/polls/{id}"),
+            ("/api/api/x", "/x"),
+            ("/api", "/"),
+            ("/api/", "/"),
+            ("/apiary", "/apiary"),
+            ("/orders", "/orders"),
+            (" /api/count ", "/count"),
+        ] {
+            assert_eq!(normalize_endpoint_path(given), want, "{given}");
         }
     }
 

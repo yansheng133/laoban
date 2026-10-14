@@ -17,6 +17,19 @@ import { useI18n } from '@shell/composables/useI18n';
 import {
   layoutArchitecture, LAYERS, LAYER_Y, KIND_HEIGHT, SceneLayout
 } from '../utils/layout';
+import { edgeKey, DiffStatus, DiffSummary } from '../utils/graphDiff';
+
+// Version comparison (utils/graphDiff.ts mergeForDiff): status per node id
+// and per edge key; the architecture prop is then the merged graph.
+export interface DiffMarks {
+  nodes: Record<string, DiffStatus>;
+  edges: Record<string, DiffStatus>;
+  summary: DiffSummary;
+}
+
+const DIFF_PREFIX: Partial<Record<DiffStatus, string>> = {
+  added: '＋ ', removed: '－ ', changed: '～ '
+};
 
 const GEOM: Record<string, () => THREE.BufferGeometry> = {
   ingress:  () => new THREE.OctahedronGeometry(0.75),
@@ -29,7 +42,7 @@ const GEOM: Record<string, () => THREE.BufferGeometry> = {
   queue:    () => new THREE.CapsuleGeometry(0.35, 0.9, 6, 16).rotateZ(Math.PI / 2),
 };
 
-const COLOR_TOKENS = ['layer-network', 'layer-code', 'layer-data', 'edge'];
+const COLOR_TOKENS = ['layer-network', 'layer-code', 'layer-data', 'edge', 'diff-added', 'diff-removed', 'diff-changed'];
 
 function disposeObject(root: THREE.Object3D) {
   root.traverse((obj) => {
@@ -64,6 +77,10 @@ export default defineComponent({
   props: {
     architecture: {
       type:    Object as PropType<unknown>,
+      default: null,
+    },
+    diff: {
+      type:    Object as PropType<DiffMarks | null>,
       default: null,
     },
   },
@@ -117,6 +134,7 @@ export default defineComponent({
       return Object.fromEntries(COLOR_TOKENS.map((n) => {
         const v = cs?.getPropertyValue(`--laoban-${ n }`).trim();
 
+        // Fallback if the view is used outside a laoban page.
         return [n, new THREE.Color(v || '#888888')];
       }));
     }
@@ -174,19 +192,29 @@ export default defineComponent({
 
       const positions = new Map<string, THREE.Vector3>();
 
+      const diff = props.diff;
+
       for (const n of l.nodes) {
-        const mesh = new THREE.Mesh(
-          (GEOM[n.kind] || GEOM.module)(),
-          new THREE.MeshStandardMaterial({
-            color: colors[`layer-${ n.layer }`], roughness: 0.55, metalness: 0.05
-          }),
-        );
+        const status = diff?.nodes[n.id];
+        const material = new THREE.MeshStandardMaterial({
+          color: colors[`layer-${ n.layer }`], roughness: 0.55, metalness: 0.05
+        });
+
+        if (status === 'added' || status === 'changed') {
+          material.emissive = colors[`diff-${ status }`];
+          material.emissiveIntensity = 0.55;
+        } else if (status === 'removed') {
+          material.color = colors['diff-removed'];
+          material.transparent = true;
+          material.opacity = 0.3;
+        }
+        const mesh = new THREE.Mesh((GEOM[n.kind] || GEOM.module)(), material);
 
         mesh.position.set(n.x, n.y, n.z);
         world.add(mesh);
         positions.set(n.id, mesh.position.clone());
 
-        const lbl = makeLabel(n.name, 'laoban-node-label');
+        const lbl = makeLabel(`${ (status && DIFF_PREFIX[status]) || '' }${ n.name }`, status ? `laoban-node-label laoban-diff-${ status }` : 'laoban-node-label');
 
         lbl.position.set(0, (KIND_HEIGHT[n.kind] ?? KIND_HEIGHT.module) + 0.2, 0);
         mesh.add(lbl);
@@ -205,16 +233,18 @@ export default defineComponent({
           mid.y += 1.2;
         }
         const curve = new THREE.QuadraticBezierCurve3(p0, mid, p2);
+        const estatus = diff?.edges[edgeKey(e)];
+        const ecolor = estatus === 'added' || estatus === 'removed' || estatus === 'changed' ? colors[`diff-${ estatus }`] : colors.edge;
         const line = new THREE.Line(
           new THREE.BufferGeometry().setFromPoints(curve.getPoints(32)),
           new THREE.LineBasicMaterial({
-            color: colors.edge, transparent: true, opacity: 0.9
+            color: ecolor, transparent: true, opacity: estatus === 'removed' ? 0.35 : 0.9
           }),
         );
 
         world.add(line);
         // direction marker at 75%
-        const tip = new THREE.Mesh(new THREE.SphereGeometry(0.09, 10, 8), new THREE.MeshBasicMaterial({ color: colors.edge }));
+        const tip = new THREE.Mesh(new THREE.SphereGeometry(0.09, 10, 8), new THREE.MeshBasicMaterial({ color: ecolor }));
 
         tip.position.copy(curve.getPoint(0.75));
         world.add(tip);
@@ -281,9 +311,15 @@ export default defineComponent({
 
       resizeObserver = new ResizeObserver(resize);
       resizeObserver.observe(stage.value);
-      // Rancher switches themes with a class on <body>; re-read the colors.
+      // Rancher switches themes with a class on <body>, and the laoban page
+      // switches palettes with data-laoban-palette; re-read the colors.
       themeObserver = new MutationObserver(() => build(false));
       themeObserver.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+      const page = root.value?.closest('[data-laoban-palette]');
+
+      if (page) {
+        themeObserver.observe(page, { attributes: true, attributeFilter: ['data-laoban-palette'] });
+      }
 
       resize();
       build();
@@ -300,6 +336,8 @@ export default defineComponent({
     });
 
     watch(layout, () => build());
+    // Same graph, other marks (comparison turned on or off): keep the camera.
+    watch(() => props.diff, () => build(false));
 
     onBeforeUnmount(() => {
       resizeObserver?.disconnect();
@@ -363,6 +401,18 @@ export default defineComponent({
           aria-hidden="true"
         />{{ t(`laoban.dashboard.arch.layers.${ layer }`) }}
       </span>
+      <template v-if="diff">
+        <span
+          v-for="s in ['added', 'removed', 'changed']"
+          :key="s"
+          data-testid="laoban-diff-legend"
+        >
+          <i
+            :class="`swatch-diff-${ s }`"
+            aria-hidden="true"
+          />{{ t(`laoban.diff.${ s }`, { count: diff.summary[s] }) }}
+        </span>
+      </template>
       <span class="text-muted">{{ t('laoban.dashboard.arch.hint') }}</span>
     </div>
     <details class="laoban-arch-list">
@@ -380,26 +430,14 @@ export default defineComponent({
 </template>
 
 <style lang="scss" scoped>
+// Layer colours (--laoban-layer-*, --laoban-edge) come from the page's
+// palette (styles/palettes.scss) and follow Rancher's light/dark theme.
 .laoban-arch {
-  --laoban-layer-network: #4a78c2;
-  --laoban-layer-code: #6b7686;
-  --laoban-layer-data: #2c8a87;
-  --laoban-edge: #8a96a5;
-
   display: flex;
   flex-direction: column;
   gap: 8px;
   height: 100%;
   min-height: 0;
-}
-
-// Rancher puts .theme-dark on <body>; the scope attribute only applies to
-// the last compound selector, so this matches.
-.theme-dark .laoban-arch {
-  --laoban-layer-network: #6f98dc;
-  --laoban-layer-code: #9aa5b4;
-  --laoban-layer-data: #4fb3ae;
-  --laoban-edge: #6d7a8a;
 }
 
 .laoban-arch-stage {
@@ -430,6 +468,23 @@ export default defineComponent({
     color: var(--body-text);
     white-space: nowrap;
     transform: translateY(-50%);
+  }
+
+  // Version comparison marks on labels (utils/graphDiff.ts).
+  :deep(.laoban-diff-added) {
+    border-color: var(--laoban-diff-added);
+    box-shadow: inset 3px 0 0 var(--laoban-diff-added);
+  }
+
+  :deep(.laoban-diff-changed) {
+    border-color: var(--laoban-diff-changed);
+    box-shadow: inset 3px 0 0 var(--laoban-diff-changed);
+  }
+
+  :deep(.laoban-diff-removed) {
+    border-color: var(--laoban-diff-removed);
+    color: var(--muted);
+    text-decoration: line-through;
   }
 
   :deep(.laoban-edge-label) {
@@ -474,6 +529,9 @@ export default defineComponent({
     border-radius: 2px;
   }
 
+  .swatch-diff-added { background: var(--laoban-diff-added); }
+  .swatch-diff-removed { background: var(--laoban-diff-removed); }
+  .swatch-diff-changed { background: var(--laoban-diff-changed); }
   .swatch-network { background: var(--laoban-layer-network); }
   .swatch-code { background: var(--laoban-layer-code); }
   .swatch-data { background: var(--laoban-layer-data); }

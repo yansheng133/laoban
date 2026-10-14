@@ -4,10 +4,14 @@ product:
 laoban:
   nav:
     dashboard: 概要
+    apps: アプリ
   # M0: the dashboard strings below are English placeholders; Japanese
   # translation is not done yet.
   apps:
     title: アプリ一覧
+    description: laoban が作成したアプリ（最近変更した順）。名前を開くと内容・変更履歴・構成図を確認でき、一文で変更できます。
+    create: 新しいアプリ
+    details: 詳細
     refresh: 再読み込み
     empty: まだアプリがありません。上で要件を入力し、デプロイするとここに表示されます。
     loadFailed: アプリ一覧を読み込めませんでした。しばらくしてから再試行してください。
@@ -29,19 +33,61 @@ laoban:
       missing: Fleet 未取得
       unknown: "-"
   edit:
-    title: "編集：{appName}"
-    history: 最近の変更
     kindCreate: 作成
     kindEdit: 変更
-    cancel: 編集をやめて新しいアプリを作成
     promptLabel: どう変更しますか
     promptPlaceholder: 例：飲み物を追加し、注文にメモを付けられるようにする
     generate: 変更計画を作成
     planTitle: "変更計画：{appName}"
     currentArch: 現在の構成です。変更計画ができると変更後の構成に置き換わります。
+  detail:
+    back: ← アプリ
+    source: コード（GitHub）
+    loading: 読み込み中…
+    changeTitle: このアプリを変更
+    currentSteps: 現在の構築手順
+  appearance:
+    theme: 外観
+    themes:
+      light: ライト
+      auto: 自動
+      dark: ダーク
+    palette: 配色
+    palettes:
+      rancher: Rancher 既定
+      ocean: オーシャン
+      sunset: サンセット
+      grape: グレープ
+  versions:
+    title: "バージョン（{count}）"
+    number: "第 {n} 版"
+    current: 現在
+    kind:
+      create: 作成
+      edit: 変更
+      restore: 復元
+      commit: その他の変更
+    view: 表示
+    viewCurrent: 現在の版
+    restore: この版に戻す
+    confirm: "第 {n} 版の計画とコードを再デプロイし、新しい第 {next} 版になります（AI は呼び出さず、過去の版はすべて残ります）。よろしいですか？"
+    confirmYes: 戻す
+    confirmNo: キャンセル
+    truncated: 最新の 50 版のみ表示しています。
+    restoring: "復元して GitHub に書き込み中（{seconds} 秒）…"
+    compare: 現在の版と比較
+    backToCurrent: 現在の版に戻る
+    hintPlan: 変更計画と現在の版の差分：デプロイ後に追加・削除・変更される部分を示します。
+    hintCompare: "第 {n} 版と現在の版の差分：第 {n} 版に戻すと追加・削除・変更される部分を示します。"
+    hintVersion: "第 {n} 版の構成です。"
+  diff:
+    added: "追加 {count}"
+    removed: "削除 {count}"
+    changed: "変更 {count}"
   dashboard:
     title: laoban
     description: Describe what you need in one sentence. laoban proposes a plan and an architecture view first; only after you confirm does it generate code, commit it to GitHub and let Fleet deploy it. This is the M0 preview.
+    toApps: これまでに作成したアプリを見る →
     config:
       model: Model
       targetNamespace: Target
@@ -64,6 +110,7 @@ laoban:
       usage: "This used {input} input tokens and {output} output tokens."
       apply: Confirm and deploy
     result:
+      viewApp: アプリページで見る
       committed: "Committed to GitHub:"
       openApp: Open app
       badAppUrl: The app URL returned by the backend is not valid, so no link is shown.
@@ -85,6 +132,7 @@ laoban:
       applying: "The AI is generating code and committing it to GitHub. This usually takes 30 to 60 seconds ({seconds} s so far)…"
       waitingBundle: "Committed. Waiting for Fleet to pick up the change ({seconds} s so far)…"
       deploying: "Fleet is deploying: {ready} / {desired} ready…"
+      rollingOut: "Fleet が適用しました。新しい Pod の起動を待っています（{seconds} 秒）…"
       bundleError: "Fleet reports a deployment error ({ready} / {desired} ready). Still checking…"
       ready: Deployed. You can open the app.
       readyModified: "アプリはデプロイされ実行中なので開けます。ただし Fleet は実際のオブジェクトが Git と一致しない（Modified）と報告しています。詳細は Continuous Delivery の {workspace} ワークスペースで確認してください。"

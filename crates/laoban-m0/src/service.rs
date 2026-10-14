@@ -22,7 +22,7 @@ use crate::meta::{self, AppMeta, HistoryEntry, META_FILE};
 use crate::plan::{
     architecture, parse_app_plan, valid_app_name, EDIT_PLAN_INSTRUCTIONS, PLAN_INSTRUCTIONS,
 };
-use crate::render::{render, RenderInput};
+use crate::render::{render, rollout_hashes, RenderInput};
 use crate::store::{BaseApp, PlanStore, StoreError, StoredPlan};
 use crate::{time, InvalidOutput};
 
@@ -45,6 +45,8 @@ pub const MAX_EDIT_CODE_BYTES: usize = 40 * 1024;
 pub const APPS_DIR: &str = "apps";
 /// Most apps listed.
 pub const MAX_LISTED_APPS: usize = 100;
+/// Most versions listed per app.
+pub const MAX_VERSIONS: usize = 50;
 
 /// There is one user in M0 and no identity is passed to the backend;
 /// this fixed principal is what the orchestrator records.
@@ -63,6 +65,14 @@ pub struct PlanRequestBody {
     /// Change this existing app instead of creating a new one.
     #[serde(default)]
     pub base_app: Option<String>,
+}
+
+/// `POST /api/apps/<name>/restore` body.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RestoreRequest {
+    /// Full SHA of the version's commit (from `GET .../versions`).
+    pub commit: String,
 }
 
 /// `POST /api/apply` body.
@@ -105,6 +115,8 @@ pub enum M0Error {
     /// existed.
     #[error("app is not editable")]
     NotEditable,
+    #[error("version not found")]
+    VersionNotFound,
 }
 
 impl M0Error {
@@ -121,6 +133,7 @@ impl M0Error {
             M0Error::AppExists(_) => "app_exists",
             M0Error::AppNotFound => "app_not_found",
             M0Error::NotEditable => "not_editable",
+            M0Error::VersionNotFound => "version_not_found",
         }
     }
 
@@ -147,7 +160,7 @@ impl M0Error {
             M0Error::AiInvalidOutput(_) | M0Error::Github(_) => 502,
             M0Error::AiUnavailable(_) | M0Error::Internal(_) => 500,
             M0Error::AppExists(_) | M0Error::NotEditable => 409,
-            M0Error::AppNotFound => 404,
+            M0Error::AppNotFound | M0Error::VersionNotFound => 404,
         }
     }
 
@@ -177,6 +190,7 @@ impl M0Error {
                 "已經有名為 {app} 的應用。要修改它，請在下方應用清單按「編輯」；要另外建立，請換一個名稱。"
             ),
             M0Error::AppNotFound => "找不到這個應用，可能已經被刪除。".into(),
+            M0Error::VersionNotFound => "找不到這個版本。".into(),
             M0Error::NotEditable => {
                 "這個應用沒有 laoban 的編輯紀錄（可能是較早版本產生的），無法編輯；請用新名稱重新產生。"
                     .into()
@@ -557,51 +571,80 @@ impl M0Service {
         let app = stored.app.as_str();
         let masked_summary = self.orchestrator.mask_for_ai(&stored.plan.summary).text;
         let masked_prompt = self.orchestrator.mask_for_ai(&stored.masked_prompt).text;
-        let generated_at = time::rfc3339(SystemTime::now());
-        let mut history = stored
+        let (kind, message) = if stored.base.is_some() {
+            (
+                "edit",
+                commit_message(app, &format!("修改：{masked_prompt}")),
+            )
+        } else {
+            ("create", commit_message(app, &masked_summary))
+        };
+        let history = stored
             .base
             .as_ref()
             .map(|b| b.history.clone())
             .unwrap_or_default();
-        let kind = if stored.base.is_some() {
-            "edit"
-        } else {
-            "create"
-        };
+        self.publish(Publish {
+            app,
+            plan: &stored.plan,
+            files: &files,
+            history,
+            kind,
+            request: masked_prompt,
+            summary: masked_summary,
+            model: completion.model,
+            message,
+        })
+    }
+
+    /// Render, commit and describe one new version of `app`.
+    fn publish(&self, p: Publish<'_>) -> Result<Value, M0Error> {
+        let app = p.app;
+        let generated_at = time::rfc3339(SystemTime::now());
+        let mut history = p.history;
         history.push(HistoryEntry {
             at: generated_at.clone(),
-            kind: kind.into(),
-            request: masked_prompt.clone(),
-            summary: masked_summary.clone(),
-            model: completion.model.clone(),
+            kind: p.kind.into(),
+            request: p.request.clone(),
+            summary: p.summary.clone(),
+            model: p.model.clone(),
         });
-        let meta_json = meta::to_json(app, &stored.plan, &files, &history);
+        let meta_json = meta::to_json(app, p.plan, p.files, &history);
         let commit_files = render(&RenderInput {
             app,
             namespace: &self.settings.target_namespace,
-            files: &files,
-            masked_prompt: &masked_prompt,
-            masked_summary: &masked_summary,
-            model: &completion.model,
+            files: p.files,
+            masked_prompt: &p.request,
+            masked_summary: &p.summary,
+            model: &p.model,
             generated_at: &generated_at,
             meta_json: &meta_json,
         });
-        let message = if stored.base.is_some() {
-            commit_message(app, &format!("修改：{masked_prompt}"))
-        } else {
-            commit_message(app, &masked_summary)
-        };
         let sha = self
             .github
-            .commit(&commit_files, &message)
+            .commit(&commit_files, &p.message)
             .map_err(M0Error::Github)?;
 
         let s = &self.settings;
+        let rollout: Vec<Value> = rollout_hashes(p.files)
+            .into_iter()
+            .map(|(component, hash)| {
+                let name = format!("{app}-{component}");
+                json!({
+                    "deployment": name,
+                    "path": format!(
+                        "/k8s/clusters/{}/v1/apps.deployments/{}/{name}",
+                        s.cluster_id, s.target_namespace
+                    ),
+                    "contentHash": hash,
+                })
+            })
+            .collect();
         Ok(json!({
-            "mode": kind,
+            "mode": p.kind,
             "appName": app,
             "commit": sha,
-            "commitUrl": format!("https://github.com/{}/{}/commit/{sha}", s.repo_owner, s.repo_name),
+            "commitUrl": self.commit_url(&sha),
             "path": format!("{APPS_DIR}/{app}"),
             "appUrl": self.app_url(app),
             "fleet": {
@@ -609,8 +652,148 @@ impl M0Service {
                 "gitRepo": FLEET_GITREPO,
                 "bundlePrefix": format!("{FLEET_GITREPO}-{APPS_DIR}-{app}"),
             },
+            "rollout": rollout,
         }))
     }
+
+    fn commit_url(&self, sha: &str) -> String {
+        let s = &self.settings;
+        format!(
+            "https://github.com/{}/{}/commit/{sha}",
+            s.repo_owner, s.repo_name
+        )
+    }
+
+    fn meta_path(app: &str) -> String {
+        format!("{APPS_DIR}/{app}/{META_FILE}")
+    }
+
+    /// `laoban.json` of `app` as it was in `commit`.
+    fn load_version(&self, app: &str, commit: &str) -> Result<AppMeta, M0Error> {
+        if !valid_app_name(app) {
+            return Err(M0Error::BadRequest("應用名稱不正確。"));
+        }
+        if !valid_commit(commit) {
+            return Err(M0Error::BadRequest("版本代號不正確。"));
+        }
+        let text = self
+            .github
+            .read_file_at(&Self::meta_path(app), commit)
+            .map_err(|e| match e {
+                // Unknown commit: GitHub answers 404 or 422.
+                GithubError::Status { status: 422, .. } => M0Error::VersionNotFound,
+                other => M0Error::Github(other),
+            })?
+            .ok_or(M0Error::VersionNotFound)?;
+        meta::parse(app, &text).map_err(|_| M0Error::VersionNotFound)
+    }
+
+    /// `GET /api/apps/<name>/versions`: one entry per commit that changed
+    /// the app's laoban.json, newest first. Requests, summaries and models
+    /// come from the history in the current laoban.json (newest entries
+    /// line up with the newest commits); older entries fall back to the
+    /// commit message.
+    pub fn versions(&self, app: &str) -> Result<Value, M0Error> {
+        let current = self.load_app(app)?;
+        let commits = self
+            .github
+            .list_commits(&Self::meta_path(app), MAX_VERSIONS)
+            .map_err(M0Error::Github)?;
+        let history: Vec<&HistoryEntry> = current.history.iter().rev().collect();
+        let total = commits.len();
+        let versions: Vec<Value> = commits
+            .iter()
+            .enumerate()
+            .map(|(i, c)| {
+                let h = history.get(i);
+                json!({
+                    "version": total - i,
+                    "commit": c.sha,
+                    "commitUrl": self.commit_url(&c.sha),
+                    "at": h.map(|h| h.at.as_str()).unwrap_or(&c.date),
+                    "kind": h.map(|h| h.kind.as_str()).unwrap_or("commit"),
+                    "request": h.map(|h| h.request.as_str()).unwrap_or(&c.message),
+                    "summary": h.map(|h| h.summary.as_str()).unwrap_or(""),
+                    "model": h.map(|h| h.model.as_str()).unwrap_or(""),
+                    "current": i == 0,
+                })
+            })
+            .collect();
+        Ok(json!({
+            "appName": app,
+            "versions": versions,
+            "truncated": total >= MAX_VERSIONS,
+        }))
+    }
+
+    /// `GET /api/apps/<name>/versions/<commit>`: one version's plan and
+    /// architecture (no code).
+    pub fn version(&self, app: &str, commit: &str) -> Result<Value, M0Error> {
+        let m = self.load_version(app, commit)?;
+        Ok(json!({
+            "appName": app,
+            "commit": commit,
+            "summary": m.plan.summary,
+            "steps": m.plan.steps,
+            "architecture": architecture(&m.plan, app),
+            "updatedAt": m.updated_at(),
+        }))
+    }
+
+    /// `POST /api/apps/<name>/restore`: publish an earlier version's plan and
+    /// code again as a new version. No AI call; history is kept.
+    pub fn restore(&self, app: &str, body: &RestoreRequest) -> Result<Value, M0Error> {
+        let commit = body.commit.trim();
+        let target = self.load_version(app, commit)?;
+        let current = self.load_app(app)?;
+        if target.files == current.files && target.plan == current.plan {
+            return Err(M0Error::BadRequest("目前已經是這個版本的內容。"));
+        }
+        let short: String = commit.chars().take(7).collect();
+        let request = format!("還原到 {} 的版本（{short}）", target.updated_at());
+        let model = target
+            .history
+            .last()
+            .map(|h| h.model.clone())
+            .unwrap_or_default();
+        let summary = self.orchestrator.mask_for_ai(&target.plan.summary).text;
+        let message = commit_message(app, &format!("還原：{request}"));
+        self.publish(Publish {
+            app,
+            plan: &target.plan,
+            files: &target.files,
+            history: current.history,
+            kind: "restore",
+            request,
+            summary,
+            model,
+            message,
+        })
+    }
+}
+
+/// Everything [`M0Service::publish`] needs for one new version.
+struct Publish<'a> {
+    app: &'a str,
+    plan: &'a crate::plan::AppPlan,
+    files: &'a crate::codegen::GeneratedFiles,
+    /// History before this version.
+    history: Vec<HistoryEntry>,
+    /// `create`, `edit` or `restore`.
+    kind: &'static str,
+    /// Masked request text recorded in history and README.
+    request: String,
+    /// Masked plan summary.
+    summary: String,
+    model: String,
+    message: String,
+}
+
+/// A full commit SHA (40 or 64 lowercase hex digits).
+fn valid_commit(c: &str) -> bool {
+    (c.len() == 40 || c.len() == 64)
+        && c.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 /// `name` if it is free, otherwise `name-2` … `name-9` (shortened so the

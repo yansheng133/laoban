@@ -142,6 +142,13 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
         run: |
           if [ "$REF_TYPE" = "tag" ]; then
+            # The binary reports Cargo's version (laoban-server --version, /version);
+            # a release tag must match it.
+            cargo_version="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"$/\1/p' Cargo.toml)"
+            if [ "${REF_NAME#v}" != "$cargo_version" ]; then
+              echo "::error::tag ${REF_NAME} does not match Cargo.toml workspace version ${cargo_version}"
+              exit 1
+            fi
             echo "version=${REF_NAME#v}" >> "$GITHUB_OUTPUT"
           else
             echo "version=0.0.0-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
