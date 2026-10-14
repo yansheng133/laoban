@@ -493,9 +493,14 @@ impl M0Service {
                         "這個應用的程式太大，試吃版無法用 AI 編輯。",
                     ));
                 }
-                let current_plan =
-                    serde_json::to_string_pretty(&current.plan.to_codegen_json(&base_app))
-                        .map_err(|e| M0Error::Internal(e.to_string()))?;
+                // Without the last change's notes: they talk about earlier
+                // opinions, and the AI would repeat them for this change.
+                let mut current_json = current.plan.to_codegen_json(&base_app);
+                if let Some(o) = current_json.as_object_mut() {
+                    o.remove("notes");
+                }
+                let current_plan = serde_json::to_string_pretty(&current_json)
+                    .map_err(|e| M0Error::Internal(e.to_string()))?;
                 let completion = self.orchestrator.complete(&CompletionRequest {
                     principal: PRINCIPAL.into(),
                     requested_model: None,

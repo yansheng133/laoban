@@ -47,6 +47,7 @@ laoban:
     changeTitle: このアプリを変更（意見の収束）
     idle: 左の「意見の収束」でこのアプリを変更します。コードと 3D レイアウトは直接編集することもできます。
     stale: 他の人が新しい版を公開しました。変更を保存するか破棄すると、新しい版を読み込みます。
+    reloading: 他の人が新しい版を公開しました。読み込んでいます…
     currentSteps: 現在の構築手順
     tabs:
       arch: 構成図
@@ -81,6 +82,8 @@ laoban:
     confirmYes: 戻す
     confirmNo: キャンセル
     truncated: 最新の 50 版のみ表示しています。
+    showMore: "以前の {count} 版を表示"
+    showLess: 最近の版のみ表示
     restoring: "復元して GitHub に書き込み中（{seconds} 秒）…"
     compare: 現在の版と比較
     backToCurrent: 現在の版に戻る
@@ -146,6 +149,7 @@ laoban:
     lost: 進行中のラウンドがなくなりました。バックエンドが再起動した可能性があります（ラウンドはバックエンドのメモリにのみ保存）。必要なら新しいラウンドを開始してください。
     showCurrent: 現在のアーキテクチャを表示
     showPlan: 収束した計画を表示
+    logLine: "{who}：{event}"
     events:
       opened: "ラウンドを開始（{minutes} 分後に収束）"
       opinion: 意見を追加
@@ -174,7 +178,7 @@ laoban:
     save: 新しいバージョンとして保存
     saving: "チェックして GitHub に書き込んでいます（AI なし、{seconds} 秒）…"
   layout:
-    dragHint: コンポーネントをドラッグして移動、空白をドラッグして回転、ホイールでズーム。クリックで選択。
+    dragHint: コンポーネントをドラッグして移動、空白をドラッグして回転、Ctrl（Mac は ⌘）＋ホイールまたはピンチでズーム。クリックで選択。
     moved: "{count} 個のコンポーネントを移動（未保存）"
     discard: 位置を元に戻す
     save: レイアウトを保存
@@ -264,7 +268,7 @@ laoban:
     arch:
       title: アーキテクチャ図
       empty: 計画を作成すると、ここにアプリの 3D アーキテクチャが表示されます。
-      hint: ドラッグで回転、スクロールまたはピンチで拡大縮小。
+      hint: ドラッグで回転。Ctrl（Mac は ⌘）＋スクロールまたはピンチで拡大縮小。
       noWebgl: このブラウザでは WebGL が使えないため 3D 表示できません。下のコンポーネント一覧を見てください。
       ariaLabel: "{count} 個のコンポーネントの 3D アーキテクチャ図"
       listTitle: "コンポーネント（{count}）"

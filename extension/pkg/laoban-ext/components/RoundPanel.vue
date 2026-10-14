@@ -211,7 +211,7 @@ export default defineComponent({
             :key="i"
           >
             <span class="text-muted">{{ formatTime(l.at) }}</span>
-            {{ l.by === 'laoban' ? 'laoban' : who(l.by) }}：{{ logText(l) }}
+            {{ t('laoban.round.logLine', { who: l.by === 'laoban' ? 'laoban' : who(l.by), event: logText(l) }) }}
           </li>
         </ul>
       </details>
@@ -489,7 +489,7 @@ export default defineComponent({
             :key="i"
           >
             <span class="text-muted">{{ formatTime(l.at) }}</span>
-            {{ l.by === 'laoban' ? 'laoban' : who(l.by) }}：{{ logText(l) }}
+            {{ t('laoban.round.logLine', { who: l.by === 'laoban' ? 'laoban' : who(l.by), event: logText(l) }) }}
           </li>
         </ul>
       </details>
