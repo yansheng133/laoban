@@ -12,13 +12,15 @@ use laoban_ai::MockProvider;
 use laoban_m0::{GithubCommitter, GithubConfig, GithubToken, M0Service, M0Settings};
 use laoban_server::identity::{AuthConfig, GROUP, VERSION};
 use laoban_server::{ApiState, Server, ShutdownHandle};
-use rcgen::{BasicConstraints, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa, KeyPair};
+use rcgen::{
+    BasicConstraints, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair,
+};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
 
 struct Ca {
     cert: rcgen::Certificate,
-    key: KeyPair,
+    issuer: Issuer<'static, KeyPair>,
 }
 
 fn ca(name: &str) -> Ca {
@@ -27,7 +29,10 @@ fn ca(name: &str) -> Ca {
     p.distinguished_name.push(DnType::CommonName, name);
     let key = KeyPair::generate().unwrap();
     let cert = p.self_signed(&key).unwrap();
-    Ca { cert, key }
+    Ca {
+        cert,
+        issuer: Issuer::new(p, key),
+    }
 }
 
 fn leaf(ca: &Ca, cn: &str, purpose: ExtendedKeyUsagePurpose) -> (rcgen::Certificate, KeyPair) {
@@ -35,7 +40,7 @@ fn leaf(ca: &Ca, cn: &str, purpose: ExtendedKeyUsagePurpose) -> (rcgen::Certific
     p.distinguished_name.push(DnType::CommonName, cn);
     p.extended_key_usages = vec![purpose];
     let key = KeyPair::generate().unwrap();
-    let cert = p.signed_by(&key, &ca.cert, &ca.key).unwrap();
+    let cert = p.signed_by(&key, &ca.issuer).unwrap();
     (cert, key)
 }
 
