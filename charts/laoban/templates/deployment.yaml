@@ -60,7 +60,7 @@ spec:
       serviceAccountName: {{ include "laoban.serviceAccountName" . }}
       {{- if or .Values.impersonation.enabled .Values.aggregatedApi.enabled }}
       # The backend reads kube-system/extension-apiserver-authentication at
-      # startup (aggregated API) and, in phase 1, impersonates users.
+      # startup (aggregated API) and, in phase 1, acts as the user.
       automountServiceAccountToken: true
       {{- else }}
       # The backend calls no Kubernetes API and has no RBAC; no token in the pod.
