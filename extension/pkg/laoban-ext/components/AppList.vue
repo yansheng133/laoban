@@ -6,7 +6,7 @@
 // Summaries come from AI output: rendered with {{ }} only, never v-html.
 import { defineComponent, ref, onMounted } from 'vue';
 import { useStore } from 'vuex';
-import { useI18n } from '@shell/composables/useI18n';
+import { useText } from '../composables/useText';
 import {
   listApps, listBundles, resolveAppUrl, RequestError, AppSummary
 } from '../utils/backend';
@@ -18,7 +18,7 @@ export default defineComponent({
 
   setup(_props, { expose }) {
     const store = useStore();
-    const { t } = useI18n(store);
+    const { t } = useText(store);
 
     const apps = ref<AppSummary[]>([]);
     const states = ref<Record<string, ReadinessState>>({});

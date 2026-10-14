@@ -4,7 +4,7 @@
 // palette styles (styles/palettes.scss).
 import { defineComponent } from 'vue';
 import { useStore } from 'vuex';
-import { useI18n } from '@shell/composables/useI18n';
+import { useText } from '../composables/useText';
 import { useAppearance } from '../composables/useAppearance';
 import { PALETTES, PALETTE_SWATCH, THEMES } from '../config/appearance';
 
@@ -13,7 +13,7 @@ export default defineComponent({
 
   setup() {
     const store = useStore();
-    const { t } = useI18n(store);
+    const { t } = useText(store);
     const {
       palette, setPalette, themePref, setTheme
     } = useAppearance(store);

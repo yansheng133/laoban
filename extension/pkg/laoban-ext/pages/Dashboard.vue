@@ -9,7 +9,7 @@
 // never v-html. See extension/README.md.
 import { defineComponent, ref, computed, onMounted } from 'vue';
 import { useStore } from 'vuex';
-import { useI18n } from '@shell/composables/useI18n';
+import { useText } from '../composables/useText';
 import AppearanceMenu from '../components/AppearanceMenu.vue';
 import { useAppearance } from '../composables/useAppearance';
 import ArchitectureView from '../components/ArchitectureView.vue';
@@ -30,7 +30,7 @@ export default defineComponent({
 
   setup() {
     const store = useStore();
-    const { t } = useI18n(store);
+    const { t } = useText(store);
     const { palette } = useAppearance(store);
     const flow = useDeployFlow(store, t);
 

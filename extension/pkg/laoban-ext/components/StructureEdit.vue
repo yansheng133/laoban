@@ -9,7 +9,7 @@ import {
   defineComponent, ref, computed, watch, PropType
 } from 'vue';
 import { useStore } from 'vuex';
-import { useI18n } from '@shell/composables/useI18n';
+import { useText } from '../composables/useText';
 import { layoutArchitecture } from '../utils/layout';
 import { moduleName, structureSentence, StructureAction } from '../utils/structure';
 
@@ -35,7 +35,7 @@ export default defineComponent({
 
   setup(props, { emit }) {
     const store = useStore();
-    const { t } = useI18n(store);
+    const { t } = useText(store);
 
     const nodes = computed(() => layoutArchitecture(props.architecture).nodes);
     const modules = computed(() => nodes.value.filter((n) => n.kind === 'module'));

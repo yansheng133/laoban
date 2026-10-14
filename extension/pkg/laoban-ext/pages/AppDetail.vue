@@ -19,7 +19,7 @@ import {
 } from 'vue';
 import { useStore } from 'vuex';
 import { useRoute } from 'vue-router';
-import { useI18n } from '@shell/composables/useI18n';
+import { useText } from '../composables/useText';
 import AppearanceMenu from '../components/AppearanceMenu.vue';
 import { useAppearance } from '../composables/useAppearance';
 import ArchitectureView from '../components/ArchitectureView.vue';
@@ -48,7 +48,7 @@ export default defineComponent({
   setup() {
     const store = useStore();
     const route = useRoute();
-    const { t } = useI18n(store);
+    const { t } = useText(store);
     const { palette } = useAppearance(store);
 
     const detail = ref<AppDetail | null>(null);
@@ -544,6 +544,7 @@ export default defineComponent({
           </p>
           <CodeEditor
             :app-name="detail.appName"
+            :visible="tab === 'code'"
             :editable="canEdit"
             :busy="busy || phase === 'deploying'"
             :reload-key="editorReload"

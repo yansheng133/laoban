@@ -10,7 +10,7 @@ import {
   defineComponent, ref, computed, watch, onMounted, PropType
 } from 'vue';
 import { useStore } from 'vuex';
-import { useI18n } from '@shell/composables/useI18n';
+import { useText } from '../composables/useText';
 import CodeMirror from '@shell/components/CodeMirror.vue';
 import { _EDIT, _VIEW } from '@shell/config/query-params';
 import {
@@ -71,13 +71,20 @@ export default defineComponent({
       type:    Number,
       default: 0,
     },
+    // The page shows this tab. CodeMirror measures its box when it is
+    // created, so it is only created while visible (inside display:none it
+    // would measure zero and draw a single line).
+    visible: {
+      type:    Boolean,
+      default: true,
+    },
   },
 
   emits: ['save', 'dirty'],
 
   setup(props, { emit }) {
     const store = useStore();
-    const { t } = useI18n(store);
+    const { t } = useText(store);
 
     const base = ref<AppFilesResponse | null>(null);
     const draft = ref<Record<string, string>>({});
@@ -151,6 +158,7 @@ export default defineComponent({
       changed,
       canSave,
       editMode: computed(() => (props.editable && !props.busy ? _EDIT : _VIEW)),
+      activeFile: computed(() => FILES.find((f) => f.key === active.value) || null),
       onInput,
       discard,
       save,
@@ -208,18 +216,18 @@ export default defineComponent({
       </div>
 
       <div
-        v-for="f in files"
-        v-show="active === f.key"
-        :key="f.key"
+        v-if="visible && activeFile"
         class="laoban-editor-cm"
         role="tabpanel"
       >
+        <!-- One editor for the active file, recreated on switch; the edits
+             live in `draft`, so nothing is lost. -->
         <CodeMirror
-          :key="`${ f.key }-${ base.commit }`"
-          :value="draft[f.key]"
+          :key="`${ activeFile.key }-${ base.commit }`"
+          :value="draft[activeFile.key]"
           :mode="editMode"
-          :options="{ mode: f.mode, foldGutter: false, lineWrapping: false }"
-          @onInput="onInput(f.key, $event)"
+          :options="{ mode: activeFile.mode, foldGutter: false, lineWrapping: false }"
+          @onInput="onInput(activeFile.key, $event)"
         />
       </div>
 
