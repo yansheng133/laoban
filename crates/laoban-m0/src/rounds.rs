@@ -127,7 +127,15 @@ pub struct Confirmer {
 pub struct LogEntry {
     pub at: String,
     pub by: String,
+    /// The event in Traditional Chinese (fallback for clients).
     pub event: String,
+    /// What happened, for the page to show in its language: `opened`,
+    /// `opinion`, `objected`, `converging`, `converged`, `failed`,
+    /// `confirmed`, `skipped`, `applying`, `done`, `cancelled`.
+    pub code: &'static str,
+    /// Values the event refers to (`minutes`, `count`, `user`, `message`).
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub args: std::collections::BTreeMap<&'static str, String>,
 }
 
 /// The plan a round converged to.
@@ -229,16 +237,27 @@ impl Round {
         r.note(
             at,
             user,
+            "opened",
+            &[("minutes", deadline_minutes.to_string())],
             format!("開始一輪（{deadline_minutes} 分鐘後收斂）"),
         );
         Ok(r)
     }
 
-    fn note(&mut self, at: &str, by: &str, event: String) {
+    fn note(
+        &mut self,
+        at: &str,
+        by: &str,
+        code: &'static str,
+        args: &[(&'static str, String)],
+        event: String,
+    ) {
         self.log.push(LogEntry {
             at: at.to_string(),
             by: by.to_string(),
             event,
+            code,
+            args: args.iter().cloned().collect(),
         });
         if self.log.len() > MAX_LOG {
             self.log.remove(0);
@@ -265,7 +284,7 @@ impl Round {
             at: at.to_string(),
             text,
         });
-        self.note(at, user, "提出意見".into());
+        self.note(at, user, "opinion", &[], "提出意見".into());
         Ok(())
     }
 
@@ -283,6 +302,8 @@ impl Round {
         self.note(
             at,
             "laoban",
+            "converging",
+            &[("count", self.opinions.len().to_string())],
             format!("AI 開始收斂 {} 則意見", self.opinions.len()),
         );
     }
@@ -331,13 +352,25 @@ impl Round {
                 at: String::new(),
             })
             .collect();
-        self.note(at, "laoban", "修改計畫已產生，等待確認".into());
+        self.note(
+            at,
+            "laoban",
+            "converged",
+            &[],
+            "修改計畫已產生，等待確認".into(),
+        );
     }
 
     pub fn fail(&mut self, message: &str, at: &str) {
         self.state = State::Failed;
         self.message = message.to_string();
-        self.note(at, "laoban", format!("失敗：{message}"));
+        self.note(
+            at,
+            "laoban",
+            "failed",
+            &[("message", message.to_string())],
+            format!("失敗：{message}"),
+        );
     }
 
     fn confirmer_mut(&mut self, user: &str) -> Result<&mut Confirmer, RoundError> {
@@ -354,7 +387,7 @@ impl Round {
         let c = self.confirmer_mut(user)?;
         c.answer = Answer::Confirmed;
         c.at = at.to_string();
-        self.note(at, user, "確認".into());
+        self.note(at, user, "confirmed", &[], "確認".into());
         Ok(())
     }
 
@@ -366,7 +399,13 @@ impl Round {
         let c = self.confirmer_mut(user)?;
         c.answer = Answer::Skipped;
         c.at = at.to_string();
-        self.note(at, by, format!("略過 {user} 的確認"));
+        self.note(
+            at,
+            by,
+            "skipped",
+            &[("user", user.to_string())],
+            format!("略過 {user} 的確認"),
+        );
         Ok(())
     }
 
@@ -392,6 +431,8 @@ impl Round {
         self.note(
             at,
             user,
+            "objected",
+            &[("minutes", OBJECTION_MINUTES.to_string())],
             format!("有意見，{OBJECTION_MINUTES} 分鐘後重新收斂"),
         );
         Ok(())
@@ -406,13 +447,19 @@ impl Round {
 
     pub fn start_applying(&mut self, at: &str) {
         self.state = State::Applying;
-        self.note(at, "laoban", "全部確認，AI 開始修改程式".into());
+        self.note(
+            at,
+            "laoban",
+            "applying",
+            &[],
+            "全部確認，AI 開始修改程式".into(),
+        );
     }
 
     pub fn done(&mut self, result: serde_json::Value, at: &str) {
         self.state = State::Done;
         self.result = Some(result);
-        self.note(at, "laoban", "已部署新版本".into());
+        self.note(at, "laoban", "done", &[], "已部署新版本".into());
     }
 
     /// The initiator converges again after a failure.
@@ -437,7 +484,7 @@ impl Round {
             return Err(RoundError::WrongState(self.state));
         }
         self.state = State::Cancelled;
-        self.note(at, by, "取消這一輪".into());
+        self.note(at, by, "cancelled", &[], "取消這一輪".into());
         Ok(())
     }
 

@@ -140,10 +140,22 @@ laoban:
     hintPlan: 收斂後的修改計畫與目前版本的差異：標示的是部署後會新增、刪除、修改的部分。
     hintPlanSame: 收斂後的計畫沒有改變架構（模組與 API 都一樣），可能只改程式內容，或這次不需要修改。請看步驟與說明。
     lastLog: "上一輪的紀錄（{count}）"
-    notes: "AI 的說明："
+    notes: "AI 的說明（可能不準確）："
     lost: 進行中的一輪已經不在了，可能是後端重新啟動（一輪只存在後端記憶體裡）。需要的話請重新開一輪。
     showCurrent: 看目前的架構
     showPlan: 看收斂後的計畫
+    events:
+      opened: "開始一輪（{minutes} 分鐘後收斂）"
+      opinion: 提出意見
+      objected: "有意見，{minutes} 分鐘後重新收斂"
+      converging: "AI 開始收斂 {count} 則意見"
+      converged: 修改計畫已產生，等待確認
+      failed: "失敗：{message}"
+      confirmed: 確認
+      skipped: "略過 {user} 的確認"
+      applying: 全部確認，AI 開始修改程式
+      done: 已部署新版本
+      cancelled: 取消這一輪
   editor:
     hint: 直接修改這四個檔案。儲存後會成為新的一版（標記「手動修改」）並由 Fleet 部署，不呼叫 AI；儲存前會做和 AI 產生的程式一樣的檢查。
     hintReadOnly: 目前只能看。

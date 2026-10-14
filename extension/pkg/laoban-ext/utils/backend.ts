@@ -100,7 +100,7 @@ export interface RoundView {
   plan: { planId: string; summary: string; steps: string[]; architecture: Architecture; notes?: string } | null;
   message: string;
   result: ApplyResponse | null;
-  log: { at: string; by: string; event: string }[];
+  log: { at: string; by: string; event: string; code?: string; args?: Record<string, string> }[];
   you: { user: string; isInitiator: boolean; mustConfirm: boolean; canAddOpinion: boolean };
 }
 

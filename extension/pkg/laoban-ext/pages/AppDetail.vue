@@ -223,6 +223,9 @@ export default defineComponent({
 
     function discardLayout() {
       pending.value = {};
+      if (staleNotice.value && !editorDirty.value) {
+        reloadAll();
+      }
     }
 
     function saveLayoutNow() {
@@ -249,6 +252,10 @@ export default defineComponent({
       if (!busy.value) {
         flow.errorText.value = '';
       }
+      // Changes discarded while a newer version waits: load it now.
+      if (staleNotice.value && !pendingCount.value) {
+        reloadAll();
+      }
     }
 
     function addStructure(line: string) {
@@ -272,9 +279,9 @@ export default defineComponent({
     const roundNotice = computed(() => round.notice.value || deployNotice.value || staleNotice.value);
     const detailStatus = computed(() => (flow.phase.value === 'idle' ? t('laoban.detail.idle') : flow.statusText.value));
 
-    // Every 30 s: has someone else published a version? Reload when nothing
+    // Every 15 s: has someone else published a version? Reload when nothing
     // unsaved would be lost; otherwise say so.
-    const VERSION_POLL_MS = 30 * 1000;
+    const VERSION_POLL_MS = 15 * 1000;
     let versionTimer: ReturnType<typeof setInterval> | null = null;
 
     async function checkVersions() {
