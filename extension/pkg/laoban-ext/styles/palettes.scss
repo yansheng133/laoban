@@ -1,42 +1,31 @@
-// Palettes for the laoban pages (config/appearance.ts). Global, not scoped:
-// loaded once from AppearanceMenu.vue, which every laoban page shows.
+// Colours of the laoban pages. Global, not scoped: loaded from
+// styles/global.scss, which every laoban page imports.
 //
-// Each page's root element has class laoban-m0 and data-laoban-palette.
+// Two groups:
+// - .laoban-m0 (each page's root): version comparison marks (added /
+//   removed / changed) and warning text. The same in every palette, so they
+//   always mean the same thing.
+// - .laoban-arch (the 3D view, components/ArchitectureView.vue): the
+//   palette chosen with its 🎨 button (config/appearance.ts) sets the layer
+//   colours (--laoban-layer-*, --laoban-edge) and the colour of the selected
+//   component (--laoban-select). The palette affects the 3D view only; the
+//   page keeps Rancher's colours. .laoban-palette-swatch is a swatch in the
+//   picker, drawn with the palette it stands for.
+//
 // Rancher puts theme-light or theme-dark on <body>; the dark rules are more
-// specific, so they win. Inside the laoban pages a palette overrides
-// Rancher's primary/link variables (buttons, links, focus) and sets the 3D
-// view's layer colours (--laoban-layer-*, --laoban-edge, read by
-// ArchitectureView). "rancher" overrides nothing of Rancher's.
+// specific, so they win. The select colour of each palette must stay apart
+// from the comparison marks and its layers (checked in
+// utils/__tests__/palettes.test.ts).
 
-@mixin primary($primary, $hover, $text, $link, $soft) {
-  --primary: #{$primary};
-  --primary-hover: #{$hover};
-  --primary-hover-bg: #{$hover};
-  --primary-border: #{$primary};
-  --primary-text: #{$text};
-  --link: #{$link};
-  --non-primary-text: #{$link};
-  --non-primary-hover: #{$soft};
-  --secondary-border: #{$primary};
-  --on-secondary: #{$link};
-  --secondary-hover: #{$soft};
-  --on-tertiary: #{$link};
-  --tertiary-hover: #{$soft};
-}
-
-@mixin layers($network, $code, $data, $edge) {
+@mixin layers($network, $code, $data, $edge, $select) {
   --laoban-layer-network: #{$network};
   --laoban-layer-code: #{$code};
   --laoban-layer-data: #{$data};
   --laoban-edge: #{$edge};
+  --laoban-select: #{$select};
 }
 
-// Rancher's own colours; 3D layers in neutral blue/grey/teal. Version
-// comparison marks (added / removed / changed) are the same in every
-// palette, so they always mean the same thing.
 .laoban-m0 {
-  @include layers(#4a78c2, #6b7686, #2c8a87, #8a96a5);
-
   --laoban-diff-added: #1e8e4e;
   --laoban-diff-removed: #c43d32;
   --laoban-diff-changed: #c27c00;
@@ -46,48 +35,56 @@
 }
 
 .theme-dark .laoban-m0 {
-  @include layers(#6f98dc, #9aa5b4, #4fb3ae, #6d7a8a);
-
   --laoban-diff-added: #5fd38d;
   --laoban-diff-removed: #ff7b6b;
   --laoban-diff-changed: #f5b942;
   --laoban-text-warning: #f5b942;
 }
 
-// 海洋：blue.
-.laoban-m0[data-laoban-palette="ocean"] {
-  @include primary(#1f6fb2, #185a91, #ffffff, #1f6fb2, #e6f0f9);
-  @include layers(#1f6fb2, #4b6584, #0f9b8e, #7f93a8);
+// Rancher (default): neutral blue / grey / teal, violet selection.
+.laoban-arch,
+.laoban-palette-swatch {
+  @include layers(#4a78c2, #6b7686, #2c8a87, #8a96a5, #9a3fd5);
 }
 
-.theme-dark .laoban-m0[data-laoban-palette="ocean"] {
-  @include primary(#5fa8e8, #82bcef, #0d1b2a, #8cc4f5, #1a2c3d);
-  @include layers(#5fa8e8, #8fa3bb, #3cc7b8, #64788c);
+.theme-dark .laoban-arch,
+.theme-dark .laoban-palette-swatch {
+  @include layers(#6f98dc, #9aa5b4, #4fb3ae, #6d7a8a, #c48af5);
 }
 
-// 夕陽：orange.
-.laoban-m0[data-laoban-palette="sunset"] {
-  @include primary(#b04e14, #923f0e, #ffffff, #a8480f, #fbeee6);
-  @include layers(#d9822b, #8a6f5a, #b8455a, #a08f84);
+// 海洋：blue, magenta selection.
+.laoban-arch[data-laoban-palette="ocean"],
+.laoban-palette-swatch[data-laoban-palette="ocean"] {
+  @include layers(#1f6fb2, #4b6584, #0f9b8e, #7f93a8, #c0279a);
 }
 
-.theme-dark .laoban-m0[data-laoban-palette="sunset"] {
-  @include primary(#f29a5c, #f6b585, #2a160a, #f6b585, #3a2418);
-  @include layers(#f29a5c, #b8a395, #e07a8d, #7d6e66);
+.theme-dark .laoban-arch[data-laoban-palette="ocean"],
+.theme-dark .laoban-palette-swatch[data-laoban-palette="ocean"] {
+  @include layers(#5fa8e8, #8fa3bb, #3cc7b8, #64788c, #f06ccf);
 }
 
-// 葡萄：purple.
-.laoban-m0[data-laoban-palette="grape"] {
-  @include primary(#6a4bc4, #563aa8, #ffffff, #6a4bc4, #efeafa);
-  @include layers(#6a4bc4, #6b7686, #c2478f, #9a90b0);
+// 夕陽：orange, blue selection.
+.laoban-arch[data-laoban-palette="sunset"],
+.laoban-palette-swatch[data-laoban-palette="sunset"] {
+  @include layers(#d9822b, #8a6f5a, #b8455a, #a08f84, #2563eb);
 }
 
-.theme-dark .laoban-m0[data-laoban-palette="grape"] {
-  @include primary(#a08cf0, #b8a8f5, #1a1230, #b8a8f5, #2a2242);
-  @include layers(#a08cf0, #a3abb8, #e27bb7, #6f6888);
+.theme-dark .laoban-arch[data-laoban-palette="sunset"],
+.theme-dark .laoban-palette-swatch[data-laoban-palette="sunset"] {
+  @include layers(#f29a5c, #b8a395, #e07a8d, #7d6e66, #6ea8ff);
 }
 
-// The palette also marks the panels, so the choice is visible at a glance.
+// 葡萄：purple, cyan selection.
+.laoban-arch[data-laoban-palette="grape"],
+.laoban-palette-swatch[data-laoban-palette="grape"] {
+  @include layers(#6a4bc4, #6b7686, #c2478f, #9a90b0, #0e8fb0);
+}
+
+.theme-dark .laoban-arch[data-laoban-palette="grape"],
+.theme-dark .laoban-palette-swatch[data-laoban-palette="grape"] {
+  @include layers(#a08cf0, #a3abb8, #e27bb7, #6f6888, #3fd0f0);
+}
+
 .laoban-m0 .laoban-panel {
   border-top: 3px solid var(--primary);
 }

@@ -5,16 +5,24 @@
 // dragged along its layer plane (the page saves the new positions as a
 // version). Ported from web/viewer-prototype/index.html (three.js 0.160.0).
 //
+// The selected component gets a halo in the palette's select colour, its
+// connections take that colour, and components not connected to it fade.
+// The toolbar (top right) has the palette picker (🎨), "reset view", and
+// a `tools` slot for the page's own buttons (enlarge, full screen).
+//
 // Names and labels come from AI output: they are put on screen with
 // textContent only, never innerHTML.
 import {
-  defineComponent, onBeforeUnmount, onMounted, ref, watch, computed, PropType
+  defineComponent, onBeforeUnmount, onMounted, ref, watch, computed, nextTick, PropType
 } from 'vue';
 import { useStore } from 'vuex';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import { useText } from '../composables/useText';
+import { useAppearance } from '../composables/useAppearance';
+import { PALETTES } from '../config/appearance';
+import { relatedNodes } from '../utils/layout';
 import {
   layoutArchitecture, withPositions, LAYERS, LAYER_Y, KIND_HEIGHT, SceneLayout, Positions
 } from '../utils/layout';
@@ -52,7 +60,11 @@ export const COMPONENT_KINDS = ['app', 'service', 'database', 'ingress', 'extern
 const CLICK_SLOP = 4;
 const MAX_COORD = 100;
 
-const COLOR_TOKENS = ['layer-network', 'layer-code', 'layer-data', 'edge', 'diff-added', 'diff-removed', 'diff-changed'];
+const COLOR_TOKENS = ['layer-network', 'layer-code', 'layer-data', 'edge', 'select', 'diff-added', 'diff-removed', 'diff-changed'];
+
+// Opacity of components and connections that are not related to the
+// selected one.
+const FADED = 0.22;
 
 function disposeObject(root: THREE.Object3D) {
   root.traverse((obj) => {
@@ -126,6 +138,10 @@ export default defineComponent({
   setup(props, { emit }) {
     const store = useStore();
     const { t } = useText(store);
+    const { palette, setPalette } = useAppearance();
+    const paletteOpen = ref(false);
+    const paletteButton = ref<HTMLElement | null>(null);
+    const paletteMenu = ref<HTMLElement | null>(null);
 
     const root = ref<HTMLElement | null>(null);
     const stage = ref<HTMLElement | null>(null);
@@ -200,6 +216,44 @@ export default defineComponent({
       controls.update();
     }
 
+    /** Back to the starting angle and distance. */
+    function resetView() {
+      frameCamera(layout.value);
+      requestRender();
+    }
+
+    function choosePalette(id: string) {
+      setPalette(id);
+      paletteOpen.value = false;
+      paletteButton.value?.focus();
+    }
+
+    function onDocPointer(ev: PointerEvent) {
+      const target = ev.target as Node | null;
+
+      if (paletteOpen.value && target && !paletteMenu.value?.contains(target) && !paletteButton.value?.contains(target)) {
+        paletteOpen.value = false;
+      }
+    }
+
+    function onPaletteKey(ev: KeyboardEvent) {
+      if (ev.key === 'Escape') {
+        // Close the menu only; the enlarged view stays open.
+        ev.stopPropagation();
+        paletteOpen.value = false;
+        paletteButton.value?.focus();
+      }
+    }
+
+    function togglePalette() {
+      paletteOpen.value = !paletteOpen.value;
+      if (paletteOpen.value) {
+        nextTick(() => {
+          paletteMenu.value?.querySelector<HTMLElement>('[aria-checked="true"]')?.focus();
+        });
+      }
+    }
+
     function build(reframe = true) {
       if (!world) {
         return;
@@ -242,6 +296,8 @@ export default defineComponent({
       const positions = new Map<string, THREE.Vector3>();
 
       const diff = props.diff;
+      const selected = props.selected && l.nodes.some((n) => n.id === props.selected) ? props.selected : null;
+      const related = selected ? relatedNodes(l, selected) : null;
 
       for (const n of l.nodes) {
         const status = diff?.nodes[n.id];
@@ -257,7 +313,12 @@ export default defineComponent({
           material.transparent = true;
           material.opacity = 0.3;
         }
-        const mesh = new THREE.Mesh((GEOM[n.kind] || GEOM.module)(), material);
+        if (related && !related.has(n.id)) {
+          material.transparent = true;
+          material.opacity = Math.min(material.opacity, FADED);
+        }
+        const geometry = (GEOM[n.kind] || GEOM.module)();
+        const mesh = new THREE.Mesh(geometry, material);
 
         mesh.position.set(n.x, n.y, n.z);
         mesh.userData.nodeId = n.id;
@@ -270,10 +331,20 @@ export default defineComponent({
         if (status) {
           cls.push(`laoban-diff-${ status }`);
         }
-        if (props.selected === n.id) {
+        if (selected === n.id) {
           cls.push('laoban-selected');
-          material.emissive = colors['diff-changed'];
-          material.emissiveIntensity = Math.max(material.emissiveIntensity, 0.35);
+          material.emissive = colors.select;
+          material.emissiveIntensity = 0.45;
+          // Halo: the same shape, a little larger, drawn from the inside.
+          const halo = new THREE.Mesh(geometry.clone(), new THREE.MeshBasicMaterial({
+            color: colors.select, side: THREE.BackSide, transparent: true, opacity: 0.85, depthWrite: false
+          }));
+
+          halo.scale.setScalar(1.22);
+          halo.raycast = () => undefined;
+          mesh.add(halo);
+        } else if (related && !related.has(n.id)) {
+          cls.push('laoban-faded');
         }
         const lbl = makeLabel(`${ (status && DIFF_PREFIX[status]) || '' }${ n.name }`, cls.join(' '), props.badges?.[n.id] || 0);
 
@@ -295,22 +366,33 @@ export default defineComponent({
         }
         const curve = new THREE.QuadraticBezierCurve3(p0, mid, p2);
         const estatus = diff?.edges[edgeKey(e)];
-        const ecolor = estatus === 'added' || estatus === 'removed' || estatus === 'changed' ? colors[`diff-${ estatus }`] : colors.edge;
+        const touches = !!selected && (e.from === selected || e.to === selected);
+        let ecolor = estatus === 'added' || estatus === 'removed' || estatus === 'changed' ? colors[`diff-${ estatus }`] : colors.edge;
+        let eopacity = estatus === 'removed' ? 0.35 : 0.9;
+
+        if (touches) {
+          ecolor = colors.select;
+          eopacity = 1;
+        } else if (selected) {
+          eopacity = Math.min(eopacity, FADED);
+        }
         const line = new THREE.Line(
           new THREE.BufferGeometry().setFromPoints(curve.getPoints(32)),
           new THREE.LineBasicMaterial({
-            color: ecolor, transparent: true, opacity: estatus === 'removed' ? 0.35 : 0.9
+            color: ecolor, transparent: true, opacity: eopacity
           }),
         );
 
         world.add(line);
         // direction marker at 75%
-        const tip = new THREE.Mesh(new THREE.SphereGeometry(0.09, 10, 8), new THREE.MeshBasicMaterial({ color: ecolor }));
+        const tip = new THREE.Mesh(new THREE.SphereGeometry(touches ? 0.13 : 0.09, 10, 8), new THREE.MeshBasicMaterial({
+          color: ecolor, transparent: true, opacity: eopacity
+        }));
 
         tip.position.copy(curve.getPoint(0.75));
         world.add(tip);
         if (e.label) {
-          const lbl = makeLabel(e.label, 'laoban-edge-label');
+          const lbl = makeLabel(e.label, `laoban-edge-label${ touches ? ' laoban-edge-selected' : selected ? ' laoban-faded' : '' }`);
 
           lbl.position.copy(curve.getPoint(0.5));
           world.add(lbl);
@@ -462,15 +544,10 @@ export default defineComponent({
 
       resizeObserver = new ResizeObserver(resize);
       resizeObserver.observe(stage.value);
-      // Rancher switches themes with a class on <body>, and the laoban page
-      // switches palettes with data-laoban-palette; re-read the colors.
+      // Rancher switches themes with a class on <body>; re-read the colors.
       themeObserver = new MutationObserver(() => build(false));
       themeObserver.observe(document.body, { attributes: true, attributeFilter: ['class'] });
-      const page = root.value?.closest('[data-laoban-palette]');
-
-      if (page) {
-        themeObserver.observe(page, { attributes: true, attributeFilter: ['data-laoban-palette'] });
-      }
+      document.addEventListener('pointerdown', onDocPointer, true);
 
       resize();
       build();
@@ -489,10 +566,14 @@ export default defineComponent({
     watch(() => props.architecture, () => build());
     // Same graph, other marks, positions or selection: keep the camera.
     watch(() => [props.diff, props.positions, props.selected, props.badges], () => build(false), { deep: true });
+    // The palette is an attribute on the root: re-read the colors once the
+    // DOM has it.
+    watch(palette, () => nextTick(() => build(false)));
 
     onBeforeUnmount(() => {
       resizeObserver?.disconnect();
       themeObserver?.disconnect();
+      document.removeEventListener('pointerdown', onDocPointer, true);
       renderer?.setAnimationLoop(null);
       controls?.removeEventListener('change', requestRender);
       if (renderer) {
@@ -521,7 +602,23 @@ export default defineComponent({
     });
 
     return {
-      t, root, stage, labels, layout, webglFailed, layers: LAYERS, kinds: COMPONENT_KINDS
+      t,
+      root,
+      stage,
+      labels,
+      layout,
+      webglFailed,
+      layers:   LAYERS,
+      kinds:    COMPONENT_KINDS,
+      palettes: PALETTES,
+      palette,
+      paletteOpen,
+      paletteButton,
+      paletteMenu,
+      choosePalette,
+      togglePalette,
+      onPaletteKey,
+      resetView,
     };
   },
 });
@@ -531,7 +628,9 @@ export default defineComponent({
   <div
     ref="root"
     class="laoban-arch"
+    :data-laoban-palette="palette"
   >
+    <div class="laoban-arch-stage-wrap">
     <div
       ref="stage"
       class="laoban-arch-stage"
@@ -548,6 +647,60 @@ export default defineComponent({
       >
         {{ t('laoban.dashboard.arch.noWebgl') }}
       </p>
+    </div>
+    <div class="laoban-arch-tools">
+      <slot name="tools" />
+      <button
+        type="button"
+        class="btn btn-sm role-secondary"
+        :disabled="webglFailed"
+        @click="resetView"
+      >
+        {{ t('laoban.view3d.resetView') }}
+      </button>
+      <span class="laoban-palette">
+        <button
+          ref="paletteButton"
+          type="button"
+          class="btn btn-sm role-secondary"
+          aria-haspopup="true"
+          :aria-expanded="paletteOpen ? 'true' : 'false'"
+          :title="t('laoban.view3d.palette')"
+          :aria-label="t('laoban.view3d.palette')"
+          @click="togglePalette"
+        >
+          🎨
+        </button>
+        <div
+          v-if="paletteOpen"
+          ref="paletteMenu"
+          class="laoban-palette-menu"
+          role="radiogroup"
+          :aria-label="t('laoban.view3d.palette')"
+          @keydown="onPaletteKey"
+        >
+          <span class="laoban-palette-title">{{ t('laoban.view3d.palette') }}</span>
+          <button
+            v-for="p in palettes"
+            :key="p"
+            type="button"
+            role="radio"
+            class="laoban-palette-option"
+            :class="{ selected: palette === p }"
+            :aria-checked="palette === p ? 'true' : 'false'"
+            @click="choosePalette(p)"
+          >
+            <span
+              class="laoban-palette-swatch"
+              :data-laoban-palette="p"
+              aria-hidden="true"
+            ><i /><i /><i /><b /></span>
+            {{ t(`laoban.view3d.palettes.${ p }`) }}
+          </button>
+          <span class="text-muted laoban-palette-note">{{ t('laoban.view3d.paletteNote') }}</span>
+        </div>
+      </span>
+    </div>
     </div>
     <div class="laoban-arch-legend">
       <span
@@ -571,6 +724,12 @@ export default defineComponent({
           />{{ t(`laoban.diff.${ s }`, { count: diff.summary[s] }) }}
         </span>
       </template>
+      <span v-if="selected">
+        <i
+          class="swatch-select"
+          aria-hidden="true"
+        />{{ t('laoban.view3d.selected') }}
+      </span>
       <span class="text-muted">{{ editable ? t('laoban.layout.dragHint') : t('laoban.dashboard.arch.hint') }}</span>
     </div>
     <details class="laoban-arch-list">
@@ -599,14 +758,113 @@ export default defineComponent({
 </template>
 
 <style lang="scss" scoped>
-// Layer colours (--laoban-layer-*, --laoban-edge) come from the page's
-// palette (styles/palettes.scss) and follow Rancher's light/dark theme.
+// Layer and select colours (--laoban-layer-*, --laoban-edge,
+// --laoban-select) come from the view's palette (styles/palettes.scss) and
+// follow Rancher's light/dark theme.
 .laoban-arch {
   display: flex;
   flex-direction: column;
   gap: 8px;
   height: 100%;
   min-height: 0;
+}
+
+.laoban-arch-stage-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+// Toolbar over the top-right corner of the view.
+.laoban-arch-tools {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  max-width: calc(100% - 16px);
+}
+
+.laoban-palette {
+  position: relative;
+}
+
+.laoban-palette-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 200px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--border-radius);
+  background: var(--body-bg);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.laoban-palette-title {
+  font-weight: bold;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.laoban-palette-note {
+  font-size: 11px;
+  margin-top: 4px;
+}
+
+.laoban-palette-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--border-radius);
+  background: none;
+  color: var(--body-text);
+  text-align: left;
+  cursor: pointer;
+
+  &:hover {
+    background: var(--sortable-table-hover-bg, var(--box-bg));
+  }
+
+  &.selected {
+    border-color: var(--primary);
+    font-weight: bold;
+  }
+}
+
+// Three layer stripes and the select dot of the palette it stands for.
+.laoban-palette-swatch {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+
+  i {
+    width: 12px;
+    height: 14px;
+  }
+
+  i:nth-child(1) { background: var(--laoban-layer-network); }
+  i:nth-child(2) { background: var(--laoban-layer-code); }
+  i:nth-child(3) { background: var(--laoban-layer-data); }
+
+  b {
+    width: 10px;
+    height: 10px;
+    margin-left: 4px;
+    border-radius: 50%;
+    background: var(--laoban-select);
+  }
 }
 
 .laoban-arch-stage {
@@ -657,7 +915,17 @@ export default defineComponent({
   }
 
   :deep(.laoban-selected) {
-    outline: 2px solid var(--primary);
+    border: 2px solid var(--laoban-select);
+    box-shadow: 0 0 0 2px var(--laoban-select);
+    font-weight: bold;
+  }
+
+  :deep(.laoban-faded) {
+    opacity: 0.4;
+  }
+
+  :deep(.laoban-edge-selected) {
+    color: var(--laoban-select);
     font-weight: bold;
   }
 
@@ -719,6 +987,7 @@ export default defineComponent({
   .swatch-network { background: var(--laoban-layer-network); }
   .swatch-code { background: var(--laoban-layer-code); }
   .swatch-data { background: var(--laoban-layer-data); }
+  .swatch-select { background: var(--laoban-select); }
 }
 
 .laoban-arch-list {
