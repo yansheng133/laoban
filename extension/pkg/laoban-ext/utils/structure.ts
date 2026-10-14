@@ -10,9 +10,10 @@ export type StructureAction =
 
 type Translate = (key: string, args?: Record<string, unknown>) => string;
 
-const NAME = /^[\p{L}\p{N}][\p{L}\p{N}_-]{0,39}$/u;
+// Module names as the AI writes them, e.g. "todo_api.py".
+const NAME = /^[\p{L}\p{N}][\p{L}\p{N}._-]{0,39}$/u;
 
-/** A module name as typed, or '' if it is not one (letters, digits, - and _). */
+/** A module name as typed, or '' if it is not one (letters, digits, . - _). */
 export function moduleName(input: string): string {
   const s = (input || '').trim();
 

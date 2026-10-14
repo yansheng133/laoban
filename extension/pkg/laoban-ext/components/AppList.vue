@@ -82,7 +82,7 @@ export default defineComponent({
       case 'error':
         return 'text-error';
       case 'modified':
-        return 'text-warning';
+        return 'laoban-state-modified';
       default:
         return 'text-muted';
       }
@@ -199,6 +199,11 @@ export default defineComponent({
 </template>
 
 <style lang="scss" scoped>
+// Rancher's text-warning yellow is too light on white; see palettes.scss.
+.laoban-state-modified {
+  color: var(--laoban-text-warning);
+}
+
 .laoban-apps-head {
   display: flex;
   align-items: center;

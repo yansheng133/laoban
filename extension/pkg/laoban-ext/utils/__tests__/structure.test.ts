@@ -8,6 +8,7 @@ describe('moduleName', () => {
     expect(moduleName(' drinks ')).toBe('drinks');
     expect(moduleName('menu-view_2')).toBe('menu-view_2');
     expect(moduleName('飲料')).toBe('飲料');
+    expect(moduleName('todo_logic.py')).toBe('todo_logic.py');
   });
 
   it('refuses empty, spaces, markup and long names', () => {
@@ -15,6 +16,7 @@ describe('moduleName', () => {
     expect(moduleName('a b')).toBe('');
     expect(moduleName('<script>')).toBe('');
     expect(moduleName('-x')).toBe('');
+    expect(moduleName('.x')).toBe('');
     expect(moduleName('a'.repeat(41))).toBe('');
   });
 });

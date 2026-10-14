@@ -80,7 +80,7 @@ export default defineComponent({
     },
   },
 
-  emits: ['save', 'dirty'],
+  emits: ['save', 'dirty', 'discard'],
 
   setup(props, { emit }) {
     const store = useStore();
@@ -99,6 +99,7 @@ export default defineComponent({
     watch(() => changed.value.length > 0, (dirty) => emit('dirty', dirty));
 
     async function load() {
+      emit('discard');
       loading.value = true;
       try {
         const res = await getFiles(store, props.appName);
@@ -122,6 +123,8 @@ export default defineComponent({
       if (base.value) {
         draft.value = Object.fromEntries(FILES.map((f) => [f.key, read(base.value!.files, f)]));
       }
+      // The page clears a save error that no longer applies.
+      emit('discard');
     }
 
     function save() {

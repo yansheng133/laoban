@@ -113,6 +113,7 @@ laoban:
   structure:
     title: 改結構
     hint: 這裡的變更會寫進左邊的「要怎麼修改」，再按「產生修改計畫」由 AI 依新結構修改程式，確認後才部署。
+    nameRule: 只能用文字、數字與「.」「-」「_」，最多 40 個字。
     select: 模組
     none: 在 3D 圖點選，或從這裡選一個模組
     renameTo: 新名稱

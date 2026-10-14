@@ -215,6 +215,12 @@ export default defineComponent({
       flow.publishDirect('manual', (timeoutMs) => saveFiles(store, app, payload.baseCommit, payload.files, payload.note || t('laoban.editor.defaultNote'), timeoutMs));
     }
 
+    function clearError() {
+      if (!busy.value) {
+        flow.errorText.value = '';
+      }
+    }
+
     function addStructure(line: string) {
       prompt.value = appendLine(prompt.value, line);
     }
@@ -329,6 +335,7 @@ export default defineComponent({
       saveLayoutNow,
       saveCode,
       addStructure,
+      clearError,
     };
   },
 });
@@ -550,6 +557,7 @@ export default defineComponent({
             :reload-key="editorReload"
             @save="saveCode"
             @dirty="editorDirty = $event"
+            @discard="clearError"
           />
         </div>
         <div

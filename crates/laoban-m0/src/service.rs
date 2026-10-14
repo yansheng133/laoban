@@ -21,7 +21,7 @@ use crate::github::{GithubCommitter, GithubError};
 use crate::lock::{LockError, LockTable};
 use crate::meta::{self, AppMeta, HistoryEntry, Layout, Pos, META_FILE};
 use crate::plan::{
-    architecture_with_layout, parse_app_plan, valid_app_name, EDIT_PLAN_INSTRUCTIONS,
+    architecture_with_layout, carry_layout, parse_app_plan, valid_app_name, EDIT_PLAN_INSTRUCTIONS,
     PLAN_INSTRUCTIONS,
 };
 use crate::render::{render, rollout_hashes, RenderInput};
@@ -414,10 +414,13 @@ impl M0Service {
                     max_tokens: Some(PLAN_MAX_TOKENS),
                 })?;
                 let plan = parse_app_plan(&completion.content).map_err(M0Error::AiInvalidOutput)?;
+                // Positions follow renamed modules (shown in the plan and
+                // published on apply).
+                let layout = carry_layout(&current.plan, &plan, &base_app, &current.layout);
                 let base = BaseApp {
                     files: current.files,
                     history: current.history,
-                    layout: current.layout,
+                    layout,
                 };
                 (plan, completion, base_app, Some(base))
             }

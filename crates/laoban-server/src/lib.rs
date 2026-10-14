@@ -539,11 +539,19 @@ fn parse_head(head: &[u8]) -> Result<RequestHead, u16> {
             }
             content_length = Some(n);
         } else if name.eq_ignore_ascii_case("transfer-encoding") {
+            // Only plain chunked; anything else (gzip, a list) is refused.
+            if !value.eq_ignore_ascii_case("chunked") || chunked {
+                return Err(400);
+            }
             chunked = true;
         } else if name.eq_ignore_ascii_case("content-type") {
             let mime = value.split(';').next().unwrap_or("").trim();
             json_content_type = mime.eq_ignore_ascii_case("application/json");
         }
+    }
+    // Both framings at once is a request smuggling signal.
+    if chunked && content_length.is_some() {
+        return Err(400);
     }
     Ok(RequestHead {
         method: method.to_string(),
@@ -568,6 +576,91 @@ fn read_body<R: Read>(stream: &mut R, mut body: Vec<u8>, len: usize) -> Result<V
     }
     body.truncate(len);
     Ok(body)
+}
+
+/// Read a chunked body (RFC 9112 section 7.1) whose first bytes may already
+/// be in `rest`, at most `max` bytes of content. The Kubernetes API server
+/// forwards some requests to an aggregated API this way even when the
+/// client sent Content-Length. Extensions are ignored, trailers discarded.
+fn read_chunked<R: Read>(stream: &mut R, rest: Vec<u8>, max: usize) -> Result<Vec<u8>, u16> {
+    struct Buf<'a, R> {
+        stream: &'a mut R,
+        data: Vec<u8>,
+        pos: usize,
+    }
+    impl<R: Read> Buf<'_, R> {
+        fn fill(&mut self) -> Result<(), u16> {
+            let mut chunk = [0u8; 4096];
+            loop {
+                match self.stream.read(&mut chunk) {
+                    Ok(0) => return Err(400),
+                    Ok(n) => {
+                        self.data.drain(..self.pos);
+                        self.pos = 0;
+                        self.data.extend_from_slice(&chunk[..n]);
+                        return Ok(());
+                    }
+                    Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                    Err(e) => return Err(io_status(&e)),
+                }
+            }
+        }
+        /// One line without its CRLF (bare LF accepted), at most 4 KiB.
+        fn line(&mut self) -> Result<Vec<u8>, u16> {
+            loop {
+                if let Some(i) = self.data[self.pos..].iter().position(|&b| b == b'\n') {
+                    let mut line = self.data[self.pos..self.pos + i].to_vec();
+                    self.pos += i + 1;
+                    if line.last() == Some(&b'\r') {
+                        line.pop();
+                    }
+                    return Ok(line);
+                }
+                if self.data.len() - self.pos > 4096 {
+                    return Err(400);
+                }
+                self.fill()?;
+            }
+        }
+        fn take(&mut self, n: usize, out: &mut Vec<u8>) -> Result<(), u16> {
+            while self.data.len() - self.pos < n {
+                self.fill()?;
+            }
+            out.extend_from_slice(&self.data[self.pos..self.pos + n]);
+            self.pos += n;
+            Ok(())
+        }
+    }
+    let mut buf = Buf {
+        stream,
+        data: rest,
+        pos: 0,
+    };
+    let mut body = Vec::new();
+    loop {
+        let line = buf.line()?;
+        let size_text = std::str::from_utf8(&line).map_err(|_| 400u16)?;
+        let size_text = size_text.split(';').next().unwrap_or("").trim();
+        if size_text.is_empty()
+            || size_text.len() > 8
+            || !size_text.bytes().all(|b| b.is_ascii_hexdigit())
+        {
+            return Err(400);
+        }
+        let size = usize::from_str_radix(size_text, 16).map_err(|_| 400u16)?;
+        if size == 0 {
+            // Trailers until the empty line.
+            while !buf.line()?.is_empty() {}
+            return Ok(body);
+        }
+        if body.len() + size > max {
+            return Err(413);
+        }
+        buf.take(size, &mut body)?;
+        if !buf.line()?.is_empty() {
+            return Err(400);
+        }
+    }
 }
 
 fn route_basic(head: &RequestHead) -> (Response, bool) {
@@ -913,13 +1006,17 @@ fn handle_connection<C: Conn>(mut stream: C, api: &ApiState, access: &Access) ->
             false,
         )
     } else if is_api {
+        let too_large =
+            || Response::api_error(413, "bad_request", "請求內容太大（上限 512 KiB）。");
         let resp = if head.chunked {
-            bad_request("不支援 chunked 傳輸，請附上 Content-Length。")
+            match read_chunked(&mut stream, rest, MAX_BODY_BYTES) {
+                Ok(body) => route_api(api, &head, &body, caller.as_ref()),
+                Err(413) => too_large(),
+                Err(status) => Response::text(status, reason(status)),
+            }
         } else {
             match head.content_length.unwrap_or(0) {
-                n if n > MAX_BODY_BYTES => {
-                    Response::api_error(413, "bad_request", "請求內容太大（上限 512 KiB）。")
-                }
+                n if n > MAX_BODY_BYTES => too_large(),
                 n => match read_body(&mut stream, rest, n) {
                     Ok(body) => route_api(api, &head, &body, caller.as_ref()),
                     Err(status) => Response::text(status, reason(status)),
@@ -1019,6 +1116,31 @@ mod tests {
             .ok()
             .unwrap();
         assert!(h.chunked);
+        for bad in [
+            "POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\nContent-Length: 3\r\n\r\n",
+            "POST / HTTP/1.1\r\nTransfer-Encoding: gzip, chunked\r\n\r\n",
+            "POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\nTransfer-Encoding: chunked\r\n\r\n",
+        ] {
+            assert_eq!(parse_head(bad.as_bytes()).err(), Some(400), "{bad}");
+        }
+    }
+
+    #[test]
+    fn chunked_bodies() {
+        let read = |rest: &[u8], more: &[u8], max: usize| {
+            read_chunked(&mut std::io::Cursor::new(more.to_vec()), rest.to_vec(), max)
+        };
+        // Split across what was read with the head and the rest of the stream.
+        assert_eq!(read(b"4\r\n{\"a\"", b":1}\r\n0\r\n\r\n", 100), Err(400));
+        assert_eq!(
+            read(b"4\r\n{\"a\"\r\n3;ext=1\r\n:1}\r\n0\r\n\r\n", b"", 100).unwrap(),
+            b"{\"a\":1}"
+        );
+        assert_eq!(read(b"", b"0\r\nX-Trailer: y\r\n\r\n", 100).unwrap(), b"");
+        assert_eq!(read(b"2\r\n{}", b"\r\n0\r\n\r\n", 100).unwrap(), b"{}");
+        assert_eq!(read(b"", b"a\r\n0123456789\r\n0\r\n\r\n", 5), Err(413));
+        assert_eq!(read(b"", b"zz\r\n", 100), Err(400));
+        assert_eq!(read(b"", b"2\r\n{}", 100), Err(400), "truncated");
     }
 
     #[test]
