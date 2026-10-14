@@ -27,13 +27,17 @@ pub const MAX_HISTORY: usize = 20;
 pub struct HistoryEntry {
     /// RFC 3339 UTC.
     pub at: String,
-    /// `create` or `edit`.
+    /// `create`, `edit`, `restore`, `manual` or `layout`.
     pub kind: String,
     /// The user's request, masked.
     pub request: String,
     /// The plan summary, masked.
     pub summary: String,
     pub model: String,
+    /// Who made the change: the user name the Kubernetes API server
+    /// verified (Rancher user ID). Empty in entries made before identity.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub by: String,
 }
 
 /// A 3D position on the layer plane, set by dragging in the page.
@@ -191,6 +195,7 @@ mod tests {
             request: format!("r{n}"),
             summary: "s".into(),
             model: "model-a-test".into(),
+            by: String::new(),
         }
     }
 

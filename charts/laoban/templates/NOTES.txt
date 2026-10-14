@@ -2,14 +2,20 @@ laoban backend {{ .Chart.AppVersion }} is installed in namespace {{ .Release.Nam
 
 Image: {{ include "laoban.image" . }}{{ with .Values.image.tag }} (tag {{ . }}, informational){{ end }}
 
-There is no Ingress. The UI extension reaches the backend through Rancher's
-Kubernetes API proxy for this cluster (Rancher cluster ID {{ .Values.config.clusterId }}):
+There is no Ingress.
+{{- if .Values.aggregatedApi.enabled }} The API is an aggregated API of this cluster
+(APIService v1alpha1.api.laoban.yansheng133.github.io); the UI extension calls it
+through Rancher (cluster ID {{ .Values.config.clusterId }}):
 
-  /k8s/clusters/{{ .Values.config.clusterId }}/api/v1/namespaces/{{ .Release.Namespace }}/services/http:{{ include "laoban.fullname" . }}:{{ .Values.service.port }}/proxy/
+  /k8s/clusters/{{ .Values.config.clusterId }}/apis/api.laoban.yansheng133.github.io/v1alpha1/namespaces/{{ .Values.config.targetNamespace }}/
 
-For that URL to work, users need "get" (and "create" for POST) on the
-services/proxy subresource of this Service in {{ .Release.Namespace }}.
-The chart does not grant this; see README.
+Check that the API server reaches the backend:
+  kubectl get apiservice v1alpha1.api.laoban.yansheng133.github.io
+
+Users need the API's rules in {{ .Values.config.targetNamespace }}: the built-in edit/admin/view
+roles include them (ClusterRoles laoban-api-edit, laoban-api-view).
+{{- else }} aggregatedApi is disabled: only /healthz and /version are served.
+{{- end }}
 
 Generated apps are committed to {{ .Values.github.repo }} on GitHub and
 deployed by Fleet to namespace {{ .Values.config.targetNamespace }} (see deploy/m0/).
@@ -22,7 +28,7 @@ Check the pod:
 The backend's ServiceAccount can only impersonate users and groups
 (ClusterRole {{ include "laoban.clusterRoleName" . }}). Anyone who can read its
 token can act as any user: restrict access to namespace {{ .Release.Namespace }}.
-{{- else }}
+{{- else if not .Values.aggregatedApi.enabled }}
 
 Impersonation is disabled: the ServiceAccount has no RBAC and no token is mounted.
 {{- end }}

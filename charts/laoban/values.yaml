@@ -38,6 +38,16 @@ impersonation:
     - principalid
     - username
 
+# The backend serves its API as a Kubernetes aggregated API
+# (api.laoban.yansheng133.github.io/v1alpha1), so the API server verifies who
+# is calling and checks RBAC before a request reaches it (docs/m0-design.md).
+aggregatedApi:
+  enabled: true
+  # Container and Service port of the TLS API endpoint.
+  port: 8443
+  # Add the API's rules to the built-in edit/admin/view ClusterRoles.
+  aggregateToDefaultRoles: true
+
 # The backend has no Ingress. The UI extension reaches it through Rancher's
 # Kubernetes API proxy (see README).
 service:

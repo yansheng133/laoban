@@ -51,18 +51,21 @@ extension/
 
 | 用途 | 請求 | 經過 |
 |---|---|---|
-| 頁首資訊（模型、部署目標、程式庫、token 用量／上限） | `GET /api/config` | Rancher service proxy |
-| 產生計畫 | `POST /api/plan` `{prompt, appName?}` | Rancher service proxy |
-| 確認並部署 | `POST /api/apply` `{planId}` | Rancher service proxy |
+| 頁首資訊（模型、部署目標、程式庫、token 用量／上限） | `GET /config` | Rancher → rke2 API server → 後端 |
+| 產生計畫 | `POST /plans` `{prompt, appName?｜baseApp?}` | 同上 |
+| 確認並部署 | `POST /plans/<planId>/apply` | 同上 |
+| 應用、版本、程式碼、版面、編輯鎖 | `/apps/...` | 同上 |
 | 部署狀態 | `GET /v1/fleet.cattle.io.bundles/fleet-default` | Steve（Rancher local 叢集） |
 
-後端基底路徑是 Rancher 對 rke2 叢集上 `laoban-system/laoban` Service 的代理：
+後端是 rke2 上的 Kubernetes aggregated API，基底路徑：
 
 ```
-/k8s/clusters/c-m-26kbxk5f/api/v1/namespaces/laoban-system/services/http:laoban:8080/proxy
+/k8s/clusters/c-m-26kbxk5f/apis/api.laoban.yansheng133.github.io/v1alpha1/namespaces/laoban-dev
 ```
 
-叢集 ID、namespace、Service 名稱與 port 都集中在 `pkg/laoban-ext/config/backend.ts`，換環境只改這個檔案。
+API server 先驗證使用者並檢查這個 namespace 的權限，再把使用者轉給後端（docs/m0-design.md 的「身分」）。沒有權限時 API server 回 Kubernetes 的 `Status`，頁面顯示「你沒有這個操作的權限…」。
+
+叢集 ID、API group 與 namespace 都集中在 `pkg/laoban-ext/config/backend.ts`，換環境只改這個檔案。
 
 - **等候時間**：產生計畫與部署都要呼叫 AI，通常 30～60 秒。請求進行中按鈕會停用，狀態列顯示已等候的秒數；超過 3 分鐘視為逾時。
 - **錯誤**：後端回 `{"error": {"code", "message"}}` 時，直接顯示 `message`（後端負責寫成繁體中文）。連不到後端、Rancher 代理回的錯誤或格式不對的回應，顯示頁面自己的通用訊息。

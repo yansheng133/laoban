@@ -1,5 +1,5 @@
-# ClusterIP only, no Ingress. The UI extension reaches this Service through
-# Rancher's Kubernetes API proxy (services/proxy subresource), see README.
+# ClusterIP only, no Ingress. The API port is reached by the Kubernetes API
+# server (APIService, apiservice.yaml); the http port serves the probes.
 apiVersion: v1
 kind: Service
 metadata:
@@ -16,3 +16,9 @@ spec:
       port: {{ .Values.service.port }}
       targetPort: http
       protocol: TCP
+    {{- if .Values.aggregatedApi.enabled }}
+    - name: https
+      port: {{ .Values.aggregatedApi.port }}
+      targetPort: https
+      protocol: TCP
+    {{- end }}

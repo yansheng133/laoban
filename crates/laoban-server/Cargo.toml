@@ -11,9 +11,16 @@ rust-version.workspace = true
 laoban-ai = { path = "../laoban-ai", features = ["http"] }
 laoban-m0 = { path = "../laoban-m0" }
 serde_json.workspace = true
+# TLS for the aggregated API port; same version and crypto provider as ureq's.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+ureq.workspace = true
+# Reads the common name of the API server's proxy client certificate.
+x509-parser = "0.17"
 signal-hook = { version = "0.4", default-features = false, features = ["iterator"] }
 
 [dev-dependencies]
 # Already in the dependency tree via signal-hook; used to send SIGTERM in tests.
 libc = "0.2"
 laoban-mockhttp = { path = "../laoban-mockhttp" }
+# Test certificates for the TLS port.
+rcgen = "0.13"

@@ -8,6 +8,7 @@ import { defineComponent, ref, PropType } from 'vue';
 import { useStore } from 'vuex';
 import { useI18n } from '@shell/composables/useI18n';
 import { safeHttpsUrl, VersionEntry } from '../utils/backend';
+import { userLabel } from '../composables/useEditLock';
 
 export default defineComponent({
   name: 'LaobanVersionList',
@@ -45,8 +46,13 @@ export default defineComponent({
       emit('restore', commit);
     }
 
+    // Who made the version (verified by the API server), when recorded.
+    function byLabel(v: VersionEntry): string {
+      return v.by ? userLabel(store, v.by) : '';
+    }
+
     return {
-      t, confirming, formatTime, kindLabel, confirm, safeHttpsUrl
+      t, confirming, formatTime, kindLabel, confirm, safeHttpsUrl, byLabel
     };
   },
 });
@@ -81,7 +87,7 @@ export default defineComponent({
             v-if="v.current"
             class="badge-state bg-success"
           >{{ t('laoban.versions.current') }}</span>
-          <span class="text-muted">{{ formatTime(v.at) }} · {{ kindLabel(v.kind) }}</span>
+          <span class="text-muted">{{ formatTime(v.at) }} · {{ kindLabel(v.kind) }}<template v-if="byLabel(v)"> · {{ byLabel(v) }}</template></span>
           <a
             v-if="safeHttpsUrl(v.commitUrl)"
             :href="safeHttpsUrl(v.commitUrl)"

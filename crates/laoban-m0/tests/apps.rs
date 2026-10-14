@@ -18,6 +18,7 @@ fn entry(at: &str, kind: &str, request: &str) -> HistoryEntry {
         request: request.into(),
         summary: "摘要".into(),
         model: MODEL.into(),
+        by: String::new(),
     }
 }
 
@@ -136,7 +137,7 @@ fn edit_plan_then_apply() {
     // Without the edit lock nothing happens.
     let err = h
         .service
-        .plan(&edit_req("加上飲料", "breakfast"), None)
+        .plan(&edit_req("加上飲料", "breakfast"), Some("u-tester"))
         .unwrap_err();
     assert_eq!((err.status(), err.code()), (409, "lock_required"));
     assert_eq!(h.provider.call_count(), 0);
@@ -452,7 +453,7 @@ fn restore_refuses_the_current_content_and_bad_input() {
         .restore(
             "todo",
             &laoban_m0::RestoreRequest { commit: V1.into() },
-            None,
+            Some("u-tester"),
         )
         .unwrap_err();
     assert_eq!(err.code(), "lock_required");
@@ -521,41 +522,37 @@ fn save_files(
 #[test]
 fn edit_lock_is_one_person_at_a_time() {
     let h = todo_harness();
-    let token = lock(&h, "todo");
+    let me = lock(&h, "todo");
     assert_eq!(
         h.service.get_app("todo").unwrap()["lock"]["holder"],
-        "tester"
+        "u-tester"
     );
-    let err = h
-        .service
-        .lock(
-            "todo",
-            &laoban_m0::LockRequest {
-                holder: "someone".into(),
-            },
-        )
-        .unwrap_err();
+    let err = h.service.lock("todo", Some("u-someone")).unwrap_err();
     assert_eq!((err.status(), err.code()), (409, "locked"));
-    assert!(err.user_message().contains("tester"));
-    // Wrong token: refused, naming the holder.
-    let err = save_files(&h, files_value(), V2, Some("00ff")).unwrap_err();
+    assert!(err.user_message().contains("u-tester"));
+    // Someone else: refused, naming the holder.
+    let err = save_files(&h, files_value(), V2, Some("u-someone")).unwrap_err();
     assert_eq!(err.code(), "locked");
-    h.service.renew_lock("todo", Some(&token)).unwrap();
-    h.service.unlock("todo", Some(&token)).unwrap();
+    // No verified caller at all.
+    assert_eq!(
+        h.service.lock("todo", None).unwrap_err().code(),
+        "unauthenticated"
+    );
+    assert_eq!(
+        save_files(&h, files_value(), V2, None).unwrap_err().code(),
+        "unauthenticated"
+    );
+    h.service.renew_lock("todo", Some(&me)).unwrap();
+    // Releasing someone else's lock does nothing.
+    h.service.unlock("todo", Some("u-someone")).unwrap();
+    assert_eq!(
+        h.service.get_app("todo").unwrap()["lock"]["holder"],
+        "u-tester"
+    );
+    h.service.unlock("todo", Some(&me)).unwrap();
     assert!(h.service.get_app("todo").unwrap()["lock"].is_null());
-    assert!(h
-        .service
-        .lock(
-            "todo",
-            &laoban_m0::LockRequest {
-                holder: "someone".into()
-            }
-        )
-        .is_ok());
-    let err = h
-        .service
-        .lock("nope", &laoban_m0::LockRequest { holder: "x".into() })
-        .unwrap_err();
+    assert!(h.service.lock("todo", Some("u-someone")).is_ok());
+    let err = h.service.lock("nope", Some("u-x")).unwrap_err();
     assert_eq!(err.code(), "app_not_found");
     assert_eq!(writes(&h.github), 0);
 }
@@ -637,7 +634,7 @@ fn layout_save_is_a_new_version_and_shows_in_the_architecture() {
         .service
         .save_layout("todo", &req(positions.clone(), V2), None)
         .unwrap_err();
-    assert_eq!(err.code(), "locked", "held by someone, no token sent");
+    assert_eq!(err.code(), "unauthenticated", "no verified caller");
     let bad: meta::Layout =
         serde_json::from_value(json!({"no-such-node": {"x": 1, "z": 1}})).unwrap();
     assert_eq!(

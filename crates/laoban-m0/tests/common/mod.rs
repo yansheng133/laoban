@@ -284,17 +284,10 @@ pub fn blob_contents(github: &MockServer) -> Vec<String> {
         .collect()
 }
 
-/// Take the edit lock on `app` as a test user; returns the token.
+/// Take the edit lock on `app` as the test user; returns the user name
+/// to pass as the verified caller.
 #[allow(dead_code)]
 pub fn lock(h: &Harness, app: &str) -> String {
-    let v = h
-        .service
-        .lock(
-            app,
-            &laoban_m0::LockRequest {
-                holder: "tester".into(),
-            },
-        )
-        .unwrap();
-    v["token"].as_str().unwrap().to_string()
+    h.service.lock(app, Some("u-tester")).unwrap();
+    "u-tester".to_string()
 }

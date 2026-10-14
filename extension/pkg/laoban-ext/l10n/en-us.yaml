@@ -86,6 +86,7 @@ laoban:
   lock:
     acquiring: Getting the edit lock…
     held: "You ({name}) are editing this app; others can only view it. Released when you leave the page or after 3 minutes without activity."
+    other: "{name} is editing this app."
     otherUnknown: Someone else is editing this app.
     readOnly: View only.
     lost: The edit lock expired (idle too long, or this app was opened in another tab). View only.

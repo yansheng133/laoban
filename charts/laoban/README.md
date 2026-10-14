@@ -72,17 +72,27 @@ helm upgrade --install laoban charts/laoban -n laoban-system \
 
 `replicaCount` 只允許 1：M0 的計畫存在後端記憶體，稽核暫存區開啟時也是 ReadWriteOnce 卷，多副本要先改設計，HA 留到之後。更新策略用 `Recreate`，避免新舊 Pod 同時掛同一個 RWO 卷而卡住。
 
-## 存取方式：沒有 Ingress
+## 存取方式：aggregated API，沒有 Ingress
 
-Service 只有 ClusterIP，不建 Ingress。UI extension 經由 Rancher 的 Kubernetes API proxy 呼叫後端，M0 的位址是：
+Service 只有 ClusterIP，不建 Ingress。後端以 Kubernetes aggregated API 掛在所在叢集的 API server 底下（`aggregatedApi.enabled`，預設開啟），UI extension 經 Rancher 的 `/k8s/clusters/<cluster ID>` 代理呼叫：
 
 ```
-/k8s/clusters/c-m-26kbxk5f/api/v1/namespaces/laoban-system/services/http:laoban:8080/proxy/<path>
+/k8s/clusters/c-m-26kbxk5f/apis/api.laoban.yansheng133.github.io/v1alpha1/namespaces/<config.targetNamespace>/<path>
 ```
 
-- 後半段 `/api/v1/namespaces/<ns>/services/[https:]<name>[:<port>]/proxy` 是 Kubernetes API server proxy 的標準格式；預設走 HTTP，要 HTTPS 就在 Service 名稱前加 `https:`［5］。
-- 前綴 `/k8s/clusters/<cluster ID>` 把請求送進 Rancher 對該叢集的 Kubernetes API proxy（local 叢集的 ID 是 `local`，M0 用 `rke2` 的 ID `c-m-26kbxk5f`，由 `config.clusterId` 設定）。這個前綴在 Rancher 官方文件裡沒找到明文說明，目前的依據是 Rancher 論壇上的說明［6］與 Rancher 官方文件中「monitoring-ui-view 讓使用者經 Rancher proxy 存取 Prometheus／Grafana UI」的描述［7］。
-- 使用者要對這個 Service 的 `services/proxy` 子資源有權限才走得通：HTTP GET 對應 `get`、POST 對應 `create`、PUT 對應 `update`［8］；RBAC 用 `services/proxy` 表示子資源，可以用 `resourceNames` 限定到這個 Service［9］。**本 chart 不授予這個權限**，由管理者在 `rke2` 上依需求綁定（M0 只有 Sam 一個使用者）。
+chart 建立的物件：
+
+| 物件 | 用途 |
+|---|---|
+| `APIService` `v1alpha1.api.laoban.yansheng133.github.io` | 把這個 API group 交給 Service 的 `https` port（8443）；`caBundle` 是下面那張憑證的 CA |
+| Secret `<fullname>-apiserver-tls` | 後端的 TLS 憑證與 CA，由 Helm 在第一次安裝時產生（10 年），升級時沿用（`lookup`；離線 `helm template` 一律重新產生） |
+| RoleBinding（`kube-system`） | 讓後端 ServiceAccount 讀 `extension-apiserver-authentication`（內建 Role `extension-apiserver-authentication-reader`），後端唯一的權限 |
+| ClusterRole `laoban-api-edit`／`laoban-api-view` | 使用者權限，帶 `aggregate-to-edit`／`-admin`／`-view` 標籤（`aggregatedApi.aggregateToDefaultRoles`）：在目標 namespace 有內建 edit／admin 的人可以用，有 view 的人可以看 |
+
+- API server 先驗證使用者並用他的 RBAC 授權，才把請求轉給後端；轉送時用自己的 proxy client 憑證，使用者放在 `X-Remote-User`／`X-Remote-Group`。後端只接受這張憑證（docs/m0-design.md 的「身分」）。
+- 因為要讀上面的 ConfigMap，開啟 `aggregatedApi` 時 Pod 會掛 ServiceAccount token。
+- Rancher 管理者有全部權限。Rancher Project 成員的角色是 Rancher 的 role template，不是內建 edit；要讓他們使用，得在 role template 加上這個 API group 的規則（第一階段的角色設計處理）。
+- 前綴 `/k8s/clusters/<cluster ID>` 把請求送進 Rancher 對該叢集的 Kubernetes API proxy（local 叢集的 ID 是 `local`，M0 用 `rke2` 的 ID `c-m-26kbxk5f`，由 `config.clusterId` 設定）［6］［7］。
 
 ## 身分委派模型（第一階段，M0 關閉）
 

@@ -58,11 +58,12 @@ spec:
       {{- end }}
     spec:
       serviceAccountName: {{ include "laoban.serviceAccountName" . }}
-      {{- if .Values.impersonation.enabled }}
-      # Phase 1: the backend calls the Kubernetes API with impersonation headers, so it needs its token.
+      {{- if or .Values.impersonation.enabled .Values.aggregatedApi.enabled }}
+      # The backend reads kube-system/extension-apiserver-authentication at
+      # startup (aggregated API) and, in phase 1, impersonates users.
       automountServiceAccountToken: true
       {{- else }}
-      # M0: the backend calls no Kubernetes API and has no RBAC; no token in the pod.
+      # The backend calls no Kubernetes API and has no RBAC; no token in the pod.
       automountServiceAccountToken: false
       {{- end }}
       {{- with .Values.imagePullSecrets }}
@@ -81,10 +82,23 @@ spec:
             - name: http
               containerPort: {{ .Values.containerPort }}
               protocol: TCP
+            {{- if .Values.aggregatedApi.enabled }}
+            - name: https
+              containerPort: {{ .Values.aggregatedApi.port }}
+              protocol: TCP
+            {{- end }}
           env:
             # Contract with the Rust server (docs/m0-design.md). Keep in sync with its config.
             - name: LAOBAN_LISTEN_ADDR
               value: {{ printf "0.0.0.0:%d" (int .Values.containerPort) | quote }}
+            {{- if .Values.aggregatedApi.enabled }}
+            - name: LAOBAN_TLS_LISTEN_ADDR
+              value: {{ printf "0.0.0.0:%d" (int .Values.aggregatedApi.port) | quote }}
+            - name: LAOBAN_TLS_CERT_FILE
+              value: /etc/laoban/apiserver-tls/tls.crt
+            - name: LAOBAN_TLS_KEY_FILE
+              value: /etc/laoban/apiserver-tls/tls.key
+            {{- end }}
             - name: LAOBAN_POD_NAMESPACE
               valueFrom:
                 fieldRef:
@@ -156,6 +170,11 @@ spec:
             # readOnlyRootFilesystem: give the process a writable /tmp.
             - name: tmp
               mountPath: /tmp
+            {{- if .Values.aggregatedApi.enabled }}
+            - name: apiserver-tls
+              mountPath: /etc/laoban/apiserver-tls
+              readOnly: true
+            {{- end }}
             {{- if and .Values.syslog.enabled .Values.syslog.tls.enabled }}
             - name: syslog-ca
               mountPath: /etc/laoban/syslog-ca
@@ -178,6 +197,13 @@ spec:
         - name: tmp
           emptyDir:
             sizeLimit: 64Mi
+        {{- if .Values.aggregatedApi.enabled }}
+        - name: apiserver-tls
+          secret:
+            secretName: {{ printf "%s-apiserver-tls" (include "laoban.fullname" .) }}
+            # Group-readable: the process runs as a non-root user with fsGroup.
+            defaultMode: 0440
+        {{- end }}
         {{- if and .Values.syslog.enabled .Values.syslog.tls.enabled }}
         - name: syslog-ca
           configMap:

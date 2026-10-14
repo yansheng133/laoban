@@ -134,9 +134,7 @@ export default defineComponent({
     }
 
     const lock = useEditLock(store);
-    const flow = useDeployFlow(store, t, {
-      onReady: reloadAll, lockToken: lock.token, onError: lock.noteError
-    });
+    const flow = useDeployFlow(store, t, { onReady: reloadAll, onError: lock.noteError });
 
     const busy = computed(() => flow.busy.value || loading.value);
     const canEdit = computed(() => lock.canEdit.value && !!detail.value);
@@ -205,7 +203,7 @@ export default defineComponent({
       }
       const positions = { ...pending.value };
 
-      flow.publishDirect('layout', (timeoutMs, l) => saveLayout(store, app, currentCommit.value, positions, timeoutMs, l));
+      flow.publishDirect('layout', (timeoutMs) => saveLayout(store, app, currentCommit.value, positions, timeoutMs));
     }
 
     function saveCode(payload: { baseCommit: string; files: AppFiles; note: string }) {
@@ -214,7 +212,7 @@ export default defineComponent({
       if (!app || !canEdit.value || busy.value) {
         return;
       }
-      flow.publishDirect('manual', (timeoutMs, l) => saveFiles(store, app, payload.baseCommit, payload.files, payload.note || t('laoban.editor.defaultNote'), timeoutMs, l));
+      flow.publishDirect('manual', (timeoutMs) => saveFiles(store, app, payload.baseCommit, payload.files, payload.note || t('laoban.editor.defaultNote'), timeoutMs));
     }
 
     function addStructure(line: string) {
@@ -234,7 +232,7 @@ export default defineComponent({
       case 'held':
         return t('laoban.lock.held', { name: lock.holder.value });
       case 'other':
-        return `${ lock.otherMessage.value || t('laoban.lock.otherUnknown') } ${ t('laoban.lock.readOnly') }`;
+        return lock.otherHolder.value ? `${ t('laoban.lock.other', { name: lock.otherHolder.value }) } ${ t('laoban.lock.readOnly') }` : `${ lock.otherMessage.value || t('laoban.lock.otherUnknown') } ${ t('laoban.lock.readOnly') }`;
       case 'lost':
         return t('laoban.lock.lost');
       case 'error':

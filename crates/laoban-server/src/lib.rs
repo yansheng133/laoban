@@ -31,10 +31,16 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use laoban_m0::{
-    ApplyRequest, LockRequest, M0Error, M0Service, PlanRequestBody, RestoreRequest,
-    SaveFilesRequest, SaveLayoutRequest,
+    ApplyRequest, M0Error, M0Service, PlanRequestBody, RestoreRequest, SaveFilesRequest,
+    SaveLayoutRequest,
 };
 use serde_json::json;
+
+pub mod identity;
+pub mod kube;
+pub mod tls;
+
+use identity::{AuthConfig, Caller};
 
 /// Package name, baked in at compile time.
 pub const NAME: &str = env!("CARGO_PKG_NAME");
@@ -65,8 +71,8 @@ const MAX_HEAD_BYTES: usize = 8 * 1024;
 /// Largest request body accepted on `/api/*`, in bytes.
 /// Hand-edited code (up to 192 KiB of files, JSON-escaped) must fit.
 pub const MAX_BODY_BYTES: usize = 512 * 1024;
-/// Request header carrying the edit lock token.
-const LOCK_HEADER: &str = "x-laoban-lock";
+/// At most this many request headers are kept.
+const MAX_HEADERS: usize = 100;
 /// Upper bound on connections handled at the same time.
 const MAX_CONNECTIONS: usize = 64;
 /// Read and write timeout per socket operation while receiving a request
@@ -88,12 +94,35 @@ pub enum ApiState {
     Unconfigured(String),
 }
 
+/// Where the caller of `/api/*` (and the aggregated API paths) comes from.
+#[derive(Clone)]
+enum Access {
+    /// Only `/healthz` and `/version` (the plain port in production).
+    ProbesOnly,
+    /// The aggregated API port: mutual TLS with the API server, user from
+    /// the request headers it sets.
+    Verified(Arc<AuthConfig>),
+    /// Tests only: `/api/*` on the plain port, user from `X-Remote-User`
+    /// without any verification.
+    InsecureHeaders,
+}
+
+/// The aggregated API port.
+struct TlsPort {
+    listener: TcpListener,
+    local_addr: SocketAddr,
+    config: Arc<rustls::ServerConfig>,
+    auth: Arc<AuthConfig>,
+}
+
 /// A bound, not yet running server.
 pub struct Server {
     listener: TcpListener,
     local_addr: SocketAddr,
     shutdown: Arc<AtomicBool>,
     api: Arc<ApiState>,
+    plain_access: Access,
+    tls: Option<TlsPort>,
 }
 
 /// Cloneable handle that stops a running [`Server`].
@@ -101,6 +130,7 @@ pub struct Server {
 pub struct ShutdownHandle {
     flag: Arc<AtomicBool>,
     wake_addr: SocketAddr,
+    wake_tls: Option<SocketAddr>,
 }
 
 impl ShutdownHandle {
@@ -111,6 +141,9 @@ impl ShutdownHandle {
         // `accept` blocks, so poke the listener to make the loop notice the
         // flag. A failure here only means the listener is already gone.
         let _ = TcpStream::connect_timeout(&self.wake_addr, Duration::from_secs(1));
+        if let Some(addr) = self.wake_tls {
+            let _ = TcpStream::connect_timeout(&addr, Duration::from_secs(1));
+        }
     }
 }
 
@@ -133,7 +166,45 @@ impl Server {
             local_addr,
             shutdown: Arc::new(AtomicBool::new(false)),
             api: Arc::new(api),
+            plain_access: Access::ProbesOnly,
+            tls: None,
         })
+    }
+
+    /// Also serve the API as a Kubernetes aggregated API over TLS on
+    /// `addr`, with the server certificate and key (PEM) and the API
+    /// server's request-header settings.
+    pub fn with_tls<A: ToSocketAddrs>(
+        mut self,
+        addr: A,
+        cert_pem: &[u8],
+        key_pem: &[u8],
+        auth: AuthConfig,
+    ) -> io::Result<Self> {
+        let config = tls::server_config(cert_pem, key_pem, &auth)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+        let listener = TcpListener::bind(addr)?;
+        let local_addr = listener.local_addr()?;
+        self.tls = Some(TlsPort {
+            listener,
+            local_addr,
+            config,
+            auth: Arc::new(auth),
+        });
+        Ok(self)
+    }
+
+    /// Tests only: serve `/api/*` on the plain port and take the user from
+    /// an unverified `X-Remote-User` header. Never used by the binary.
+    #[doc(hidden)]
+    pub fn insecure_plain_api_for_tests(mut self) -> Self {
+        self.plain_access = Access::InsecureHeaders;
+        self
+    }
+
+    /// The TLS port's address, if any.
+    pub fn tls_addr(&self) -> Option<SocketAddr> {
+        self.tls.as_ref().map(|t| t.local_addr)
     }
 
     /// The address actually bound (useful with port 0).
@@ -143,54 +214,44 @@ impl Server {
 
     /// Handle used to stop the server from another thread or a signal handler.
     pub fn shutdown_handle(&self) -> ShutdownHandle {
-        let mut wake_addr = self.local_addr;
-        // Connecting to the unspecified address is not portable; use loopback.
-        if wake_addr.ip().is_unspecified() {
-            wake_addr.set_ip(match wake_addr {
-                SocketAddr::V4(_) => Ipv4Addr::LOCALHOST.into(),
-                SocketAddr::V6(_) => Ipv6Addr::LOCALHOST.into(),
-            });
-        }
+        let wake_addr = loopback(self.local_addr);
+        let wake_tls = self.tls.as_ref().map(|t| loopback(t.local_addr));
         ShutdownHandle {
             flag: Arc::clone(&self.shutdown),
             wake_addr,
+            wake_tls,
         }
     }
 
     /// Serve until [`ShutdownHandle::shutdown`] is called.
     pub fn run(self) -> io::Result<()> {
         let active = Arc::new(AtomicUsize::new(0));
-        for conn in self.listener.incoming() {
-            if self.shutdown.load(Ordering::SeqCst) {
-                break;
-            }
-            let stream = match conn {
-                Ok(stream) => stream,
-                // Transient accept errors (for example the peer reset before
-                // accept, or a file descriptor limit) must not stop the server.
-                Err(_) => continue,
-            };
-            if active.fetch_add(1, Ordering::SeqCst) >= MAX_CONNECTIONS {
-                active.fetch_sub(1, Ordering::SeqCst);
-                let mut stream = stream;
-                let _ = stream.set_write_timeout(Some(IO_TIMEOUT));
-                let _ = write_response(&mut stream, &Response::text(503, "busy"), false);
-                continue;
-            }
-            let worker_active = Arc::clone(&active);
+        let tls_thread = self.tls.map(|port| {
+            let shutdown = Arc::clone(&self.shutdown);
+            let active = Arc::clone(&active);
             let api = Arc::clone(&self.api);
-            let spawned = thread::Builder::new()
-                .name("laoban-conn".into())
-                .spawn(move || {
-                    let _ = handle_connection(stream, &api);
-                    worker_active.fetch_sub(1, Ordering::SeqCst);
+            thread::spawn(move || {
+                let access = Access::Verified(Arc::clone(&port.auth));
+                let config = Arc::clone(&port.config);
+                let auth = Arc::clone(&port.auth);
+                accept_loop(&port.listener, &shutdown, &active, move |stream| {
+                    let _ = stream.set_read_timeout(Some(IO_TIMEOUT));
+                    let _ = stream.set_write_timeout(Some(IO_TIMEOUT));
+                    // Not the API server (or a broken handshake): no
+                    // response, nothing to log per connection.
+                    if let Ok(tls) = tls::accept(&config, &auth, stream) {
+                        let _ = handle_connection(tls, &api, &access);
+                    }
                 });
-            if let Err(e) = spawned {
-                // The closure never ran (the stream was dropped with it), so
-                // release the slot here.
-                active.fetch_sub(1, Ordering::SeqCst);
-                eprintln!("laoban-server: failed to spawn connection thread: {e}");
-            }
+            })
+        });
+        let api = Arc::clone(&self.api);
+        let access = self.plain_access.clone();
+        accept_loop(&self.listener, &self.shutdown, &active, move |stream| {
+            let _ = handle_connection(stream, &api, &access);
+        });
+        if let Some(t) = tls_thread {
+            let _ = t.join();
         }
 
         let deadline = Instant::now() + DRAIN_TIMEOUT;
@@ -198,6 +259,87 @@ impl Server {
             thread::sleep(Duration::from_millis(20));
         }
         Ok(())
+    }
+}
+
+fn loopback(mut addr: SocketAddr) -> SocketAddr {
+    // Connecting to the unspecified address is not portable; use loopback.
+    if addr.ip().is_unspecified() {
+        addr.set_ip(match addr {
+            SocketAddr::V4(_) => Ipv4Addr::LOCALHOST.into(),
+            SocketAddr::V6(_) => Ipv6Addr::LOCALHOST.into(),
+        });
+    }
+    addr
+}
+
+/// Accept connections until shutdown, one thread each, at most
+/// [`MAX_CONNECTIONS`] at a time across both ports.
+fn accept_loop<F>(
+    listener: &TcpListener,
+    shutdown: &Arc<AtomicBool>,
+    active: &Arc<AtomicUsize>,
+    handle: F,
+) where
+    F: Fn(TcpStream) + Send + Sync + Clone + 'static,
+{
+    for conn in listener.incoming() {
+        if shutdown.load(Ordering::SeqCst) {
+            break;
+        }
+        let stream = match conn {
+            Ok(stream) => stream,
+            // Transient accept errors (for example the peer reset before
+            // accept, or a file descriptor limit) must not stop the server.
+            Err(_) => continue,
+        };
+        if active.fetch_add(1, Ordering::SeqCst) >= MAX_CONNECTIONS {
+            active.fetch_sub(1, Ordering::SeqCst);
+            // Dropped: on the TLS port a plain-text answer would be noise.
+            continue;
+        }
+        let worker_active = Arc::clone(active);
+        let handle = handle.clone();
+        let spawned = thread::Builder::new()
+            .name("laoban-conn".into())
+            .spawn(move || {
+                handle(stream);
+                worker_active.fetch_sub(1, Ordering::SeqCst);
+            });
+        if let Err(e) = spawned {
+            // The closure never ran (the stream was dropped with it), so
+            // release the slot here.
+            active.fetch_sub(1, Ordering::SeqCst);
+            eprintln!("laoban-server: failed to spawn connection thread: {e}");
+        }
+    }
+}
+
+/// A connection the handler reads the request from and writes the
+/// response to: plain TCP or TLS over TCP.
+trait Conn: Read + Write {
+    fn tcp(&self) -> &TcpStream;
+    /// Close gracefully (see [`linger_close`]).
+    fn finish(self);
+}
+
+impl Conn for TcpStream {
+    fn tcp(&self) -> &TcpStream {
+        self
+    }
+    fn finish(self) {
+        linger_close(self);
+    }
+}
+
+impl Conn for tls::TlsStream {
+    fn tcp(&self) -> &TcpStream {
+        &self.sock
+    }
+    fn finish(mut self) {
+        self.conn.send_close_notify();
+        let _ = self.conn.complete_io(&mut self.sock);
+        linger_close(self.sock);
     }
 }
 
@@ -270,7 +412,7 @@ fn reason(status: u16) -> &'static str {
     }
 }
 
-fn write_response(stream: &mut TcpStream, resp: &Response, head_only: bool) -> io::Result<()> {
+fn write_response<W: Write>(stream: &mut W, resp: &Response, head_only: bool) -> io::Result<()> {
     let mut out = format!(
         "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n",
         resp.status,
@@ -309,7 +451,7 @@ fn io_status(e: &io::Error) -> u16 {
     }
 }
 
-fn read_head(stream: &mut TcpStream) -> Result<Head, u16> {
+fn read_head<R: Read>(stream: &mut R) -> Result<Head, u16> {
     let mut buf = Vec::with_capacity(1024);
     let mut chunk = [0u8; 1024];
     loop {
@@ -352,8 +494,9 @@ struct RequestHead {
     content_length: Option<usize>,
     chunked: bool,
     json_content_type: bool,
-    /// `X-Laoban-Lock`, when it looks like a token.
-    lock_token: Option<String>,
+    /// All headers as (lower-case name, trimmed value), at most
+    /// [`MAX_HEADERS`].
+    headers: Vec<(String, String)>,
 }
 
 fn parse_head(head: &[u8]) -> Result<RequestHead, u16> {
@@ -373,13 +516,17 @@ fn parse_head(head: &[u8]) -> Result<RequestHead, u16> {
     let mut content_length: Option<usize> = None;
     let mut chunked = false;
     let mut json_content_type = false;
-    let mut lock_token = None;
+    let mut headers = Vec::new();
     for line in lines {
         let line = line.trim_end_matches('\r');
         let Some((name, value)) = line.split_once(':') else {
             continue;
         };
         let value = value.trim();
+        if headers.len() >= MAX_HEADERS {
+            return Err(431);
+        }
+        headers.push((name.trim().to_ascii_lowercase(), value.to_string()));
         if name.eq_ignore_ascii_case("content-length") {
             let n: usize = value
                 .parse()
@@ -396,11 +543,6 @@ fn parse_head(head: &[u8]) -> Result<RequestHead, u16> {
         } else if name.eq_ignore_ascii_case("content-type") {
             let mime = value.split(';').next().unwrap_or("").trim();
             json_content_type = mime.eq_ignore_ascii_case("application/json");
-        } else if name.eq_ignore_ascii_case(LOCK_HEADER)
-            && value.len() <= 64
-            && value.bytes().all(|b| b.is_ascii_hexdigit())
-        {
-            lock_token = Some(value.to_string());
         }
     }
     Ok(RequestHead {
@@ -409,12 +551,12 @@ fn parse_head(head: &[u8]) -> Result<RequestHead, u16> {
         content_length,
         chunked,
         json_content_type,
-        lock_token,
+        headers,
     })
 }
 
 /// Read the rest of a body whose first bytes may already be in `body`.
-fn read_body(stream: &mut TcpStream, mut body: Vec<u8>, len: usize) -> Result<Vec<u8>, u16> {
+fn read_body<R: Read>(stream: &mut R, mut body: Vec<u8>, len: usize) -> Result<Vec<u8>, u16> {
     let mut chunk = [0u8; 4096];
     while body.len() < len {
         match stream.read(&mut chunk) {
@@ -488,6 +630,8 @@ enum Route<'a> {
     Layout(&'a str),
     Plan,
     Apply,
+    /// `POST .../plans/<id>/apply` (aggregated API path).
+    ApplyPlan(&'a str),
 }
 
 impl<'a> Route<'a> {
@@ -498,6 +642,12 @@ impl<'a> Route<'a> {
             "/api/plan" => return Some(Route::Plan),
             "/api/apply" => return Some(Route::Apply),
             _ => {}
+        }
+        if let Some(rest) = path.strip_prefix("/api/plans/") {
+            return match rest.split('/').collect::<Vec<_>>().as_slice() {
+                [id, "apply"] if !id.is_empty() => Some(Route::ApplyPlan(id)),
+                _ => None,
+            };
         }
         let rest = path.strip_prefix("/api/apps/")?;
         let parts: Vec<&str> = rest.split('/').collect();
@@ -533,9 +683,35 @@ impl<'a> Route<'a> {
     }
 }
 
-/// Handle `/api/*`. `body` is empty for requests without one.
-fn route_api(api: &ApiState, head: &RequestHead, body: &[u8]) -> Response {
-    let Some(route) = Route::parse(head.path.as_str()) else {
+/// Handle `/api/*` and the aggregated API paths (`/apis/...`). `body` is
+/// empty for requests without one; `caller` is the verified user.
+fn route_api(api: &ApiState, head: &RequestHead, body: &[u8], caller: Option<&Caller>) -> Response {
+    let gv = format!("/apis/{}/{}", identity::GROUP, identity::VERSION);
+    if head.method == "GET" && head.path == gv {
+        return Response::json(200, identity::discovery_json());
+    }
+    if head.method == "GET" && head.path == format!("/apis/{}", identity::GROUP) {
+        return Response::json(200, identity::group_json());
+    }
+    let internal;
+    let path = if head.path.starts_with("/apis/") {
+        let ns = match api {
+            ApiState::Ready(s) => s.target_namespace().to_string(),
+            ApiState::Unconfigured(message) => {
+                return Response::api_error(500, "internal", message)
+            }
+        };
+        match identity::internal_path(&head.path, &ns) {
+            Some(p) => {
+                internal = p;
+                internal.as_str()
+            }
+            None => return Response::api_error(404, "bad_request", "找不到這個 API。"),
+        }
+    } else {
+        head.path.as_str()
+    };
+    let Some(route) = Route::parse(path) else {
         return Response::api_error(404, "bad_request", "找不到這個 API。");
     };
     let allowed = route.method(&head.method);
@@ -569,11 +745,22 @@ fn route_api(api: &ApiState, head: &RequestHead, body: &[u8]) -> Response {
             _ => return Response::api_error(404, "bad_request", "找不到這個 API。"),
         });
     }
-    let lock = head.lock_token.as_deref();
-    // Renew and unlock carry only the header; no body to check.
+    let lock = caller.map(|c| c.user.as_str());
+    // Lock calls carry no body; the user is the verified caller.
     match route {
+        Route::Lock(name) => return reply(service.lock(name, lock)),
         Route::RenewLock(name) => return reply(service.renew_lock(name, lock)),
         Route::Unlock(name) => return reply(service.unlock(name, lock)),
+        Route::ApplyPlan(id) => {
+            let mut resp = reply(service.apply(
+                &ApplyRequest {
+                    plan_id: id.to_string(),
+                },
+                lock,
+            ));
+            resp.plan_id = Some(id.to_string()).filter(|id| valid_plan_id(id));
+            return resp;
+        }
         _ => {}
     }
     // Requiring a JSON content type also keeps plain cross-site form
@@ -610,12 +797,6 @@ fn route_api(api: &ApiState, head: &RequestHead, body: &[u8]) -> Response {
                 return bad_request("請求格式不正確：需要 {\"commit\": \"…\"}。");
             };
             reply(service.restore(name, &req, lock))
-        }
-        Route::Lock(name) => {
-            let Ok(req) = serde_json::from_slice::<LockRequest>(body) else {
-                return bad_request("請求格式不正確：需要 {\"holder\": \"…\"}。");
-            };
-            reply(service.lock(name, &req))
         }
         Route::Files(name) => {
             let Ok(req) = serde_json::from_slice::<SaveFilesRequest>(body) else {
@@ -655,7 +836,7 @@ fn log_detail_safe(s: &str) -> String {
     format!("\"{inner}\"")
 }
 
-fn log_line(method: &str, path: &str, resp: &Response, started: Instant) {
+fn log_line(method: &str, path: &str, resp: &Response, started: Instant, user: Option<&str>) {
     let mut line = format!(
         "{NAME}: {} {} {} {}ms",
         log_safe(method),
@@ -663,6 +844,10 @@ fn log_line(method: &str, path: &str, resp: &Response, started: Instant) {
         resp.status,
         started.elapsed().as_millis()
     );
+    if let Some(u) = user {
+        line.push_str(" user=");
+        line.push_str(&log_safe(u));
+    }
     if let Some(id) = &resp.plan_id {
         line.push_str(" planId=");
         line.push_str(id);
@@ -678,18 +863,18 @@ fn log_line(method: &str, path: &str, resp: &Response, started: Instant) {
     eprintln!("{line}");
 }
 
-fn handle_connection(mut stream: TcpStream, api: &ApiState) -> io::Result<()> {
+fn handle_connection<C: Conn>(mut stream: C, api: &ApiState, access: &Access) -> io::Result<()> {
     let started = Instant::now();
-    stream.set_read_timeout(Some(IO_TIMEOUT))?;
-    stream.set_write_timeout(Some(IO_TIMEOUT))?;
+    stream.tcp().set_read_timeout(Some(IO_TIMEOUT))?;
+    stream.tcp().set_write_timeout(Some(IO_TIMEOUT))?;
     let (head_bytes, rest) = match read_head(&mut stream) {
         Ok(Head::Empty) => return Ok(()),
         Ok(Head::Complete(head, rest)) => (head, rest),
         Err(status) => {
             let resp = Response::text(status, reason(status));
-            log_line("-", "-", &resp, started);
+            log_line("-", "-", &resp, started, None);
             write_response(&mut stream, &resp, false)?;
-            linger_close(stream);
+            stream.finish();
             return Ok(());
         }
     };
@@ -697,37 +882,66 @@ fn handle_connection(mut stream: TcpStream, api: &ApiState) -> io::Result<()> {
         Ok(h) => h,
         Err(status) => {
             let resp = Response::text(status, reason(status));
-            log_line("-", "-", &resp, started);
+            log_line("-", "-", &resp, started, None);
             write_response(&mut stream, &resp, false)?;
-            linger_close(stream);
+            stream.finish();
             return Ok(());
         }
     };
 
-    let (resp, head_only) = if head.path == "/api" || head.path.starts_with("/api/") {
+    let is_api =
+        head.path == "/api" || head.path.starts_with("/api/") || head.path.starts_with("/apis/");
+    let caller = match access {
+        Access::Verified(auth) => auth.caller(&head.headers),
+        Access::InsecureHeaders => head
+            .headers
+            .iter()
+            .find(|(n, v)| n == "x-remote-user" && !v.is_empty())
+            .map(|(_, v)| Caller {
+                user: v.clone(),
+                groups: Vec::new(),
+            }),
+        Access::ProbesOnly => None,
+    };
+    let (resp, head_only) = if is_api && matches!(access, Access::ProbesOnly) {
+        (
+            Response::api_error(
+                404,
+                "bad_request",
+                "這個連接埠只提供健康檢查；API 經 Kubernetes API server 提供。",
+            ),
+            false,
+        )
+    } else if is_api {
         let resp = if head.chunked {
             bad_request("不支援 chunked 傳輸，請附上 Content-Length。")
         } else {
             match head.content_length.unwrap_or(0) {
                 n if n > MAX_BODY_BYTES => {
-                    Response::api_error(413, "bad_request", "請求內容太大（上限 64 KiB）。")
+                    Response::api_error(413, "bad_request", "請求內容太大（上限 512 KiB）。")
                 }
                 n => match read_body(&mut stream, rest, n) {
-                    Ok(body) => route_api(api, &head, &body),
+                    Ok(body) => route_api(api, &head, &body, caller.as_ref()),
                     Err(status) => Response::text(status, reason(status)),
                 },
             }
         };
         // Generating a plan or code can take a long time; the response
         // itself gets a generous write timeout.
-        stream.set_write_timeout(Some(API_WRITE_TIMEOUT))?;
+        stream.tcp().set_write_timeout(Some(API_WRITE_TIMEOUT))?;
         (resp, false)
     } else {
         route_basic(&head)
     };
-    log_line(&head.method, &head.path, &resp, started);
+    log_line(
+        &head.method,
+        &head.path,
+        &resp,
+        started,
+        caller.as_ref().map(|c| c.user.as_str()),
+    );
     write_response(&mut stream, &resp, head_only)?;
-    linger_close(stream);
+    stream.finish();
     Ok(())
 }
 

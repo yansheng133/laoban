@@ -1,0 +1,69 @@
+{{- /*
+RBAC for the aggregated API.
+
+1. The backend reads kube-system/extension-apiserver-authentication (the
+   request-header CA and allowed names) with the built-in Role
+   extension-apiserver-authentication-reader. That is its only permission.
+
+2. Users: the API server authorizes every call on this API group with the
+   caller's own RBAC, namespaced, so access follows the namespace and thus
+   the Rancher Project. These ClusterRoles carry the standard aggregation
+   labels, so anyone with the built-in "edit"/"admin" role in the target
+   namespace can use laoban and anyone with "view" can look. Rancher's
+   project-level role templates are separate: a Rancher admin has access;
+   project members need a role template that includes these rules (phase 1).
+*/ -}}
+{{- if .Values.aggregatedApi.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ printf "laoban-auth-reader-%s-%s" .Release.Namespace (include "laoban.fullname" .) | trunc 63 | trimSuffix "-" }}
+  namespace: kube-system
+  labels:
+    {{- include "laoban.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: extension-apiserver-authentication-reader
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "laoban.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- if .Values.aggregatedApi.aggregateToDefaultRoles }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: laoban-api-edit
+  labels:
+    {{- include "laoban.labels" . | nindent 4 }}
+    rbac.authorization.k8s.io/aggregate-to-edit: "true"
+    rbac.authorization.k8s.io/aggregate-to-admin: "true"
+rules:
+  - apiGroups: ["api.laoban.yansheng133.github.io"]
+    resources:
+      - config
+      - apps
+      - apps/versions
+      - apps/files
+      - apps/layout
+      - apps/restore
+      - apps/lock
+      - apps/unlock
+      - plans
+      - plans/apply
+    verbs: ["get", "list", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: laoban-api-view
+  labels:
+    {{- include "laoban.labels" . | nindent 4 }}
+    rbac.authorization.k8s.io/aggregate-to-view: "true"
+rules:
+  - apiGroups: ["api.laoban.yansheng133.github.io"]
+    resources: ["config", "apps", "apps/versions", "apps/files"]
+    verbs: ["get", "list"]
+{{- end }}
+{{- end }}
