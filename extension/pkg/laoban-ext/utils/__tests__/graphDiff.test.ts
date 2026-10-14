@@ -1,5 +1,7 @@
 import { describe, it, expect } from '@jest/globals';
-import { mergeForDiff, edgeKey, REMOVED_OFFSET_Z } from '../graphDiff';
+import {
+  mergeForDiff, edgeKey, REMOVED_OFFSET_Z, diffEntries
+} from '../graphDiff';
 import type { Architecture } from '../layout';
 
 const base: Architecture = {
@@ -79,5 +81,26 @@ describe('mergeForDiff', () => {
     expect(mergeForDiff(null, target).summary.added).toBe(6);
     expect(mergeForDiff(base, undefined).summary.removed).toBe(6);
     expect(mergeForDiff(target, target).summary).toEqual({ added: 0, removed: 0, changed: 0 });
+  });
+});
+
+describe('diffEntries', () => {
+  it('lists the marked parts: added, changed, removed; components first', () => {
+    const list = diffEntries(mergeForDiff(base, target));
+
+    expect(list.map((e) => [e.status, e.type, e.label])).toEqual([
+      ['added', 'node', 'drinks'],
+      ['added', 'edge', 'shop-api → cache'],
+      ['changed', 'node', 'shop-api'],
+      ['removed', 'node', 'cart'],
+      ['removed', 'edge', 'shop-api → tbl'],
+    ]);
+    // A connection selects its source component.
+    expect(list[1].nodeId).toBe('app-api');
+  });
+
+  it('is empty without a comparison or without changes', () => {
+    expect(diffEntries(null)).toEqual([]);
+    expect(diffEntries(mergeForDiff(target, target))).toEqual([]);
   });
 });

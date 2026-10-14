@@ -160,6 +160,20 @@ laoban:
       applying: all confirmed, the AI started changing the code
       done: new version deployed
       cancelled: cancelled this round
+  expand:
+    open: Enlarge
+    close: Close
+    fullscreen: Full screen
+    exitFullscreen: Exit full screen
+    versions: Versions
+    changes: Changes
+    noComparison: Pick a version on the left, or view a round's converged plan, to list what is added, removed or changed compared with the current version.
+    noChanges: "No architecture changes compared with the current version (the code may still differ)."
+    connection: connection
+    status:
+      added: Added
+      removed: Removed
+      changed: Changed
   editor:
     hint: Edit the four files directly. Saving creates a new version (marked "Manual edit") that Fleet deploys, without calling the AI; the files get the same checks as AI-generated code.
     hintReadOnly: View only.

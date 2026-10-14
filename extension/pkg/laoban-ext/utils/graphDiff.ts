@@ -122,3 +122,55 @@ export function mergeForDiff(base: Architecture | null | undefined, target: Arch
     },
   };
 }
+
+// One line of the change list next to the enlarged 3D view.
+export interface DiffEntry {
+  // Node id, or the edge key for a connection.
+  id: string;
+  type: 'node' | 'edge';
+  status: 'added' | 'removed' | 'changed';
+  // What to show: the component's name, or "from → to" for a connection.
+  label: string;
+  // Node kind or layer, for a small hint next to the label.
+  kind: string;
+  // For a connection: the node to select when it is clicked.
+  nodeId: string;
+}
+
+const STATUS_ORDER: Record<DiffEntry['status'], number> = { added: 0, changed: 1, removed: 2 };
+
+// The marked parts of a comparison as a list: added, then changed, then
+// removed; components before connections; by name within each group.
+export function diffEntries(d: MergedDiff | null | undefined): DiffEntry[] {
+  if (!d) {
+    return [];
+  }
+  const all = nodes(d.architecture);
+  const byId = new Map(all.map((n) => [n.id, n]));
+  const name = (id: string) => byId.get(id)?.name || id;
+  const out: DiffEntry[] = [];
+
+  for (const n of all) {
+    const s = d.nodes[n.id];
+
+    if (s === 'added' || s === 'removed' || s === 'changed') {
+      out.push({
+        id: n.id, type: 'node', status: s, label: name(n.id), kind: n.kind || n.layer, nodeId: n.id
+      });
+    }
+  }
+  for (const e of edges(d.architecture)) {
+    const k = edgeKey(e);
+    const s = d.edges[k];
+
+    if (s === 'added' || s === 'removed' || s === 'changed') {
+      out.push({
+        id: k, type: 'edge', status: s, label: `${ name(String(e.from)) } → ${ name(String(e.to)) }`, kind: e.kind || '', nodeId: String(e.from)
+      });
+    }
+  }
+
+  return out.sort((a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status] ||
+    (a.type === b.type ? 0 : a.type === 'node' ? -1 : 1) ||
+    a.label.localeCompare(b.label));
+}
