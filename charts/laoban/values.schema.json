@@ -3,7 +3,14 @@
   "title": "laoban backend chart values",
   "type": "object",
   "additionalProperties": false,
-  "required": ["image", "anthropic", "github", "config", "service", "persistence"],
+  "required": [
+    "image",
+    "anthropic",
+    "github",
+    "config",
+    "service",
+    "persistence"
+  ],
   "definitions": {
     "name": {
       "description": "Kubernetes object name (DNS-1123 subdomain) or empty.",
@@ -11,15 +18,31 @@
       "maxLength": 253,
       "pattern": "^$|^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
     },
-    "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+    "port": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535
+    },
     "probe": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "initialDelaySeconds": { "type": "integer", "minimum": 0 },
-        "periodSeconds": { "type": "integer", "minimum": 1 },
-        "timeoutSeconds": { "type": "integer", "minimum": 1 },
-        "failureThreshold": { "type": "integer", "minimum": 1 }
+        "initialDelaySeconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "periodSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "failureThreshold": {
+          "type": "integer",
+          "minimum": 1
+        }
       }
     }
   },
@@ -33,34 +56,68 @@
     "image": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["repository", "digest"],
+      "required": [
+        "repository",
+        "digest"
+      ],
       "properties": {
-        "repository": { "type": "string", "minLength": 1 },
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
         "digest": {
           "description": "Required at render time. Image digest, sha256:<64 lowercase hex>.",
           "type": "string",
           "pattern": "^$|^sha256:[a-f0-9]{64}$"
         },
-        "tag": { "description": "Informational only.", "type": "string" },
-        "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] }
+        "tag": {
+          "description": "Informational only.",
+          "type": "string"
+        },
+        "pullPolicy": {
+          "type": "string",
+          "enum": [
+            "Always",
+            "IfNotPresent",
+            "Never"
+          ]
+        }
       }
     },
     "imagePullSecrets": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["name"],
-        "properties": { "name": { "type": "string", "minLength": 1 } }
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
       }
     },
-    "nameOverride": { "type": "string" },
-    "fullnameOverride": { "type": "string" },
+    "nameOverride": {
+      "type": "string"
+    },
+    "fullnameOverride": {
+      "type": "string"
+    },
     "serviceAccount": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "name": { "$ref": "#/definitions/name" },
-        "annotations": { "type": "object", "additionalProperties": { "type": "string" } }
+        "name": {
+          "$ref": "#/definitions/name"
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
       }
     },
     "impersonation": {
@@ -75,43 +132,106 @@
           "description": "Extra keys the backend may set with Impersonate-Extra-<key>.",
           "type": "array",
           "uniqueItems": true,
-          "items": { "type": "string", "pattern": "^[a-z0-9.-]+$" }
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9.-]+$"
+          }
+        }
+      }
+    },
+    "aggregatedApi": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "description": "Serve the API as a Kubernetes aggregated API (TLS, verified callers). When false only the probes are served.",
+          "type": "boolean"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "aggregateToDefaultRoles": {
+          "description": "Add the API rules to the built-in edit/admin/view ClusterRoles.",
+          "type": "boolean"
         }
       }
     },
     "service": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["port"],
-      "properties": { "port": { "$ref": "#/definitions/port" } }
+      "required": [
+        "port"
+      ],
+      "properties": {
+        "port": {
+          "$ref": "#/definitions/port"
+        }
+      }
     },
-    "containerPort": { "$ref": "#/definitions/port" },
+    "containerPort": {
+      "$ref": "#/definitions/port"
+    },
     "probes": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "path": { "type": "string", "pattern": "^/" },
-        "liveness": { "$ref": "#/definitions/probe" },
-        "readiness": { "$ref": "#/definitions/probe" }
+        "path": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "liveness": {
+          "$ref": "#/definitions/probe"
+        },
+        "readiness": {
+          "$ref": "#/definitions/probe"
+        }
       }
     },
-    "resources": { "type": "object" },
-    "podSecurityContext": { "type": "object" },
-    "containerSecurityContext": { "type": "object" },
+    "resources": {
+      "type": "object"
+    },
+    "podSecurityContext": {
+      "type": "object"
+    },
+    "containerSecurityContext": {
+      "type": "object"
+    },
     "persistence": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["enabled"],
+      "required": [
+        "enabled"
+      ],
       "properties": {
-        "enabled": { "type": "boolean" },
-        "storageClass": { "type": "string" },
-        "size": { "type": "string", "pattern": "^[0-9]+(Ki|Mi|Gi|Ti)$" },
+        "enabled": {
+          "type": "boolean"
+        },
+        "storageClass": {
+          "type": "string"
+        },
+        "size": {
+          "type": "string",
+          "pattern": "^[0-9]+(Ki|Mi|Gi|Ti)$"
+        },
         "accessModes": {
           "type": "array",
           "minItems": 1,
-          "items": { "type": "string", "enum": ["ReadWriteOnce", "ReadWriteOncePod", "ReadWriteMany", "ReadOnlyMany"] }
+          "items": {
+            "type": "string",
+            "enum": [
+              "ReadWriteOnce",
+              "ReadWriteOncePod",
+              "ReadWriteMany",
+              "ReadOnlyMany"
+            ]
+          }
         },
-        "mountPath": { "type": "string", "pattern": "^/" }
+        "mountPath": {
+          "type": "string",
+          "pattern": "^/"
+        }
       }
     },
     "ai": {
@@ -137,7 +257,10 @@
           "description": "Required at render time unless ai.baseUrl is set. Name of an existing Secret with the Anthropic API key.",
           "$ref": "#/definitions/name"
         },
-        "secretKey": { "type": "string", "minLength": 1 }
+        "secretKey": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "github": {
@@ -153,7 +276,10 @@
           "description": "Required at render time. Name of an existing Secret with the GitHub fine-grained token (LAOBAN_GITHUB_TOKEN).",
           "$ref": "#/definitions/name"
         },
-        "secretKey": { "type": "string", "minLength": 1 }
+        "secretKey": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "config": {
@@ -187,17 +313,32 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "enabled": { "type": "boolean" },
-        "host": { "type": "string" },
-        "port": { "$ref": "#/definitions/port" },
+        "enabled": {
+          "type": "boolean"
+        },
+        "host": {
+          "type": "string"
+        },
+        "port": {
+          "$ref": "#/definitions/port"
+        },
         "tls": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "enabled": { "type": "boolean" },
-            "caConfigMap": { "$ref": "#/definitions/name" },
-            "caKey": { "type": "string", "minLength": 1 },
-            "clientCertSecret": { "$ref": "#/definitions/name" }
+            "enabled": {
+              "type": "boolean"
+            },
+            "caConfigMap": {
+              "$ref": "#/definitions/name"
+            },
+            "caKey": {
+              "type": "string",
+              "minLength": 1
+            },
+            "clientCertSecret": {
+              "$ref": "#/definitions/name"
+            }
           }
         }
       }
@@ -212,11 +353,32 @@
         }
       }
     },
-    "podAnnotations": { "type": "object", "additionalProperties": { "type": "string" } },
-    "podLabels": { "type": "object", "additionalProperties": { "type": "string" } },
-    "nodeSelector": { "type": "object", "additionalProperties": { "type": "string" } },
-    "tolerations": { "type": "array" },
-    "affinity": { "type": "object" },
-    "global": { "type": "object" }
+    "podAnnotations": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "podLabels": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "nodeSelector": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "tolerations": {
+      "type": "array"
+    },
+    "affinity": {
+      "type": "object"
+    },
+    "global": {
+      "type": "object"
+    }
   }
 }

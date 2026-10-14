@@ -25,8 +25,6 @@ export interface DeployFlowHooks {
   onApplied?: (applied: ApplyResponse) => void;
   // When the new version is running (or Fleet stopped at "modified").
   onReady?: (applied: ApplyResponse) => void;
-  // Edit lock token for changes to an existing app (useEditLock).
-  lockToken?: () => string | null;
   // A request failed; lets the lock notice "locked"/"lock_required".
   onError?: (e: unknown) => void;
 }
@@ -59,7 +57,7 @@ export interface DeployFlow {
   restore: (app: string, commit: string) => Promise<void>;
   // Publish a change made without AI and wait for it like an apply.
   // Resolves true once the commit exists.
-  publishDirect: (kind: DirectKind, call: (timeoutMs: number, lock: string | null) => Promise<ApplyResponse>) => Promise<boolean>;
+  publishDirect: (kind: DirectKind, call: (timeoutMs: number) => Promise<ApplyResponse>) => Promise<boolean>;
   // True while the current deploy is a restore (no AI involved).
   restoring: ComputedRef<boolean>;
   // The kind of the current no-AI change, if any.
@@ -98,8 +96,6 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
   const commitLink = computed(() => safeHttpsUrl(applied.value?.commitUrl));
   const shortCommit = computed(() => String(applied.value?.commit || '').slice(0, 12));
   const appLink = computed(() => resolveAppUrl(applied.value?.appUrl, window.location.origin));
-
-  const lock = () => hooks.lockToken?.() ?? null;
 
   function fail(e: unknown): string {
     hooks.onError?.(e);
@@ -257,7 +253,7 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
     phase.value = 'planning';
     startElapsed();
     try {
-      plan.value = await createPlan(store, prompt.trim(), opts.appName || undefined, aiRequestTimeoutMs(config.value), opts.baseApp, lock());
+      plan.value = await createPlan(store, prompt.trim(), opts.appName || undefined, aiRequestTimeoutMs(config.value), opts.baseApp);
       phase.value = 'planned';
     } catch (e) {
       errorText.value = fail(e);
@@ -276,7 +272,7 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
     phase.value = 'applying';
     startElapsed();
     try {
-      applied.value = await applyPlan(store, plan.value.planId, aiRequestTimeoutMs(config.value), lock());
+      applied.value = await applyPlan(store, plan.value.planId, aiRequestTimeoutMs(config.value));
     } catch (e) {
       errorText.value = fail(e);
       phase.value = 'planned';
@@ -290,7 +286,7 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
     startPolling();
   }
 
-  async function publishDirect(kind: DirectKind, call: (timeoutMs: number, lock: string | null) => Promise<ApplyResponse>): Promise<boolean> {
+  async function publishDirect(kind: DirectKind, call: (timeoutMs: number) => Promise<ApplyResponse>): Promise<boolean> {
     if (busy.value) {
       return false;
     }
@@ -300,7 +296,7 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
     startElapsed();
     try {
       // No AI call, but a GitHub commit: same timeout as an apply.
-      applied.value = await call(aiRequestTimeoutMs(config.value), lock());
+      applied.value = await call(aiRequestTimeoutMs(config.value));
     } catch (e) {
       errorText.value = fail(e);
       phase.value = 'idle';
@@ -317,7 +313,7 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
 
   // An earlier version published again: same deploy and wait as an apply.
   async function restore(app: string, commit: string) {
-    await publishDirect('restore', (timeoutMs, l) => restoreVersion(store, app, commit, timeoutMs, l));
+    await publishDirect('restore', (timeoutMs) => restoreVersion(store, app, commit, timeoutMs));
   }
 
   const statusText = computed(() => {

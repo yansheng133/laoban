@@ -2,21 +2,20 @@
 
 laoban 後端的 HTTP 伺服器。只用標準函式庫：每個連線一個執行緒、同時最多 64 個連線、每個回應都 `Connection: close`。收到 SIGTERM／SIGINT 時停止接受新連線，最多等 25 秒讓進行中的請求結束（低於 Kubernetes 預設的 30 秒寬限期）。
 
-## 路由
+## 連接埠與路由
 
-| 方法與路徑 | 說明 |
+| 連接埠 | 內容 |
 |---|---|
-| `GET /healthz` | `200 ok`，給 liveness／readiness probe |
-| `GET /version` | 名稱、版本、git SHA |
-| `POST /api/plan` | 試吃版計畫，見 `laoban-m0` 與 `docs/m0-design.md` |
-| `POST /api/apply` | 產生程式並 commit 到 GitHub |
-| `GET /api/config` | 模型、目標 namespace、repo、token 用量（不含任何秘密） |
+| `LAOBAN_LISTEN_ADDR`（預設 8080，純 HTTP） | 只有 `GET /healthz`（probe）與 `GET /version` |
+| `LAOBAN_TLS_LISTEN_ADDR`（預設 8443，TLS） | API，以 Kubernetes aggregated API 的形式提供：`/apis/api.laoban.yansheng133.github.io/v1alpha1/...`；只有設了 `LAOBAN_TLS_CERT_FILE`、`LAOBAN_TLS_KEY_FILE` 才開 |
 
-`/api/*` 的規則：
+TLS 連接埠要求 client 憑證：由 API server 的 request-header CA 簽發、CN 在允許清單內（啟動時讀 `kube-system/extension-apiserver-authentication`，讀不到就啟動失敗）。通過後才採信 `X-Remote-User`、`X-Remote-Group`，當作呼叫者。路徑與身分的設計見 `docs/m0-design.md` 的「後端 API」與「身分」，模組在 `src/identity.rs`、`src/tls.rs`、`src/kube.rs`。
 
-- `POST` 必須帶 `Content-Type: application/json`（也順便擋掉不能自訂標頭的跨站表單送出），主體以 `Content-Length` 為準，上限 64 KiB；不支援 chunked。
+API 的規則：
+
+- `POST` 必須帶 `Content-Type: application/json`，主體以 `Content-Length` 為準，上限 512 KiB；不支援 chunked。
 - 錯誤一律是 `{"error": {"code": "…", "message": "…"}}`，`message` 是繁體中文。代碼與狀態碼見 `crates/laoban-m0/README.md`。規格之外的三種情況沿用 `bad_request` 代碼、改用較精確的狀態碼：主體過大 413、方法不對 405（附 `Allow`）、沒有這個 API 404。
-- 必要的環境變數沒設定或格式不對時，伺服器照常啟動，`/healthz`、`/version` 正常；`/api/*` 回 `500 internal`，訊息寫出缺少的變數名稱（不寫值）。啟動 log 也會寫一行 `/api disabled: …`。
+- 必要的環境變數沒設定或格式不對時，伺服器照常啟動，`/healthz`、`/version` 正常；API 回 `500 internal`，訊息寫出缺少的變數名稱（不寫值）。啟動 log 也會寫一行 `/api disabled: …`。
 
 ## 逾時
 
@@ -29,15 +28,14 @@ laoban 後端的 HTTP 伺服器。只用標準函式庫：每個連線一個執�
 每個請求一行寫到 stderr：
 
 ```
-laoban-server: POST /api/plan 200 18342ms planId=p-20261013-1a2b3c
-laoban-server: POST /api/apply 409 3ms planId=p-20261013-1a2b3c error=already_applied
+laoban-server: POST /apis/api.laoban.yansheng133.github.io/v1alpha1/namespaces/laoban-dev/plans 200 18342ms user=u-abc12 planId=p-20261013-1a2b3c
 ```
 
-只有方法、路徑（不含查詢字串，控制字元換成 `?`）、狀態碼、耗時、計畫 ID（apply 時只記符合格式的 ID）與錯誤代碼。**不記錄**請求主體、需求、產生的程式、token 或金鑰。
+只有方法、路徑（不含查詢字串，控制字元換成 `?`）、狀態碼、耗時、驗證過的使用者、計畫 ID（apply 時只記符合格式的 ID）與錯誤代碼。**不記錄**請求主體、需求、產生的程式、token 或金鑰。
 
 ## 環境變數
 
-`LAOBAN_LISTEN_ADDR`（預設 `0.0.0.0:8080`），其餘見 `crates/laoban-m0/README.md` 的「設定」。`laoban-server --help` 會列出全部。
+`LAOBAN_LISTEN_ADDR`（預設 `0.0.0.0:8080`）、`LAOBAN_TLS_LISTEN_ADDR`（預設 `0.0.0.0:8443`）、`LAOBAN_TLS_CERT_FILE`、`LAOBAN_TLS_KEY_FILE`，其餘見 `crates/laoban-m0/README.md` 的「設定」。`laoban-server --help` 會列出全部。
 
 ## 測試
 

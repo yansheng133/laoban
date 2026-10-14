@@ -6,17 +6,15 @@
 // frees the app on its own. Renewal stops when the user has been idle for
 // IDLE_MS, so an open but unused page does not keep others out.
 //
-// Every change to the app (plan with baseApp, apply, restore, saving code
-// or layout) sends the token; without it the backend answers
-// "locked"/"lock_required".
-//
-// The holder name is the Rancher user shown to others. M0's backend cannot
-// verify it (see docs/m0-design.md); phase 1 takes it from the session.
+// The holder is the signed-in user as verified by the Kubernetes API server
+// (the backend is an aggregated API, docs/m0-design.md), so every change to
+// the app (plan with baseApp, apply, restore, saving code or layout) is
+// checked against the caller; there is no token to carry.
 import {
   ref, computed, onBeforeUnmount, Ref, ComputedRef
 } from 'vue';
 import {
-  acquireLock, renewLock, releaseLock, RequestError, StoreLike
+  acquireLock, renewLock, releaseLock, getApp, RequestError, StoreLike
 } from '../utils/backend';
 
 export const RENEW_MS = 60 * 1000;
@@ -28,8 +26,9 @@ export interface EditLock {
   state: Ref<LockState>;
   // The backend's message naming who holds it, when someone else does.
   otherMessage: Ref<string>;
+  // Who holds it when someone else does (display name when known).
+  otherHolder: Ref<string>;
   holder: ComputedRef<string>;
-  token: () => string | null;
   canEdit: ComputedRef<boolean>;
   acquire: (app: string) => Promise<void>;
   release: () => void;
@@ -53,12 +52,34 @@ export function rancherUserName(store: StoreLike): string {
   return 'rancher-user';
 }
 
+/**
+ * A Rancher user ID (as the API server reports it, e.g. "u-abc12") shown as
+ * the user's display name when the store has that user, else the ID.
+ */
+export function userLabel(store: StoreLike, id: string): string {
+  try {
+    const byId = store?.getters?.['management/byId'] as ((type: string, id: string) => Record<string, unknown> | undefined) | undefined;
+    const u = byId?.('management.cattle.io.user', id);
+
+    for (const v of [u?.displayName, u?.username]) {
+      if (typeof v === 'string' && v.trim()) {
+        return v.trim().slice(0, 100);
+      }
+    }
+  } catch {
+    // Not loaded or not allowed to see users: show the ID.
+  }
+
+  return id;
+}
+
 export function useEditLock(store: StoreLike): EditLock {
   const state = ref<LockState>('none');
   const otherMessage = ref('');
+  const otherHolder = ref('');
   const holder = computed(() => rancherUserName(store));
   let app = '';
-  let token: string | null = null;
+  let held = false;
   let timer: ReturnType<typeof setInterval> | null = null;
   let lastActivity = Date.now();
 
@@ -77,8 +98,19 @@ export function useEditLock(store: StoreLike): EditLock {
 
   function lose(next: LockState) {
     stopTimer();
-    token = null;
+    held = false;
     state.value = next;
+  }
+
+  // Who holds it, read from the app (the error message has the raw ID).
+  async function readHolder(name: string) {
+    try {
+      const lock = (await getApp(store, name)).lock;
+
+      otherHolder.value = lock?.holder ? userLabel(store, lock.holder) : '';
+    } catch {
+      otherHolder.value = '';
+    }
   }
 
   function noteError(e: unknown) {
@@ -88,13 +120,16 @@ export function useEditLock(store: StoreLike): EditLock {
     if (e.code === 'locked') {
       otherMessage.value = e.userMessage || '';
       lose('other');
+      if (app) {
+        readHolder(app);
+      }
     } else if (e.code === 'lock_required') {
       lose('lost');
     }
   }
 
   async function renew() {
-    if (!token || !app) {
+    if (!held || !app) {
       return;
     }
     // Idle: let the lock lapse so others can edit.
@@ -104,7 +139,7 @@ export function useEditLock(store: StoreLike): EditLock {
       return;
     }
     try {
-      await renewLock(store, app, token);
+      await renewLock(store, app);
     } catch (e) {
       if (e instanceof RequestError && (e.code === 'locked' || e.code === 'lock_required')) {
         lose('lost');
@@ -121,23 +156,25 @@ export function useEditLock(store: StoreLike): EditLock {
     touch();
     state.value = 'acquiring';
     otherMessage.value = '';
+    otherHolder.value = '';
     try {
-      const grant = await acquireLock(store, name, holder.value);
+      await acquireLock(store, name);
 
       if (app !== name) {
-        releaseLock(store, name, grant.token).catch(() => {});
+        releaseLock(store, name).catch(() => {});
 
         return;
       }
-      token = grant.token;
+      held = true;
       state.value = 'held';
       stopTimer();
       timer = setInterval(renew, RENEW_MS);
     } catch (e) {
-      token = null;
+      held = false;
       if (e instanceof RequestError && e.code === 'locked') {
         state.value = 'other';
         otherMessage.value = e.userMessage || '';
+        readHolder(name);
       } else {
         state.value = 'error';
       }
@@ -146,10 +183,10 @@ export function useEditLock(store: StoreLike): EditLock {
 
   function release() {
     stopTimer();
-    if (token && app) {
-      releaseLock(store, app, token).catch(() => {});
+    if (held && app) {
+      releaseLock(store, app).catch(() => {});
     }
-    token = null;
+    held = false;
     state.value = 'none';
   }
 
@@ -169,8 +206,8 @@ export function useEditLock(store: StoreLike): EditLock {
   return {
     state,
     otherMessage,
+    otherHolder,
     holder,
-    token:  () => token,
     canEdit,
     acquire,
     release,

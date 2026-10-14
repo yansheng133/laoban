@@ -33,11 +33,28 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
   │ 3. 瀏覽器用使用者自己的登入讀 Fleet Bundle 狀態，Ready 後顯示連結
 ```
 
-瀏覽器呼叫後端走 Rancher 的服務代理，用的是使用者自己的登入；後端**不寫入任何叢集**，部署全由 Fleet 做。
+瀏覽器呼叫後端走 Rancher 的 `/k8s/clusters/<id>` 代理，用的是使用者自己的登入；後端是 rke2 上的 **Kubernetes aggregated API**，由 API server 驗證使用者與權限後才轉給後端（見「身分」）。後端**不寫入任何叢集**，部署全由 Fleet 做。
 
 ## 後端 API
 
-基底路徑：`/k8s/clusters/c-m-26kbxk5f/api/v1/namespaces/laoban-system/services/http:laoban:8080/proxy`（以下簡寫為 `/`）。全部 JSON，UTF-8。
+基底路徑：`/k8s/clusters/c-m-26kbxk5f/apis/api.laoban.yansheng133.github.io/v1alpha1/namespaces/laoban-dev`。全部 JSON，UTF-8。下面各節沿用內部的 `/api/...` 名稱，對應的外部路徑（接在基底路徑後）如下，括號是 RBAC 上的資源與動作：
+
+| 內部名稱 | 外部路徑 |
+|---|---|
+| `GET /api/config` | `GET /config`（`config`, list） |
+| `POST /api/plan` | `POST /plans`（`plans`, create） |
+| `POST /api/apply` `{planId}` | `POST /plans/<planId>/apply`（`plans/apply`, create），不需要主體 |
+| `GET /api/apps`、`/api/apps/<n>[/...]` | `GET /apps`、`/apps/<n>[/...]`（`apps`, list／get；子資源 `apps/versions`、`apps/files`…） |
+| `POST /api/apps/<n>/<動作>` | `POST /apps/<n>/<動作>`（`apps/<動作>`, create） |
+
+### 身分
+
+- 後端以 `APIService` `v1alpha1.api.laoban.yansheng133.github.io` 掛在 rke2 的 API server 底下（chart 的 `apiservice.yaml`）。Rancher 代理的請求到 API server 時已是登入的 Rancher 使用者（Rancher 以 impersonation 代為發出），API server 驗證身分、用這個使用者的 RBAC 授權（以 namespace 為範圍，所以跟著 Rancher Project 走），再以自己的 proxy client 憑證透過 TLS 轉給後端，使用者放在 `X-Remote-User`、`X-Remote-Group`。
+- 後端只在 TLS 連線、且 client 憑證由 request-header CA 簽發、CN 在允許清單內時才採信這些 header；CA、允許的名稱與 header 名稱於啟動時從 `kube-system/extension-apiserver-authentication` 讀取（後端 ServiceAccount 唯一的權限：內建 Role `extension-apiserver-authentication-reader`）。其他人（例如直接連 Service 的 Pod）拿不出這張憑證，無法冒充別人。
+- 8080 port 只提供 `/healthz`、`/version`；API 只在 8443（TLS）。
+- 使用者權限：chart 的 `laoban-api-edit`／`laoban-api-view` 帶有標準聚合標籤，所以在 `laoban-dev` 有內建 edit／admin 的人可以使用、有 view 的人可以看。Rancher 管理者有全部權限；Rancher 的 Project 成員角色是另外的 role template，要用 laoban 需加上這個 API group 的規則（第一階段的角色設計處理）。沒有權限時 API server 回 403，頁面顯示「你沒有這個操作的權限…」。
+- 使用者名稱是 API server 給的名稱，Rancher 使用者是 Rancher 的 user ID（例如 `u-abc12`）。這個名稱記進每一版的紀錄（`history[].by`、版本清單的 `by`）與後端 log（`user=`）。
+- 文件：https://kubernetes.io/docs/tasks/extend-kubernetes/configure-aggregation-layer/
 
 ### `POST /api/plan`
 
@@ -114,11 +131,11 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 
 同一時間只有一個人能改同一個應用（需求「同一 Project 編輯鎖」；M0 沒有 Project，以應用為單位）。
 
-- `lock` 請求 `{ "holder": "<顯示名稱>" }`，回 `{token, holder, ttlSeconds: 180}`。別人持有時回 `409 locked`，訊息寫出是誰、從何時開始。同一個名稱再取一次會接手（例如重新整理頁面），舊 token 隨即失效。
-- 之後的請求在 header `X-Laoban-Lock: <token>` 帶 token。`renew` 延長 180 秒；`unlock` 放開（不是持有人時什麼都不做）。
+- 持有人就是呼叫者（API server 驗證過的使用者），請求不帶名稱也不帶 token。`lock` 回 `{holder, ttlSeconds: 180}`；別人持有時回 `409 locked`，訊息寫出是誰、從何時開始。同一個人再取一次只是延長（同一人開兩個分頁共用同一把鎖）。
+- `renew` 延長 180 秒；`unlock` 放開（不是持有人時什麼都不做）。沒有驗證過的使用者時回 `401 unauthenticated`。
 - 要求持有鎖的動作：有 `baseApp` 的 `/api/plan`、修改計畫的 `/api/apply`、`restore`、存程式、存版面。沒有鎖回 `409 lock_required`；別人持有回 `409 locked`。新增應用不需要。
 - 鎖只在後端記憶體（與計畫一樣，單一 replica；重啟後全部失效）。頁面開著時每 60 秒續約；3 分鐘沒有操作就不再續約，讓鎖自然過期。
-- **限制**：M0 的後端不知道呼叫者是誰（頁面經 Rancher service proxy 呼叫），`holder` 由頁面帶 Rancher 使用者名稱，只用來顯示，可以被偽造；真正擋住的是 token。第一階段改用 Rancher 的身分。
+- 這個編輯鎖之後會由「意見收斂」取代（多人提意見、AI 收斂、提過意見的人確認後開工）。
 
 ### `GET /api/apps/<appName>/files`、`POST /api/apps/<appName>/files`
 
@@ -132,7 +149,7 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 
 ### 錯誤
 
-一律 `{"error": {"code": "…", "message": "…"}}`，`message` 是給使用者看的繁中句子。代碼：`bad_request`（400）、`plan_not_found`（404）、`already_applied`（409）、`app_exists`（409）、`app_not_found`（404）、`not_editable`（409）、`version_not_found`（404）、`locked`（409，別人正在編輯）、`lock_required`（409，沒有或已失效的編輯鎖）、`version_conflict`（409）、`invalid_files`（400）、`budget_exceeded`（429，laoban 自己的 token 上限）、`spend_limit`（402，Anthropic 花費上限，**不重試**）、`ai_invalid_output`（502，AI 回應不合格式或碰到禁止的資源）、`github_failed`（502）、`internal`（500）。
+一律 `{"error": {"code": "…", "message": "…"}}`，`message` 是給使用者看的繁中句子。代碼：`bad_request`（400）、`plan_not_found`（404）、`already_applied`（409）、`app_exists`（409）、`app_not_found`（404）、`not_editable`（409）、`version_not_found`（404）、`unauthenticated`（401，請求沒有經過 API server、沒有驗證過的使用者）、`locked`（409，別人正在編輯）、`lock_required`（409，沒有或已失效的編輯鎖）、`version_conflict`（409）、`invalid_files`（400）、`budget_exceeded`（429，laoban 自己的 token 上限）、`spend_limit`（402，Anthropic 花費上限，**不重試**）、`ai_invalid_output`（502，AI 回應不合格式或碰到禁止的資源）、`github_failed`（502）、`internal`（500）。
 
 ### 其他
 

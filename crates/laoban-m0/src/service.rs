@@ -77,14 +77,6 @@ pub struct RestoreRequest {
     pub commit: String,
 }
 
-/// `POST /api/apps/<name>/lock` body.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct LockRequest {
-    /// Display name of who is editing (the page's Rancher user).
-    pub holder: String,
-}
-
 /// `POST /api/apps/<name>/files` body.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -154,6 +146,10 @@ pub enum M0Error {
     /// No valid edit lock (never taken, or expired).
     #[error("edit lock required")]
     LockRequired,
+    /// The request carried no verified user (it did not come through the
+    /// Kubernetes API server).
+    #[error("unauthenticated")]
+    Unauthenticated,
     /// The app changed since the edits started.
     #[error("version conflict")]
     VersionConflict,
@@ -179,6 +175,7 @@ impl M0Error {
             M0Error::VersionNotFound => "version_not_found",
             M0Error::Locked { .. } => "locked",
             M0Error::LockRequired => "lock_required",
+            M0Error::Unauthenticated => "unauthenticated",
             M0Error::VersionConflict => "version_conflict",
             M0Error::InvalidFiles(_) => "invalid_files",
         }
@@ -209,6 +206,7 @@ impl M0Error {
             M0Error::AppExists(_) | M0Error::NotEditable => 409,
             M0Error::AppNotFound | M0Error::VersionNotFound => 404,
             M0Error::Locked { .. } | M0Error::LockRequired | M0Error::VersionConflict => 409,
+            M0Error::Unauthenticated => 401,
             M0Error::InvalidFiles(_) => 400,
         }
     }
@@ -244,6 +242,9 @@ impl M0Error {
                 "{holder} 正在編輯這個應用（{since} 起）。等對方離開，或 3 分鐘沒有動作後再試。"
             ),
             M0Error::LockRequired => "編輯鎖已失效，請重新整理頁面後再試。".into(),
+            M0Error::Unauthenticated => {
+                "無法確認你的身分：請從 Rancher 的 laoban 頁面操作。".into()
+            }
             M0Error::VersionConflict => {
                 "這個應用在你編輯期間有了新版本，請重新讀取後再改。".into()
             }
@@ -354,7 +355,7 @@ impl M0Service {
     }
 
     /// `POST /api/plan`.
-    pub fn plan(&self, body: &PlanRequestBody, lock: Option<&str>) -> Result<Value, M0Error> {
+    pub fn plan(&self, body: &PlanRequestBody, user: Option<&str>) -> Result<Value, M0Error> {
         let prompt = body.prompt.trim();
         if prompt.is_empty() {
             return Err(M0Error::BadRequest("請輸入需求。"));
@@ -385,7 +386,7 @@ impl M0Service {
         let (plan, completion, app, base) = match base_name {
             Some(base_app) => {
                 let current = self.load_app(&base_app)?;
-                self.require_lock(&base_app, lock)?;
+                self.require_lock(&base_app, user)?;
                 if current.files.total_bytes() > MAX_EDIT_CODE_BYTES {
                     return Err(M0Error::BadRequest(
                         "這個應用的程式太大，試吃版無法用 AI 編輯。",
@@ -585,7 +586,7 @@ impl M0Service {
     }
 
     /// `POST /api/apply`.
-    pub fn apply(&self, body: &ApplyRequest, lock: Option<&str>) -> Result<Value, M0Error> {
+    pub fn apply(&self, body: &ApplyRequest, user: Option<&str>) -> Result<Value, M0Error> {
         let id = body.plan_id.trim();
         let stored = self
             .lock_store()
@@ -594,14 +595,14 @@ impl M0Service {
                 StoreError::NotFound => M0Error::PlanNotFound,
                 StoreError::AlreadyApplied => M0Error::AlreadyApplied,
             })?;
-        let result = self.apply_inner(&stored, lock);
+        let result = self.apply_inner(&stored, user);
         self.lock_store().finish_apply(id, result.is_ok());
         result
     }
 
-    fn apply_inner(&self, stored: &StoredPlan, lock: Option<&str>) -> Result<Value, M0Error> {
+    fn apply_inner(&self, stored: &StoredPlan, user: Option<&str>) -> Result<Value, M0Error> {
         if stored.base.is_some() {
-            self.require_lock(&stored.app, lock)?;
+            self.require_lock(&stored.app, user)?;
         }
         // A new app must still not exist (another plan may have been
         // applied under the same name since).
@@ -667,6 +668,7 @@ impl M0Service {
             summary: masked_summary,
             model: completion.model,
             message,
+            by: user.unwrap_or_default().to_string(),
         })
     }
 
@@ -681,6 +683,7 @@ impl M0Service {
             request: p.request.clone(),
             summary: p.summary.clone(),
             model: p.model.clone(),
+            by: p.by.clone(),
         });
         let meta_json = meta::to_json_with_layout(app, p.plan, p.files, &history, &p.layout);
         let commit_files = render(&RenderInput {
@@ -788,6 +791,7 @@ impl M0Service {
                     "request": h.map(|h| h.request.as_str()).unwrap_or(&c.message),
                     "summary": h.map(|h| h.summary.as_str()).unwrap_or(""),
                     "model": h.map(|h| h.model.as_str()).unwrap_or(""),
+                    "by": h.map(|h| h.by.as_str()).unwrap_or(""),
                     "current": i == 0,
                 })
             })
@@ -824,15 +828,23 @@ impl M0Service {
         }
     }
 
-    /// Changes to an existing app need its edit lock.
-    fn require_lock(&self, app: &str, token: Option<&str>) -> Result<(), M0Error> {
+    /// Changes to an existing app need its edit lock, held by the caller.
+    fn require_lock(&self, app: &str, user: Option<&str>) -> Result<(), M0Error> {
+        let user = user.ok_or(M0Error::Unauthenticated)?;
         self.locks()
-            .check(app, token, Instant::now())
+            .check(app, Some(user), Instant::now())
             .map_err(lock_error)
     }
 
-    /// `POST /api/apps/<name>/lock`: take the edit lock.
-    pub fn lock(&self, app: &str, body: &LockRequest) -> Result<Value, M0Error> {
+    /// Namespace the apps are deployed to; the API is served under it.
+    pub fn target_namespace(&self) -> &str {
+        &self.settings.target_namespace
+    }
+
+    /// `POST .../apps/<name>/lock`: take (or extend) the edit lock as the
+    /// calling user.
+    pub fn lock(&self, app: &str, user: Option<&str>) -> Result<Value, M0Error> {
+        let user = user.ok_or(M0Error::Unauthenticated)?;
         if !valid_app_name(app) {
             return Err(M0Error::BadRequest("應用名稱不正確。"));
         }
@@ -841,28 +853,27 @@ impl M0Service {
         }
         let grant = self
             .locks()
-            .acquire(app, &body.holder, Instant::now())
+            .acquire(app, user, Instant::now())
             .map_err(lock_error)?;
         Ok(json!({
-            "token": grant.token,
             "holder": grant.holder,
             "ttlSeconds": grant.ttl.as_secs(),
         }))
     }
 
-    /// `POST /api/apps/<name>/lock/renew` (token in the lock header).
-    pub fn renew_lock(&self, app: &str, token: Option<&str>) -> Result<Value, M0Error> {
-        let token = token.ok_or(M0Error::LockRequired)?;
+    /// `POST .../apps/<name>/lock/renew`.
+    pub fn renew_lock(&self, app: &str, user: Option<&str>) -> Result<Value, M0Error> {
+        let user = user.ok_or(M0Error::Unauthenticated)?;
         self.locks()
-            .renew(app, token, Instant::now())
+            .renew(app, user, Instant::now())
             .map_err(lock_error)?;
         Ok(json!({ "ttlSeconds": crate::lock::LOCK_TTL.as_secs() }))
     }
 
-    /// `POST /api/apps/<name>/unlock` (token in the lock header).
-    pub fn unlock(&self, app: &str, token: Option<&str>) -> Result<Value, M0Error> {
-        if let Some(t) = token {
-            self.locks().release(app, t);
+    /// `POST .../apps/<name>/unlock`.
+    pub fn unlock(&self, app: &str, user: Option<&str>) -> Result<Value, M0Error> {
+        if let Some(u) = user {
+            self.locks().release(app, u);
         }
         Ok(json!({ "released": true }))
     }
@@ -904,12 +915,12 @@ impl M0Service {
         &self,
         app: &str,
         body: &SaveFilesRequest,
-        lock: Option<&str>,
+        user: Option<&str>,
     ) -> Result<Value, M0Error> {
         if !valid_app_name(app) {
             return Err(M0Error::BadRequest("應用名稱不正確。"));
         }
-        self.require_lock(app, lock)?;
+        self.require_lock(app, user)?;
         let files = parse_generated(&body.files.to_string())
             .map_err(|e| M0Error::InvalidFiles(files_problem(&e.0)))?;
         let current = self.load_app(app)?;
@@ -938,6 +949,7 @@ impl M0Service {
             summary,
             model: String::new(),
             message,
+            by: user.unwrap_or_default().to_string(),
         })
     }
 
@@ -947,12 +959,12 @@ impl M0Service {
         &self,
         app: &str,
         body: &SaveLayoutRequest,
-        lock: Option<&str>,
+        user: Option<&str>,
     ) -> Result<Value, M0Error> {
         if !valid_app_name(app) {
             return Err(M0Error::BadRequest("應用名稱不正確。"));
         }
-        self.require_lock(app, lock)?;
+        self.require_lock(app, user)?;
         if body.positions.is_empty() || body.positions.len() > meta::MAX_LAYOUT_ENTRIES {
             return Err(M0Error::BadRequest("版面資料不正確。"));
         }
@@ -987,6 +999,7 @@ impl M0Service {
             summary,
             model: String::new(),
             message,
+            by: user.unwrap_or_default().to_string(),
         })
     }
 
@@ -996,12 +1009,12 @@ impl M0Service {
         &self,
         app: &str,
         body: &RestoreRequest,
-        lock: Option<&str>,
+        user: Option<&str>,
     ) -> Result<Value, M0Error> {
         let commit = body.commit.trim();
         let target = self.load_version(app, commit)?;
         let current = self.load_app(app)?;
-        self.require_lock(app, lock)?;
+        self.require_lock(app, user)?;
         if target.files == current.files
             && target.plan == current.plan
             && target.layout == current.layout
@@ -1028,6 +1041,7 @@ impl M0Service {
             summary,
             model,
             message,
+            by: user.unwrap_or_default().to_string(),
         })
     }
 }
@@ -1041,6 +1055,8 @@ struct Publish<'a> {
     history: Vec<HistoryEntry>,
     /// Dragged 3D positions of this version.
     layout: Layout,
+    /// Verified user who asked for it ("" if unknown).
+    by: String,
     /// `create`, `edit` or `restore`.
     kind: &'static str,
     /// Masked request text recorded in history and README.

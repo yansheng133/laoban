@@ -1,6 +1,9 @@
 //! `laoban-server` binary.
 //!
-//! Listens on `LAOBAN_LISTEN_ADDR` (default `0.0.0.0:8080`) and stops
+//! Listens on `LAOBAN_LISTEN_ADDR` (default `0.0.0.0:8080`) for the probes
+//! and, when `LAOBAN_TLS_CERT_FILE` and `LAOBAN_TLS_KEY_FILE` are set, on
+//! `LAOBAN_TLS_LISTEN_ADDR` (default `0.0.0.0:8443`) for the API as a
+//! Kubernetes aggregated API (see `laoban_server::identity`). Stops
 //! cleanly on SIGTERM or SIGINT. Handling SIGTERM explicitly matters in a
 //! container: as PID 1 a process without a handler ignores SIGTERM, so
 //! Kubernetes would have to wait for the grace period and send SIGKILL.
@@ -17,6 +20,7 @@ use signal_hook::consts::{SIGINT, SIGTERM};
 use signal_hook::iterator::Signals;
 
 const DEFAULT_LISTEN_ADDR: &str = "0.0.0.0:8080";
+const DEFAULT_TLS_LISTEN_ADDR: &str = "0.0.0.0:8443";
 
 /// Build the M0 API from the environment, plus a status line for the log.
 /// Problems are reported by variable name only and leave the probes
@@ -87,7 +91,10 @@ fn main() -> ExitCode {
             println!(
                 "{NAME} {VERSION}\n\nServes GET /healthz, GET /version, POST /api/plan, \
                  POST /api/apply and GET /api/config.\n\n\
-                 Environment:\n  LAOBAN_LISTEN_ADDR       listen address (default {DEFAULT_LISTEN_ADDR})\n  \
+                 Environment:\n  LAOBAN_LISTEN_ADDR       probes (default {DEFAULT_LISTEN_ADDR})\n  \
+                 LAOBAN_TLS_LISTEN_ADDR   aggregated API (default {DEFAULT_TLS_LISTEN_ADDR})\n  \
+                 LAOBAN_TLS_CERT_FILE     server certificate (PEM) for the API port\n  \
+                 LAOBAN_TLS_KEY_FILE      its key (PEM)\n  \
                  ANTHROPIC_API_KEY        Anthropic API key (required for /api unless\n                           LAOBAN_AI_BASE_URL is set)\n  \
                  LAOBAN_MODEL             model ID (required for /api)\n  \
                  LAOBAN_AI_BASE_URL       Anthropic-compatible endpoint, e.g. a local\n                           Ollama server (default the Anthropic API)\n  \
@@ -98,7 +105,8 @@ fn main() -> ExitCode {
                  LAOBAN_TARGET_NAMESPACE  default laoban-dev\n  \
                  LAOBAN_CLUSTER_ID        default c-m-26kbxk5f\n\n\
                  Without the required variables /healthz and /version still work and \
-                 /api/* answers 500 naming the missing variables."
+                 the API answers 500 naming the missing variables. Without the TLS \
+                 variables only /healthz and /version are served."
             );
             return ExitCode::SUCCESS;
         }
@@ -115,6 +123,56 @@ fn main() -> ExitCode {
         Err(e) => {
             eprintln!("{NAME}: cannot listen on {addr}: {e}");
             return ExitCode::FAILURE;
+        }
+    };
+    let tls_status;
+    let server = match (
+        std::env::var("LAOBAN_TLS_CERT_FILE"),
+        std::env::var("LAOBAN_TLS_KEY_FILE"),
+    ) {
+        (Ok(cert_file), Ok(key_file)) => {
+            let tls_addr = std::env::var("LAOBAN_TLS_LISTEN_ADDR")
+                .unwrap_or_else(|_| DEFAULT_TLS_LISTEN_ADDR.into());
+            let (cert, key) = match (std::fs::read(&cert_file), std::fs::read(&key_file)) {
+                (Ok(c), Ok(k)) => (c, k),
+                _ => {
+                    eprintln!("{NAME}: cannot read LAOBAN_TLS_CERT_FILE or LAOBAN_TLS_KEY_FILE");
+                    return ExitCode::FAILURE;
+                }
+            };
+            let auth = match laoban_server::kube::load_auth_config() {
+                Ok(a) => a,
+                Err(e) => {
+                    eprintln!(
+                        "{NAME}: cannot read kube-system/extension-apiserver-authentication: {e}"
+                    );
+                    return ExitCode::FAILURE;
+                }
+            };
+            let names = if auth.allowed_names.is_empty() {
+                "any".to_string()
+            } else {
+                auth.allowed_names.join(",")
+            };
+            match server.with_tls(tls_addr.as_str(), &cert, &key, auth) {
+                Ok(s) => {
+                    tls_status = format!(
+                        "aggregated API on {} (proxy client names: {names})",
+                        s.tls_addr().map(|a| a.to_string()).unwrap_or_default()
+                    );
+                    s
+                }
+                Err(e) => {
+                    eprintln!("{NAME}: cannot serve TLS on {tls_addr}: {e}");
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
+        _ => {
+            tls_status =
+                "LAOBAN_TLS_CERT_FILE/LAOBAN_TLS_KEY_FILE not set: API disabled, probes only"
+                    .to_string();
+            server
         }
     };
 
@@ -140,6 +198,7 @@ fn main() -> ExitCode {
     );
     // After the "listening on" line, which tools and tests read first.
     eprintln!("{NAME}: {api_status}");
+    eprintln!("{NAME}: {tls_status}");
     match server.run() {
         Ok(()) => {
             eprintln!("{NAME}: stopped");

@@ -149,24 +149,42 @@ jobs:
           # The Anthropic render keeps the key and has no base URL.
           grep -q 'name: ANTHROPIC_API_KEY$' rendered/laoban-m0.yaml || { echo "M0: ANTHROPIC_API_KEY missing"; exit 1; }
           if grep -q 'name: LAOBAN_AI_BASE_URL$' rendered/laoban-m0.yaml; then echo "M0: unexpected LAOBAN_AI_BASE_URL"; exit 1; fi
-      - name: M0 render has no RBAC, no PVC and no ServiceAccount token
+      - name: M0 render has only the aggregated API's RBAC and no PVC
+        # M0 serves the API as an aggregated API (docs/m0-design.md, 身分):
+        # the backend may read the request-header ConfigMap and nothing else;
+        # users get ClusterRoles for this API group only. No impersonation.
         run: |
+          # Failures are also annotations, readable without the job log.
+          fail() { echo "::error::$1"; exit 1; }
           kinds() { grep -E '^kind: ' "$1" | sort | uniq -c; }
           echo "M0:"; kinds rendered/laoban-m0.yaml
           echo "ci:"; kinds rendered/laoban.yaml
-          if grep -qE '^kind: (ClusterRole|ClusterRoleBinding|Role|RoleBinding|PersistentVolumeClaim)$' rendered/laoban-m0.yaml; then
-            echo "M0 render must not contain RBAC objects or a PVC"; exit 1
+          f=rendered/laoban-m0.yaml
+          if grep -qE '^kind: (ClusterRoleBinding|Role|PersistentVolumeClaim)$' "$f"; then
+            fail "M0 render must not contain ClusterRoleBindings, Roles or a PVC"
           fi
-          [ "$(grep -c 'automountServiceAccountToken: false' rendered/laoban-m0.yaml)" -eq 2 ] \
-            || { echo "M0: expected automountServiceAccountToken: false on the ServiceAccount and the pod"; exit 1; }
+          if grep -q 'impersonate' "$f"; then fail "M0 render must not grant impersonate"; fi
+          [ "$(grep -c '^kind: RoleBinding$' "$f")" -eq 1 ] || fail "M0: expected exactly one RoleBinding"
+          grep -A12 '^kind: RoleBinding$' "$f" | grep -q 'namespace: kube-system' \
+            || fail "M0: the RoleBinding must be in kube-system"
+          grep -A16 '^kind: RoleBinding$' "$f" | grep -q 'name: extension-apiserver-authentication-reader' \
+            || fail "M0: the RoleBinding must bind extension-apiserver-authentication-reader"
+          [ "$(grep -c '^kind: ClusterRole$' "$f")" -eq 2 ] || fail "M0: expected the two laoban-api ClusterRoles"
+          if awk '/^kind: ClusterRole$/{c=1} /^---/{c=0} c && /apiGroups:/' "$f" | grep -v 'api.laoban.yansheng133.github.io' | grep -q .; then
+            fail "M0: user ClusterRoles may only cover api.laoban.yansheng133.github.io"
+          fi
+          grep -q '^kind: APIService$' "$f" || fail "M0: APIService missing"
+          grep -A20 '^kind: APIService$' "$f" | grep -q 'caBundle: ' || fail "M0: APIService needs a caBundle"
+          if grep -q 'insecureSkipTLSVerify' "$f"; then fail "M0: no insecureSkipTLSVerify"; fi
+          grep -q 'name: LAOBAN_TLS_CERT_FILE$' "$f" || fail "M0: TLS env missing"
           for v in ANTHROPIC_API_KEY LAOBAN_MODEL LAOBAN_TOKEN_CAP LAOBAN_GITHUB_REPO LAOBAN_GITHUB_TOKEN LAOBAN_TARGET_NAMESPACE LAOBAN_CLUSTER_ID; do
-            grep -q "name: ${v}$" rendered/laoban-m0.yaml || { echo "M0: env ${v} missing"; exit 1; }
+            grep -q "name: ${v}$" "$f" || fail "M0: env ${v} missing"
           done
-          grep -A1 'name: LAOBAN_TOKEN_CAP$' rendered/laoban-m0.yaml | grep -q 'value: "2000000"' \
-            || { echo "M0: LAOBAN_TOKEN_CAP must render as \"2000000\""; exit 1; }
+          grep -A1 'name: LAOBAN_TOKEN_CAP$' "$f" | grep -q 'value: "2000000"' \
+            || fail "M0: LAOBAN_TOKEN_CAP must render as \"2000000\""
           # The full-featured render must still contain what M0 leaves out.
           for k in ClusterRole ClusterRoleBinding PersistentVolumeClaim; do
-            grep -q "^kind: ${k}$" rendered/laoban.yaml || { echo "ci render: ${k} missing"; exit 1; }
+            grep -q "^kind: ${k}$" rendered/laoban.yaml || fail "ci render: ${k} missing"
           done
       - name: kubeconform (backend chart, deploy/m0)
         # The upstream schema set has no schema for CustomResourceDefinition

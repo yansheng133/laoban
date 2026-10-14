@@ -4,13 +4,13 @@ import {
 import {
   parseBackendError, resolveAppUrl, safeHttpsUrl, backendUrl, aiRequestTimeoutMs, ConfigResponse,
   createPlan, getApp, listApps, listVersions, getVersion, restoreVersion, applyPlan,
-  acquireLock, renewLock, releaseLock, getFiles, saveFiles, saveLayout, LOCK_HEADER
+  acquireLock, renewLock, releaseLock, getFiles, saveFiles, saveLayout, parseKubeStatus
 } from '../backend';
 import { AI_REQUEST_TIMEOUT_MS } from '../../config/backend';
 
 describe('backendUrl', () => {
-  it('goes through the Rancher service proxy', () => {
-    expect(backendUrl('/api/plan')).toBe('/k8s/clusters/c-m-26kbxk5f/api/v1/namespaces/laoban-system/services/http:laoban:8080/proxy/api/plan');
+  it('goes through Rancher to the aggregated API, under the target namespace', () => {
+    expect(backendUrl('/plans')).toBe('/k8s/clusters/c-m-26kbxk5f/apis/api.laoban.yansheng133.github.io/v1alpha1/namespaces/laoban-dev/plans');
   });
 });
 
@@ -97,7 +97,7 @@ describe('apps and plan requests', () => {
     mockFetch(200, { planId: 'p-1', appName: 'todo' });
     await createPlan(store, '加上刪除', 'ignored', 1000, 'todo');
     expect(JSON.parse(String(calls[0].init.body))).toEqual({ prompt: '加上刪除', baseApp: 'todo' });
-    expect(calls[0].url).toBe(backendUrl('/api/plan'));
+    expect(calls[0].url).toBe(backendUrl('/plans'));
   });
 
   it('sends appName for a new app', async() => {
@@ -109,12 +109,12 @@ describe('apps and plan requests', () => {
   it('reads the app list and one app', async() => {
     mockFetch(200, { apps: [] });
     expect(await listApps(store)).toEqual({ apps: [] });
-    expect(calls[0].url).toBe(backendUrl('/api/apps'));
+    expect(calls[0].url).toBe(backendUrl('/apps'));
     expect(calls[0].init.method).toBe('GET');
 
     mockFetch(200, { appName: 'a b' });
     await getApp(store, 'a b');
-    expect(calls[0].url).toBe(backendUrl('/api/apps/a%20b'));
+    expect(calls[0].url).toBe(backendUrl('/apps/a%20b'));
   });
 
   it('surfaces the backend message for app errors', async() => {
@@ -125,53 +125,50 @@ describe('apps and plan requests', () => {
   it('reads versions and restores with a POST', async() => {
     mockFetch(200, { appName: 'todo', versions: [] });
     await listVersions(store, 'todo');
-    expect(calls[0].url).toBe(backendUrl('/api/apps/todo/versions'));
+    expect(calls[0].url).toBe(backendUrl('/apps/todo/versions'));
 
     const sha = 'a'.repeat(40);
 
     mockFetch(200, { appName: 'todo', commit: sha });
     await getVersion(store, 'todo', sha);
-    expect(calls[0].url).toBe(backendUrl(`/api/apps/todo/versions/${ sha }`));
+    expect(calls[0].url).toBe(backendUrl(`/apps/todo/versions/${ sha }`));
 
     mockFetch(200, { mode: 'restore', commit: 'b'.repeat(40) });
     await restoreVersion(store, 'todo', sha, 1000);
-    expect(calls[0].url).toBe(backendUrl('/api/apps/todo/restore'));
+    expect(calls[0].url).toBe(backendUrl('/apps/todo/restore'));
     expect(calls[0].init.method).toBe('POST');
     expect(JSON.parse(String(calls[0].init.body))).toEqual({ commit: sha });
   });
 
-  it('sends the edit lock token only on changes to an existing app', async() => {
-    const headers = () => calls[0].init.headers as Record<string, string>;
-
-    mockFetch(200, { planId: 'p-1', appName: 'todo' });
-    await createPlan(store, 'x', undefined, 1000, 'todo', 'abc123');
-    expect(headers()[LOCK_HEADER]).toBe('abc123');
-    mockFetch(200, { planId: 'p-1', appName: 'shop' });
-    await createPlan(store, 'x', 'shop', 1000, undefined, 'abc123');
-    expect(headers()[LOCK_HEADER]).toBeUndefined();
-
-    mockFetch(200, { commit: 'c' });
-    await applyPlan(store, 'p-1', 1000, 'abc123');
-    expect(headers()[LOCK_HEADER]).toBe('abc123');
-    await restoreVersion(store, 'todo', 'a'.repeat(40), 1000, 'abc123');
-    expect((calls[1].init.headers as Record<string, string>)[LOCK_HEADER]).toBe('abc123');
-  });
-
-  it('takes, renews and releases the lock', async() => {
-    mockFetch(200, { token: 'abc', holder: 'sam', ttlSeconds: 180 });
-    await acquireLock(store, 'todo', 'sam');
-    expect(calls[0].url).toBe(backendUrl('/api/apps/todo/lock'));
-    expect(JSON.parse(String(calls[0].init.body))).toEqual({ holder: 'sam' });
+  it('takes, renews and releases the lock as the signed-in user', async() => {
+    mockFetch(200, { holder: 'u-abc12', ttlSeconds: 180 });
+    await acquireLock(store, 'todo');
+    expect(calls[0].url).toBe(backendUrl('/apps/todo/lock'));
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({});
 
     mockFetch(200, { ttlSeconds: 180 });
-    await renewLock(store, 'todo', 'abc');
-    expect(calls[0].url).toBe(backendUrl('/api/apps/todo/lock/renew'));
-    expect((calls[0].init.headers as Record<string, string>)[LOCK_HEADER]).toBe('abc');
+    await renewLock(store, 'todo');
+    expect(calls[0].url).toBe(backendUrl('/apps/todo/lock/renew'));
 
     mockFetch(200, { released: true });
-    await releaseLock(store, 'todo', 'abc');
-    expect(calls[0].url).toBe(backendUrl('/api/apps/todo/unlock'));
+    await releaseLock(store, 'todo');
+    expect(calls[0].url).toBe(backendUrl('/apps/todo/unlock'));
     expect(calls[0].init.keepalive).toBe(true);
+  });
+
+  it('applies a plan by its ID in the path', async() => {
+    mockFetch(200, { commit: 'c' });
+    await applyPlan(store, 'p-20261013-abcdef', 1000);
+    expect(calls[0].url).toBe(backendUrl('/plans/p-20261013-abcdef/apply'));
+    expect(calls[0].init.method).toBe('POST');
+  });
+
+  it('turns API server errors into messages', async() => {
+    expect(parseKubeStatus({ kind: 'Status', code: 403 }, 403)?.code).toBe('forbidden');
+    expect(parseKubeStatus({ kind: 'Status', code: 503 }, 503)?.code).toBe('unavailable');
+    expect(parseKubeStatus({ error: {} }, 403)).toBeNull();
+    mockFetch(403, { kind: 'Status', code: 403, message: 'forbidden: User "u-x" cannot create resource' });
+    await expect(getApp(store, 'todo')).rejects.toMatchObject({ code: 'forbidden', status: 403 });
   });
 
   it('reads and saves code and layout', async() => {
@@ -184,16 +181,16 @@ describe('apps and plan requests', () => {
 
     mockFetch(200, { appName: 'todo', commit: 'c', files });
     await getFiles(store, 'todo');
-    expect(calls[0].url).toBe(backendUrl('/api/apps/todo/files'));
+    expect(calls[0].url).toBe(backendUrl('/apps/todo/files'));
 
     mockFetch(200, { mode: 'manual', commit: 'd' });
-    await saveFiles(store, 'todo', 'c', files, '', 1000, 'tok');
+    await saveFiles(store, 'todo', 'c', files, '', 1000);
     expect(calls[0].init.method).toBe('POST');
     expect(JSON.parse(String(calls[0].init.body))).toEqual({ baseCommit: 'c', files });
 
     mockFetch(200, { mode: 'layout', commit: 'e' });
-    await saveLayout(store, 'todo', 'c', { 'mod-web-x': { x: 1, z: 2 } }, 1000, 'tok');
-    expect(calls[0].url).toBe(backendUrl('/api/apps/todo/layout'));
+    await saveLayout(store, 'todo', 'c', { 'mod-web-x': { x: 1, z: 2 } }, 1000);
+    expect(calls[0].url).toBe(backendUrl('/apps/todo/layout'));
     expect(JSON.parse(String(calls[0].init.body))).toEqual({ baseCommit: 'c', positions: { 'mod-web-x': { x: 1, z: 2 } } });
   });
 });

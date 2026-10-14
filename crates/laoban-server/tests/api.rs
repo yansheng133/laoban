@@ -106,7 +106,9 @@ fn start(provider: Box<dyn Provider>, cap: u64) -> Running {
 }
 
 fn start_with(api: ApiState, github: Option<MockServer>) -> Running {
-    let server = Server::bind_with_api("127.0.0.1:0", api).unwrap();
+    let server = Server::bind_with_api("127.0.0.1:0", api)
+        .unwrap()
+        .insecure_plain_api_for_tests();
     let addr = server.local_addr();
     let handle = server.shutdown_handle();
     let thread = Some(thread::spawn(move || server.run()));
@@ -136,6 +138,15 @@ fn post(addr: SocketAddr, path: &str, body: &str) -> (u16, Value) {
     );
     let (status, head, body) = raw(addr, req.as_bytes());
     assert!(head.contains("Content-Type: application/json"), "{head}");
+    (status, serde_json::from_str(&body).unwrap())
+}
+
+fn post_as(addr: SocketAddr, path: &str, body: &str, user: &str) -> (u16, Value) {
+    let req = format!(
+        "POST {path} HTTP/1.1\r\nHost: x\r\nX-Remote-User: {user}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    );
+    let (status, _, body) = raw(addr, req.as_bytes());
     (status, serde_json::from_str(&body).unwrap())
 }
 
@@ -245,13 +256,14 @@ fn apps_endpoints() {
     // Edit lock, code and layout.
     let (status, _) = get(r.addr, "/api/apps/breakfast/lock");
     assert_eq!(status, 405);
+    // The holder is the caller, never a name in the body.
     let (status, v) = post(r.addr, "/api/apps/breakfast/lock", "{}");
-    assert_eq!(status, 400);
-    assert_error(&v, "bad_request");
-    let (status, v) = post(r.addr, "/api/apps/breakfast/lock", r#"{"holder":"tester"}"#);
+    assert_eq!(status, 401);
+    assert_error(&v, "unauthenticated");
+    let (status, v) = post_as(r.addr, "/api/apps/breakfast/lock", "{}", "u-test01");
     assert_eq!(status, 404);
     assert_error(&v, "app_not_found");
-    let (status, v) = post(r.addr, "/api/apps/breakfast/lock/renew", "");
+    let (status, v) = post_as(r.addr, "/api/apps/breakfast/lock/renew", "", "u-test01");
     assert_eq!(status, 409);
     assert_error(&v, "lock_required");
     let (status, v) = post(r.addr, "/api/apps/breakfast/unlock", "");
@@ -279,8 +291,41 @@ fn apps_endpoints() {
         "/api/apps/breakfast/layout",
         r#"{"baseCommit":"x","positions":{"web":{"x":1,"z":2}}}"#,
     );
+    assert_eq!(status, 401);
+    assert_error(&v, "unauthenticated");
+    let (status, v) = post_as(
+        r.addr,
+        "/api/apps/breakfast/layout",
+        r#"{"baseCommit":"x","positions":{"web":{"x":1,"z":2}}}"#,
+        "u-test01",
+    );
     assert_eq!(status, 409);
     assert_error(&v, "lock_required");
+
+    // The same API under the aggregated path, only for the served namespace.
+    let gv = format!(
+        "/apis/{}/{}",
+        laoban_server::identity::GROUP,
+        laoban_server::identity::VERSION
+    );
+    let (status, body) = get(r.addr, &gv);
+    assert_eq!(status, 200);
+    assert!(body.contains("APIResourceList"));
+    let (status, body) = get(
+        r.addr,
+        &format!("{gv}/namespaces/laoban-dev/apps/breakfast"),
+    );
+    assert_eq!(status, 404);
+    assert_error(&serde_json::from_str(&body).unwrap(), "app_not_found");
+    let (status, _) = get(r.addr, &format!("{gv}/namespaces/other/apps"));
+    assert_eq!(status, 404);
+    let (status, v) = post(
+        r.addr,
+        &format!("{gv}/namespaces/laoban-dev/plans/p-20261013-abcdef/apply"),
+        "{}",
+    );
+    assert_eq!(status, 404);
+    assert_error(&v, "plan_not_found");
 }
 
 #[test]
@@ -414,18 +459,11 @@ fn binary_without_config_names_missing_variables_and_logs_requests() {
     stderr.read_line(&mut line).unwrap();
     let addr: SocketAddr = line.trim().rsplit(' ').next().unwrap().parse().unwrap();
 
+    // Without TLS settings the plain port serves the probes only.
     let (status, body) = get(addr, "/api/config?x=1");
-    assert_eq!(status, 500);
+    assert_eq!(status, 404);
     let v: Value = serde_json::from_str(&body).unwrap();
-    let msg = v["error"]["message"].as_str().unwrap();
-    assert!(
-        msg.contains("LAOBAN_MODEL") && msg.contains("LAOBAN_GITHUB_REPO"),
-        "{msg}"
-    );
-    assert!(
-        !msg.contains("ANTHROPIC_API_KEY"),
-        "set variables are not reported: {msg}"
-    );
+    assert!(v["error"]["message"].as_str().unwrap().contains("健康檢查"));
     assert_eq!(get(addr, "/healthz").0, 200);
 
     // SAFETY: plain kill(2) on our own child's pid.
@@ -435,10 +473,18 @@ fn binary_without_config_names_missing_variables_and_logs_requests() {
     child.wait().unwrap();
     assert!(rest.contains("/api disabled"), "{rest}");
     assert!(
-        rest.contains("laoban-server: GET /api/config 500 "),
+        rest.contains("LAOBAN_MODEL") && rest.contains("LAOBAN_GITHUB_REPO"),
+        "missing variables are named: {rest}"
+    );
+    assert!(
+        !rest.contains("ANTHROPIC_API_KEY"),
+        "set variables are not reported"
+    );
+    assert!(rest.contains("probes only"), "{rest}");
+    assert!(
+        rest.contains("laoban-server: GET /api/config 404 "),
         "{rest}"
     );
-    assert!(rest.contains("error=internal"), "{rest}");
     assert!(rest.contains("laoban-server: GET /healthz 200 "), "{rest}");
     assert!(!rest.contains(secret) && !line.contains(secret));
     assert!(!rest.contains("x=1"), "query strings are not logged");
