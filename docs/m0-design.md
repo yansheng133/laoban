@@ -112,7 +112,7 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 
 ### `GET /api/apps/<appName>`
 
-`{appName, summary, steps, architecture, updatedAt, history, appUrl, path, fleet, lock}`，`history` 新的在前，每筆 `{at, kind: create|edit|restore|manual|layout, request, summary, model}`（文字都已遮蔽）。`architecture` 的位置已套用存過的版面；`lock` 是 `{holder, since}` 或 `null`。不存在回 `404 app_not_found`；沒有 `laoban.json` 回 `409 not_editable`。
+`{appName, summary, steps, architecture, updatedAt, history, appUrl, path, fleet, round}`，`history` 新的在前，每筆 `{at, kind: create|edit|restore|manual|layout, request, summary, model}`（文字都已遮蔽）。`architecture` 的位置已套用存過的版面；`round` 是這個應用最近一輪的意見收斂（見下）或 `null`。`GET /api/apps` 每筆多一個 `round`：進行中那一輪的狀態，沒有就是 `null`。不存在回 `404 app_not_found`；沒有 `laoban.json` 回 `409 not_editable`。
 
 
 ### `GET /api/apps/<appName>/versions`
@@ -127,15 +127,31 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 
 請求：`{ "commit": "<完整 SHA>" }`。把那一版的計畫與程式當成新的一版再發布（不呼叫 AI、不改寫 Git 歷史，紀錄多一筆 `kind: restore`），回應格式同 `/api/apply`（`mode: "restore"`）。內容與目前版本相同時回 `400`。版面也一起還原。
 
-### 編輯鎖：`POST /api/apps/<appName>/lock`、`.../lock/renew`、`.../unlock`
+### 意見收斂：`/api/apps/<appName>/round[/...]`
 
-同一時間只有一個人能改同一個應用（需求「同一 Project 編輯鎖」；M0 沒有 Project，以應用為單位）。
+取代原本的編輯鎖（需求「同一 Project 編輯鎖」；Sam 2026-10-14 決定：大家把意見提上來，由 AI 收斂後跟全部人確認，然後 AI 開工）。一個應用同一時間只有一輪；不同應用互不影響。使用者都是 API server 驗證過的名稱（`rounds.rs`）。
 
-- 持有人就是呼叫者（API server 驗證過的使用者），請求不帶名稱也不帶 token。`lock` 回 `{holder, ttlSeconds: 180}`；別人持有時回 `409 locked`，訊息寫出是誰、從何時開始。同一個人再取一次只是延長（同一人開兩個分頁共用同一把鎖）。
-- `renew` 延長 180 秒；`unlock` 放開（不是持有人時什麼都不做）。沒有驗證過的使用者時回 `401 unauthenticated`。
-- 要求持有鎖的動作：有 `baseApp` 的 `/api/plan`、修改計畫的 `/api/apply`、`restore`、存程式、存版面。沒有鎖回 `409 lock_required`；別人持有回 `409 locked`。新增應用不需要。
-- 鎖只在後端記憶體（與計畫一樣，單一 replica；重啟後全部失效）。頁面開著時每 60 秒續約；3 分鐘沒有操作就不再續約，讓鎖自然過期。
-- 這個編輯鎖之後會由「意見收斂」取代（多人提意見、AI 收斂、提過意見的人確認後開工）。
+| 請求 | 誰 | 做什麼 |
+|---|---|---|
+| `GET .../round` | 任何人 | `{round}`：最近一輪（含已完成或取消的）或 `null` |
+| `POST .../round` `{opinion, deadlineMinutes, scope}` | 任何人 | 開一輪。`deadlineMinutes` 0～1440；0 表示在這個請求裡馬上收斂。`scope` 是 `web`、`api` 或 `all`（預設）。已有進行中的一輪回 `409 round_active` |
+| `POST .../round/opinions` `{text}` | 任何人 | 收集中提意見。一則最多 1000 字；一輪最多 30 則、合計 8000 字 |
+| `POST .../round/confirm` | 這一輪提過意見的人 | 確認。最後一個回覆的人的請求裡，AI 寫程式並發布，回應多一個 `applied`（格式同 `/api/apply`） |
+| `POST .../round/object` `{text}` | 同上 | 有意見：這段話加進意見，回到收集，10 分鐘後重新收斂 |
+| `POST .../round/skip` `{user}` | 發起人 | 略過還沒回覆的人（記錄誰、何時略過）；略過後如果全部都回覆了，同樣開始發布 |
+| `POST .../round/cancel` | 發起人 | 取消（收集中、等待確認或失敗時） |
+| `POST .../round/converge` | 發起人 | 收斂或發布失敗後重新收斂 |
+
+狀態：`collecting` → `converging` → `confirming` → `applying` → `done`；也可能是 `failed`、`cancelled`。每一輪的 `you` 寫出呼叫者是不是發起人、要不要確認、能不能提意見；`log` 記錄每個動作與時間。
+
+- **收斂**：截止時間到了，後端（每 10 秒檢查一次）把所有意見連同作者交給 AI，用修改既有應用的計畫流程，另外指示 AI 合併重複的意見、衝突時採較小較安全的改動並在 notes 說明。收斂後的計畫實際動到的部分（網頁模組、API 模組或端點）會加進這一輪的範圍。
+- **確認**：要確認的人是這一輪提過意見的人。修改計畫 1 小時內沒有全部確認就會失效，發起人需要重新收斂。
+- **一輪進行中（收集、收斂、等待確認、發布、失敗）時**：
+  - 另外產生修改計畫（有 `baseApp` 的 `/api/plan`、套用修改計畫）與還原，回 `409 round_active`。
+  - 直接存程式時，改到範圍內的檔案回 `409 round_scope`，範圍外照常存。網頁範圍是 `index.html`、`app.js`、`style.css`；API 範圍是 `handler.py`。
+  - 存版面不受影響（只改位置，不碰程式）。
+- **發布時逐檔合併**：AI 依計畫產生程式後，跟「現在的版本」逐檔比較。只有一邊改過的檔案取那一邊；AI 和手動都改了、內容又不同的檔案是衝突，回 `409 merge_conflict`，這一輪變成失敗，不發布。修改紀錄與版面也用現在的版本，期間的手動修改與版面調整都會留下。這個合併規則也適用於一般的修改計畫。
+- **限制**：一輪存在後端記憶體（與計畫一樣，單一 replica）。後端重啟（包含升級）時，進行中的一輪會消失，需要重新開。
 
 ### `GET /api/apps/<appName>/files`、`POST /api/apps/<appName>/files`
 
@@ -149,7 +165,7 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 
 ### 錯誤
 
-一律 `{"error": {"code": "…", "message": "…"}}`，`message` 是給使用者看的繁中句子。代碼：`bad_request`（400）、`plan_not_found`（404）、`already_applied`（409）、`app_exists`（409）、`app_not_found`（404）、`not_editable`（409）、`version_not_found`（404）、`unauthenticated`（401，請求沒有經過 API server、沒有驗證過的使用者）、`locked`（409，別人正在編輯）、`lock_required`（409，沒有或已失效的編輯鎖）、`version_conflict`（409）、`invalid_files`（400）、`budget_exceeded`（429，laoban 自己的 token 上限）、`spend_limit`（402，Anthropic 花費上限，**不重試**）、`ai_invalid_output`（502，AI 回應不合格式或碰到禁止的資源）、`github_failed`（502）、`internal`（500）。
+一律 `{"error": {"code": "…", "message": "…"}}`，`message` 是給使用者看的繁中句子。代碼：`bad_request`（400）、`plan_not_found`（404）、`already_applied`（409）、`app_exists`（409）、`app_not_found`（404）、`not_editable`（409）、`version_not_found`（404）、`unauthenticated`（401，請求沒有經過 API server、沒有驗證過的使用者）、`round_active`（409）、`round_scope`（409）、`merge_conflict`（409）、`round_state`（409，這一輪目前的狀態不能這樣做）、`not_initiator`（403）、`not_confirmer`（409）、`version_conflict`（409）、`invalid_files`（400）、`budget_exceeded`（429，laoban 自己的 token 上限）、`spend_limit`（402，Anthropic 花費上限，**不重試**）、`ai_invalid_output`（502，AI 回應不合格式或碰到禁止的資源）、`github_failed`（502）、`internal`（500）。
 
 ### 其他
 
@@ -212,7 +228,8 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 - 詳細頁的**版本**清單：每一版的時間、建立／修改／還原、當時的需求與 commit。「查看」把那一版的架構放進 3D 圖，預設與目前版本比較（`utils/graphDiff.ts`：元件以 id、連線以 from/to/kind 對應，標示新增、刪除、修改；模組 id 由名稱產生，所以同名模組跨版本對得上）；「還原到這一版」先在頁面上確認，再呼叫 restore，之後跟部署一樣等新版跑起來。產生修改計畫時，3D 圖也一律與目前版本比較，部署前就看得到會改到哪裡。
 - 外觀：每頁右上角可切換**亮色／自動／暗色**與**配色**。亮暗走 Rancher 自己的使用者偏好（`prefs/setTheme`，與 User Preferences 同一個設定，Rancher 跟著換 `<body>` 的 theme class）；管理者用全域設定強制主題時以全域設定為準。配色有「Rancher 預設」與海洋、夕陽、葡萄三組，只在 laoban 頁面內覆寫 Rancher 的 primary／link 變數與 3D 圖的分層顏色，亮暗各一組，對比都在 WCAG AA（4.5:1）以上；選擇記在瀏覽器的 localStorage（換瀏覽器或清除網站資料會回到預設）。
 - 3D 圖沿用 `web/viewer-prototype` 的程式（three.js 0.160.0、`graph-diff.mjs`）。可以顯示七類元件：程式（方塊）、網路服務（圓柱）、資料庫（高圓柱）、Ingress（八面體）、外部相依服務（十二面體）、儲存空間（扁六角柱）、訊息佇列（膠囊）；M0 產生的應用只會用到其中幾類。
-- 詳細頁打開時取得**編輯鎖**（`composables/useEditLock.ts`，名稱用 Rancher 使用者名稱），上方顯示「你正在編輯」或「某某正在編輯，目前只能看」；沒有鎖時修改、還原、存程式、拖曳都停用。離開頁面時放開。
+- 詳細頁左上是**意見收斂**（`components/RoundPanel.vue`、`composables/useRound.ts`）：沒有進行中的一輪時，填意見、選收斂時間（立即、10 分鐘～24 小時）與範圍後開始；進行中時顯示意見、截止時間、收斂後的計畫與每個人的確認狀態，並依呼叫者的身分顯示能做的動作。頁面每 5 秒更新一次。收斂後的計畫在 3D 圖與目前版本比較。一輪發布後，頁面跟一般部署一樣等新版跑起來。「應用」清單會標出正在進行一輪的應用。
+- 一輪進行中時：程式碼分頁裡範圍內的檔案只能看，範圍外照常可以存；版本不能還原；「改結構」只在收集意見時可用。
 - 詳細頁右邊分**架構圖**與**程式碼**兩個分頁。程式碼分頁用 Rancher 內建的 CodeMirror 編輯四個檔，「儲存成新版本」走 `POST .../files`，之後跟部署一樣等新版跑起來。
 - 架構圖在**最新版本**（沒有在看舊版、沒有修改計畫）時可以拖曳元件，「儲存版面」走 `POST .../layout`。點選元件後可在「改結構」改名、刪除、新增連線，或新增模組：這些會變成句子加進「要怎麼修改」，再走一般的 AI 計畫／確認流程。新增資料庫、訊息佇列、Ingress 不在 M0 的固定範本內，按鈕顯示「試吃版不支援」。歷史版本唯讀。
 - 「確認並部署」按下後顯示 commit 連結，接著每 5 秒讀 Fleet Bundle（Bundle 只剩 Modified、沒有待部署或錯誤時，也視為應用已在執行，顯示連結並附上 Fleet 的訊息）（`/v1/fleet.cattle.io.bundles`，篩 `laoban.io` 前綴或 bundlePrefix）的 Ready 狀態，Ready 後顯示「打開應用」連結。

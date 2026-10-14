@@ -52,6 +52,8 @@ export interface AppSummary {
   appUrl: string;
   path: string;
   fleet: FleetRef;
+  // State of a running round of 意見收斂, if any.
+  round?: RoundState | null;
 }
 
 export interface AppHistoryEntry {
@@ -75,19 +77,37 @@ export interface AppDetail {
   appUrl: string;
   path: string;
   fleet: FleetRef;
-  lock?: LockStatus | null;
+  // The latest round of 意見收斂, as seen by the caller.
+  round?: RoundView | null;
 }
 
-// Who is editing an app (GET /api/apps/<name>, "lock").
-export interface LockStatus {
-  holder: string;
-  since: string;
+export type RoundState = 'collecting' | 'converging' | 'confirming' | 'applying' | 'done' | 'failed' | 'cancelled';
+
+export type RoundPart = 'web' | 'api';
+
+// A round of 意見收斂 (GET .../apps/<name>/round). Users are the IDs the
+// API server verified; `you` is what the caller may do.
+export interface RoundView {
+  id: string;
+  app: string;
+  initiator: string;
+  scope: RoundPart[];
+  state: RoundState;
+  // Unix seconds; when collecting ends.
+  deadline: number;
+  opinions: { by: string; at: string; text: string }[];
+  confirmers: { user: string; answer: 'pending' | 'confirmed' | 'skipped'; at?: string }[];
+  plan: { planId: string; summary: string; steps: string[]; architecture: Architecture } | null;
+  message: string;
+  result: ApplyResponse | null;
+  log: { at: string; by: string; event: string }[];
+  you: { user: string; isInitiator: boolean; mustConfirm: boolean; canAddOpinion: boolean };
 }
 
-// POST .../apps/<name>/lock
-export interface LockGrant {
-  holder: string;
-  ttlSeconds: number;
+export interface RoundResponse {
+  round: RoundView | null;
+  // Present when this call published the change.
+  applied?: ApplyResponse;
 }
 
 // The four generated files, as the AI and the editor see them.
@@ -322,18 +342,26 @@ export function restoreVersion(store: StoreLike, name: string, commit: string, t
   });
 }
 
-// The lock holder is the signed-in user as verified by the API server.
-export function acquireLock(store: StoreLike, name: string): Promise<LockGrant> {
-  return requestJson<LockGrant>(store, appPath(name, '/lock'), { method: 'POST', body: {} });
+export function getRound(store: StoreLike, name: string): Promise<RoundResponse> {
+  return requestJson<RoundResponse>(store, appPath(name, '/round'));
 }
 
-export function renewLock(store: StoreLike, name: string): Promise<{ ttlSeconds: number }> {
-  return requestJson(store, appPath(name, '/lock/renew'), { method: 'POST', body: {} });
+/** Open a round. With deadlineMinutes 0 the AI converges in this call. */
+export function openRound(store: StoreLike, name: string, opinion: string, deadlineMinutes: number, scope: string, timeoutMs: number): Promise<RoundResponse> {
+  return requestJson<RoundResponse>(store, appPath(name, '/round'), {
+    method: 'POST', body: { opinion, deadlineMinutes, scope }, timeoutMs
+  });
 }
 
-export function releaseLock(store: StoreLike, name: string): Promise<{ released: boolean }> {
-  return requestJson(store, appPath(name, '/unlock'), {
-    method: 'POST', body: {}, keepalive: true
+export type RoundAction = 'opinions' | 'confirm' | 'object' | 'skip' | 'cancel' | 'converge';
+
+/**
+ * One action on the current round. "confirm"/"skip" may publish (the AI
+ * writes the code) and "converge" runs the AI, so they get `timeoutMs`.
+ */
+export function roundAction(store: StoreLike, name: string, action: RoundAction, body: Record<string, string>, timeoutMs?: number): Promise<RoundResponse> {
+  return requestJson<RoundResponse>(store, appPath(name, `/round/${ action }`), {
+    method: 'POST', body, timeoutMs
   });
 }
 

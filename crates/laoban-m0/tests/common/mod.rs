@@ -284,10 +284,9 @@ pub fn blob_contents(github: &MockServer) -> Vec<String> {
         .collect()
 }
 
-/// Take the edit lock on `app` as the test user; returns the user name
-/// to pass as the verified caller.
+/// The verified caller used by the tests (the user name the API server
+/// would pass). `app` is ignored: kept so call sites read naturally.
 #[allow(dead_code)]
-pub fn lock(h: &Harness, app: &str) -> String {
-    h.service.lock(app, Some("u-tester")).unwrap();
+pub fn lock(_h: &Harness, _app: &str) -> String {
     "u-tester".to_string()
 }

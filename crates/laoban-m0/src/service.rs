@@ -2,8 +2,9 @@
 //! `GET /api/config`. Transport-independent: the HTTP layer only parses
 //! JSON bodies and maps [`M0Error`] to status codes.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::{Instant, SystemTime};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use laoban_ai::{
     AiError, BudgetError, CompletionRequest, Dependencies, ModelSelection, Orchestrator,
@@ -18,13 +19,13 @@ use thiserror::Error;
 use crate::codegen::{parse_generated, CODEGEN_INSTRUCTIONS, EDIT_CODEGEN_INSTRUCTIONS};
 use crate::config::M0Settings;
 use crate::github::{GithubCommitter, GithubError};
-use crate::lock::{LockError, LockTable};
 use crate::meta::{self, AppMeta, HistoryEntry, Layout, Pos, META_FILE};
 use crate::plan::{
     architecture_with_layout, carry_layout, parse_app_plan, valid_app_name, EDIT_PLAN_INSTRUCTIONS,
-    PLAN_INSTRUCTIONS,
+    PLAN_INSTRUCTIONS, ROUND_PLAN_INSTRUCTIONS,
 };
 use crate::render::{render, rollout_hashes, RenderInput};
+use crate::rounds::{self, Part, Round, RoundError, RoundPlan, State};
 use crate::store::{BaseApp, PlanStore, StoreError, StoredPlan};
 use crate::{time, InvalidOutput};
 
@@ -75,6 +76,34 @@ pub struct PlanRequestBody {
 pub struct RestoreRequest {
     /// Full SHA of the version's commit (from `GET .../versions`).
     pub commit: String,
+}
+
+/// `POST .../apps/<name>/round` body.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OpenRoundRequest {
+    /// The first opinion.
+    pub opinion: String,
+    /// Minutes until the AI converges; 0 converges right away.
+    pub deadline_minutes: u64,
+    /// "web", "api" or "all" (default).
+    #[serde(default)]
+    pub scope: Option<String>,
+}
+
+/// `POST .../round/opinions` and `.../round/object` body.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OpinionRequest {
+    pub text: String,
+}
+
+/// `POST .../round/skip` body.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkipRequest {
+    /// Whose confirmation the initiator skips.
+    pub user: String,
 }
 
 /// `POST /api/apps/<name>/files` body.
@@ -140,12 +169,17 @@ pub enum M0Error {
     NotEditable,
     #[error("version not found")]
     VersionNotFound,
-    /// Someone else is editing the app. Holder and since are for display.
-    #[error("app is locked")]
-    Locked { holder: String, since: String },
-    /// No valid edit lock (never taken, or expired).
-    #[error("edit lock required")]
-    LockRequired,
+    /// A round of 意見收斂 is running on the app; changes go through it.
+    #[error("a round is active")]
+    RoundActive,
+    /// A direct edit touches files the running round is about.
+    #[error("files in the round's scope: {0}")]
+    RoundScope(String),
+    /// Applying a change met a file changed by hand since the plan.
+    #[error("merge conflict in {0}")]
+    MergeConflict(String),
+    #[error("round: {0:?}")]
+    Round(RoundError),
     /// The request carried no verified user (it did not come through the
     /// Kubernetes API server).
     #[error("unauthenticated")]
@@ -173,8 +207,15 @@ impl M0Error {
             M0Error::AppNotFound => "app_not_found",
             M0Error::NotEditable => "not_editable",
             M0Error::VersionNotFound => "version_not_found",
-            M0Error::Locked { .. } => "locked",
-            M0Error::LockRequired => "lock_required",
+            M0Error::RoundActive => "round_active",
+            M0Error::RoundScope(_) => "round_scope",
+            M0Error::MergeConflict(_) => "merge_conflict",
+            M0Error::Round(RoundError::Invalid(_)) | M0Error::Round(RoundError::Full) => {
+                "bad_request"
+            }
+            M0Error::Round(RoundError::WrongState(_)) => "round_state",
+            M0Error::Round(RoundError::NotInitiator) => "not_initiator",
+            M0Error::Round(RoundError::NotConfirmer) => "not_confirmer",
             M0Error::Unauthenticated => "unauthenticated",
             M0Error::VersionConflict => "version_conflict",
             M0Error::InvalidFiles(_) => "invalid_files",
@@ -205,7 +246,14 @@ impl M0Error {
             M0Error::AiUnavailable(_) | M0Error::Internal(_) => 500,
             M0Error::AppExists(_) | M0Error::NotEditable => 409,
             M0Error::AppNotFound | M0Error::VersionNotFound => 404,
-            M0Error::Locked { .. } | M0Error::LockRequired | M0Error::VersionConflict => 409,
+            M0Error::RoundActive
+            | M0Error::RoundScope(_)
+            | M0Error::MergeConflict(_)
+            | M0Error::VersionConflict
+            | M0Error::Round(RoundError::WrongState(_))
+            | M0Error::Round(RoundError::NotConfirmer) => 409,
+            M0Error::Round(RoundError::Invalid(_)) | M0Error::Round(RoundError::Full) => 400,
+            M0Error::Round(RoundError::NotInitiator) => 403,
             M0Error::Unauthenticated => 401,
             M0Error::InvalidFiles(_) => 400,
         }
@@ -238,10 +286,27 @@ impl M0Error {
             ),
             M0Error::AppNotFound => "找不到這個應用，可能已經被刪除。".into(),
             M0Error::VersionNotFound => "找不到這個版本。".into(),
-            M0Error::Locked { holder, since } => format!(
-                "{holder} 正在編輯這個應用（{since} 起）。等對方離開，或 3 分鐘沒有動作後再試。"
+            M0Error::RoundActive => {
+                "這個應用正在進行一輪意見收斂，修改請到應用的詳細頁提意見；這一輪結束前不能還原或另外產生修改計畫。".into()
+            }
+            M0Error::RoundScope(files) => format!(
+                "這一輪意見收斂正在處理 {files}，這一輪結束前不能直接修改這些檔案；其他檔案可以照常修改。"
             ),
-            M0Error::LockRequired => "編輯鎖已失效，請重新整理頁面後再試。".into(),
+            M0Error::MergeConflict(files) => format!(
+                "這一輪期間 {files} 也被直接修改過，和 AI 的修改衝突，沒有部署。請發起人重新收斂。"
+            ),
+            M0Error::Round(RoundError::Invalid(m)) => (*m).into(),
+            M0Error::Round(RoundError::Full) => {
+                "這一輪的意見已達上限（30 則或 8000 字），請等這一輪結束再開下一輪。".into()
+            }
+            M0Error::Round(RoundError::WrongState(st)) => format!(
+                "這一輪目前不能這樣做（{}）。請重新整理頁面。",
+                state_label(*st)
+            ),
+            M0Error::Round(RoundError::NotInitiator) => "只有發起這一輪的人可以這樣做。".into(),
+            M0Error::Round(RoundError::NotConfirmer) => {
+                "你不需要確認這一輪：你沒有在這一輪提意見，或已經回覆過。".into()
+            }
             M0Error::Unauthenticated => {
                 "無法確認你的身分：請從 Rancher 的 laoban 頁面操作。".into()
             }
@@ -293,7 +358,8 @@ pub struct M0Service {
     budget: Arc<TokenBudget>,
     github: GithubCommitter,
     store: Mutex<PlanStore>,
-    locks: Mutex<LockTable>,
+    /// The latest round of 意見收斂 per app (active or finished).
+    rounds: Mutex<HashMap<String, Round>>,
 }
 
 impl M0Service {
@@ -329,7 +395,7 @@ impl M0Service {
             budget,
             github,
             store: Mutex::new(PlanStore::default()),
-            locks: Mutex::new(LockTable::default()),
+            rounds: Mutex::new(HashMap::new()),
         })
     }
 
@@ -354,13 +420,34 @@ impl M0Service {
         self.store.lock().unwrap_or_else(|p| p.into_inner())
     }
 
-    /// `POST /api/plan`.
+    /// `POST /api/plan`. Changing an existing app this way is refused
+    /// while a round of 意見收斂 runs on it.
     pub fn plan(&self, body: &PlanRequestBody, user: Option<&str>) -> Result<Value, M0Error> {
+        if let Some(app) = body
+            .base_app
+            .as_deref()
+            .map(str::trim)
+            .filter(|a| !a.is_empty())
+        {
+            self.check_no_round(app)?;
+        }
+        self.plan_with(body, user, None, MAX_PROMPT_CHARS)
+    }
+
+    /// Make a plan. `extra` adds instructions (a round's convergence);
+    /// `max_chars` bounds the request.
+    fn plan_with(
+        &self,
+        body: &PlanRequestBody,
+        user: Option<&str>,
+        extra: Option<&str>,
+        max_chars: usize,
+    ) -> Result<Value, M0Error> {
         let prompt = body.prompt.trim();
         if prompt.is_empty() {
             return Err(M0Error::BadRequest("請輸入需求。"));
         }
-        if prompt.chars().count() > MAX_PROMPT_CHARS {
+        if prompt.chars().count() > max_chars {
             return Err(M0Error::BadRequest("需求太長，請縮短到 4000 字以內。"));
         }
         let requested_name = match body.app_name.as_deref().map(str::trim) {
@@ -383,10 +470,11 @@ impl M0Service {
         }
 
         let masked = self.orchestrator.mask_for_ai(prompt);
+        let mut parts: Vec<Part> = Vec::new();
         let (plan, completion, app, base) = match base_name {
             Some(base_app) => {
                 let current = self.load_app(&base_app)?;
-                self.require_lock(&base_app, user)?;
+                require_user(user)?;
                 if current.files.total_bytes() > MAX_EDIT_CODE_BYTES {
                     return Err(M0Error::BadRequest(
                         "這個應用的程式太大，試吃版無法用 AI 編輯。",
@@ -398,7 +486,10 @@ impl M0Service {
                 let completion = self.orchestrator.complete(&CompletionRequest {
                     principal: PRINCIPAL.into(),
                     requested_model: None,
-                    instructions: format!("{PLAN_INSTRUCTIONS}\n{EDIT_PLAN_INSTRUCTIONS}"),
+                    instructions: match extra {
+                        Some(x) => format!("{PLAN_INSTRUCTIONS}\n{EDIT_PLAN_INSTRUCTIONS}\n{x}"),
+                        None => format!("{PLAN_INSTRUCTIONS}\n{EDIT_PLAN_INSTRUCTIONS}"),
+                    },
                     blocks: vec![
                         UntrustedBlock {
                             kind: "current_plan",
@@ -417,6 +508,7 @@ impl M0Service {
                 // Positions follow renamed modules (shown in the plan and
                 // published on apply).
                 let layout = carry_layout(&current.plan, &plan, &base_app, &current.layout);
+                parts = changed_parts(&current.plan, &plan);
                 let base = BaseApp {
                     files: current.files,
                     history: current.history,
@@ -476,6 +568,7 @@ impl M0Service {
             "steps": plan.steps,
             "architecture": arch,
             "maskedFindings": masked.findings.len(),
+            "changedParts": parts,
             "usage": {
                 "inputTokens": completion.input_tokens,
                 "outputTokens": completion.output_tokens,
@@ -546,6 +639,12 @@ impl M0Service {
             };
             let mut item = self.app_links(name);
             item["appName"] = json!(name);
+            item["round"] = self
+                .rounds()
+                .get(name.as_str())
+                .filter(|r| r.state.active())
+                .map(|r| json!(r.state))
+                .unwrap_or(Value::Null);
             match &meta {
                 Some(m) => {
                     item["editable"] = json!(true);
@@ -572,7 +671,7 @@ impl M0Service {
     }
 
     /// `GET /api/apps/<name>`: what the page needs to show and change an app.
-    pub fn get_app(&self, app: &str) -> Result<Value, M0Error> {
+    pub fn get_app(&self, app: &str, user: Option<&str>) -> Result<Value, M0Error> {
         if !valid_app_name(app) {
             return Err(M0Error::BadRequest("應用名稱不正確。"));
         }
@@ -582,7 +681,7 @@ impl M0Service {
         v["summary"] = json!(m.plan.summary);
         v["steps"] = json!(m.plan.steps);
         v["architecture"] = architecture_with_layout(&m.plan, app, &m.layout);
-        v["lock"] = self.lock_json(app);
+        v["round"] = self.round_json(app, user);
         v["updatedAt"] = json!(m.updated_at());
         v["history"] = json!(m.history.iter().rev().collect::<Vec<_>>());
         Ok(v)
@@ -590,7 +689,12 @@ impl M0Service {
 
     /// `POST /api/apply`.
     pub fn apply(&self, body: &ApplyRequest, user: Option<&str>) -> Result<Value, M0Error> {
-        let id = body.plan_id.trim();
+        self.apply_plan(body.plan_id.trim(), user, false)
+    }
+
+    /// Apply a stored plan. A change to an existing app outside a round is
+    /// refused while a round runs on it.
+    fn apply_plan(&self, id: &str, user: Option<&str>, from_round: bool) -> Result<Value, M0Error> {
         let stored = self
             .lock_store()
             .begin_apply(id, Instant::now())
@@ -598,14 +702,19 @@ impl M0Service {
                 StoreError::NotFound => M0Error::PlanNotFound,
                 StoreError::AlreadyApplied => M0Error::AlreadyApplied,
             })?;
-        let result = self.apply_inner(&stored, user);
+        let result = if stored.base.is_some() && !from_round {
+            self.check_no_round(&stored.app)
+                .and_then(|()| self.apply_inner(&stored, user))
+        } else {
+            self.apply_inner(&stored, user)
+        };
         self.lock_store().finish_apply(id, result.is_ok());
         result
     }
 
     fn apply_inner(&self, stored: &StoredPlan, user: Option<&str>) -> Result<Value, M0Error> {
         if stored.base.is_some() {
-            self.require_lock(&stored.app, user)?;
+            require_user(user)?;
         }
         // A new app must still not exist (another plan may have been
         // applied under the same name since).
@@ -637,9 +746,23 @@ impl M0Service {
             blocks,
             max_tokens: Some(CODEGEN_MAX_TOKENS),
         })?;
-        let files = parse_generated(&completion.content).map_err(M0Error::AiInvalidOutput)?;
+        let generated = parse_generated(&completion.content).map_err(M0Error::AiInvalidOutput)?;
 
         let app = stored.app.as_str();
+        // A change is merged into the app as it is now, file by file: files
+        // edited by hand since the plan are kept unless the AI changed them
+        // too (then nothing is published). History and layout are the
+        // current ones.
+        let (files, history, layout) = match &stored.base {
+            Some(base) => {
+                let current = self.load_app(app)?;
+                let files = crate::codegen::merge_files(&base.files, &generated, &current.files)
+                    .map_err(|names| M0Error::MergeConflict(names.join("、")))?;
+                let layout = carry_layout(&current.plan, &stored.plan, app, &current.layout);
+                (files, current.history, layout)
+            }
+            None => (generated, Vec::new(), Layout::new()),
+        };
         let masked_summary = self.orchestrator.mask_for_ai(&stored.plan.summary).text;
         let masked_prompt = self.orchestrator.mask_for_ai(&stored.masked_prompt).text;
         let (kind, message) = if stored.base.is_some() {
@@ -650,16 +773,6 @@ impl M0Service {
         } else {
             ("create", commit_message(app, &masked_summary))
         };
-        let history = stored
-            .base
-            .as_ref()
-            .map(|b| b.history.clone())
-            .unwrap_or_default();
-        let layout = stored
-            .base
-            .as_ref()
-            .map(|b| b.layout.clone())
-            .unwrap_or_default();
         self.publish(Publish {
             app,
             plan: &stored.plan,
@@ -820,65 +933,314 @@ impl M0Service {
         }))
     }
 
-    fn locks(&self) -> std::sync::MutexGuard<'_, LockTable> {
-        self.locks.lock().unwrap_or_else(|p| p.into_inner())
+    fn rounds(&self) -> std::sync::MutexGuard<'_, HashMap<String, Round>> {
+        self.rounds.lock().unwrap_or_else(|p| p.into_inner())
     }
 
-    fn lock_json(&self, app: &str) -> Value {
-        match self.locks().status(app, Instant::now()) {
-            Some(info) => json!({ "holder": info.holder, "since": time::rfc3339(info.since) }),
-            None => Value::Null,
+    fn round_json(&self, app: &str, user: Option<&str>) -> Value {
+        self.rounds()
+            .get(app)
+            .map(|r| r.to_json_for(user))
+            .unwrap_or(Value::Null)
+    }
+
+    /// Changes outside a round wait while one runs on the app.
+    fn check_no_round(&self, app: &str) -> Result<(), M0Error> {
+        match self.rounds().get(app) {
+            Some(r) if r.state.active() => Err(M0Error::RoundActive),
+            _ => Ok(()),
         }
     }
 
-    /// Changes to an existing app need its edit lock, held by the caller.
-    fn require_lock(&self, app: &str, user: Option<&str>) -> Result<(), M0Error> {
-        let user = user.ok_or(M0Error::Unauthenticated)?;
-        self.locks()
-            .check(app, Some(user), Instant::now())
-            .map_err(lock_error)
+    /// `GET .../apps/<name>/round`: the latest round (or null).
+    pub fn round(&self, app: &str, user: Option<&str>) -> Result<Value, M0Error> {
+        if !valid_app_name(app) {
+            return Err(M0Error::BadRequest("應用名稱不正確。"));
+        }
+        Ok(json!({ "round": self.round_json(app, user) }))
+    }
+
+    /// `POST .../apps/<name>/round`: open a round with the first opinion.
+    /// With a deadline of 0 it converges right away (in this request).
+    pub fn open_round(
+        &self,
+        app: &str,
+        body: &OpenRoundRequest,
+        user: Option<&str>,
+    ) -> Result<Value, M0Error> {
+        let user = require_user(user)?;
+        if !valid_app_name(app) {
+            return Err(M0Error::BadRequest("應用名稱不正確。"));
+        }
+        let scope = rounds::parse_scope(body.scope.as_deref().unwrap_or("all"))
+            .ok_or(M0Error::BadRequest("範圍只能是 web、api 或 all。"))?;
+        // Only apps laoban can change.
+        self.load_app(app)?;
+        let now = SystemTime::now();
+        let at = time::rfc3339(now);
+        let id = time::plan_id(now).replacen("p-", "r-", 1);
+        {
+            let mut rs = self.rounds();
+            if rs.get(app).is_some_and(|r| r.state.active()) {
+                return Err(M0Error::RoundActive);
+            }
+            let r = Round::open(
+                id,
+                app,
+                user,
+                &body.opinion,
+                body.deadline_minutes,
+                scope,
+                unix(now),
+                &at,
+            )
+            .map_err(M0Error::Round)?;
+            rs.insert(app.to_string(), r);
+        }
+        if body.deadline_minutes == 0 {
+            self.converge_if_due(app, unix(now));
+        }
+        self.round(app, Some(user))
+    }
+
+    /// `POST .../round/opinions`: anyone adds an opinion while collecting.
+    pub fn add_opinion(
+        &self,
+        app: &str,
+        body: &OpinionRequest,
+        user: Option<&str>,
+    ) -> Result<Value, M0Error> {
+        let user = require_user(user)?;
+        let at = time::rfc3339(SystemTime::now());
+        self.with_round(app, |r| r.add_opinion(user, &body.text, &at))?;
+        self.round(app, Some(user))
+    }
+
+    /// `POST .../round/confirm`. The last answer starts the AI writing the
+    /// code (in this request); the response then has `applied`.
+    pub fn confirm_round(&self, app: &str, user: Option<&str>) -> Result<Value, M0Error> {
+        let user = require_user(user)?;
+        let at = time::rfc3339(SystemTime::now());
+        self.with_round(app, |r| r.confirm(user, &at))?;
+        self.finish_if_answered(app, user)
+    }
+
+    /// `POST .../round/skip` `{user}`: the initiator skips someone.
+    pub fn skip_in_round(
+        &self,
+        app: &str,
+        body: &SkipRequest,
+        user: Option<&str>,
+    ) -> Result<Value, M0Error> {
+        let user = require_user(user)?;
+        let at = time::rfc3339(SystemTime::now());
+        self.with_round(app, |r| r.skip(user, body.user.trim(), &at))?;
+        self.finish_if_answered(app, user)
+    }
+
+    /// `POST .../round/object` `{text}`: disagree; back to collecting.
+    pub fn object_in_round(
+        &self,
+        app: &str,
+        body: &OpinionRequest,
+        user: Option<&str>,
+    ) -> Result<Value, M0Error> {
+        let user = require_user(user)?;
+        let now = SystemTime::now();
+        let at = time::rfc3339(now);
+        self.with_round(app, |r| r.object(user, &body.text, unix(now), &at))?;
+        self.round(app, Some(user))
+    }
+
+    /// `POST .../round/cancel`: the initiator gives up.
+    pub fn cancel_round(&self, app: &str, user: Option<&str>) -> Result<Value, M0Error> {
+        let user = require_user(user)?;
+        let at = time::rfc3339(SystemTime::now());
+        self.with_round(app, |r| r.cancel(user, &at))?;
+        self.round(app, Some(user))
+    }
+
+    /// `POST .../round/converge`: the initiator converges again after a
+    /// failure (in this request).
+    pub fn retry_round(&self, app: &str, user: Option<&str>) -> Result<Value, M0Error> {
+        let user = require_user(user)?;
+        let id = {
+            let mut rs = self.rounds();
+            let r = rs
+                .get_mut(app)
+                .ok_or(M0Error::Round(RoundError::WrongState(State::Cancelled)))?;
+            r.check_retry(user).map_err(M0Error::Round)?;
+            r.start_converging(&time::rfc3339(SystemTime::now()));
+            r.id.clone()
+        };
+        self.converge(app, &id);
+        self.round(app, Some(user))
+    }
+
+    fn with_round<F>(&self, app: &str, f: F) -> Result<(), M0Error>
+    where
+        F: FnOnce(&mut Round) -> Result<(), RoundError>,
+    {
+        let mut rs = self.rounds();
+        match rs.get_mut(app) {
+            Some(r) if r.state.active() || r.state == State::Done => f(r).map_err(M0Error::Round),
+            Some(r) => Err(M0Error::Round(RoundError::WrongState(r.state))),
+            None => Err(M0Error::Round(RoundError::WrongState(State::Cancelled))),
+        }
+    }
+
+    /// Converge every round whose deadline has passed. Called by the
+    /// background timer (see [`M0Service::start_round_timer`]) and tests.
+    pub fn tick(&self, now_unix: u64) {
+        let due: Vec<String> = self
+            .rounds()
+            .iter()
+            .filter(|(_, r)| r.due(now_unix))
+            .map(|(app, _)| app.clone())
+            .collect();
+        for app in due {
+            self.converge_if_due(&app, now_unix);
+        }
+    }
+
+    /// Check for due rounds every 10 seconds, one at a time.
+    pub fn start_round_timer(self: &Arc<Self>) {
+        let service = Arc::downgrade(self);
+        let _ = std::thread::Builder::new()
+            .name("laoban-rounds".into())
+            .spawn(move || loop {
+                std::thread::sleep(std::time::Duration::from_secs(10));
+                match service.upgrade() {
+                    Some(s) => s.tick(unix(SystemTime::now())),
+                    None => return,
+                }
+            });
+    }
+
+    fn converge_if_due(&self, app: &str, now_unix: u64) {
+        let id = {
+            let mut rs = self.rounds();
+            match rs.get_mut(app) {
+                Some(r) if r.due(now_unix) => {
+                    r.start_converging(&time::rfc3339(SystemTime::now()));
+                    r.id.clone()
+                }
+                _ => return,
+            }
+        };
+        self.converge(app, &id);
+    }
+
+    /// The AI turns the round's opinions into one change plan.
+    fn converge(&self, app: &str, round_id: &str) {
+        let (request, initiator) = {
+            let rs = self.rounds();
+            match rs.get(app) {
+                Some(r) if r.id == round_id && r.state == State::Converging => {
+                    (r.change_request(), r.initiator.clone())
+                }
+                _ => return,
+            }
+        };
+        let body = PlanRequestBody {
+            prompt: request,
+            app_name: None,
+            base_app: Some(app.to_string()),
+        };
+        let result = self.plan_with(
+            &body,
+            Some(&initiator),
+            Some(ROUND_PLAN_INSTRUCTIONS),
+            rounds::MAX_ROUND_CHARS + 2_000,
+        );
+        let at = time::rfc3339(SystemTime::now());
+        let mut rs = self.rounds();
+        let Some(r) = rs
+            .get_mut(app)
+            .filter(|r| r.id == round_id && r.state == State::Converging)
+        else {
+            return;
+        };
+        match result {
+            Ok(v) => {
+                let parts: Vec<Part> = v["changedParts"]
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|p| match p.as_str() {
+                                Some("web") => Some(Part::Web),
+                                Some("api") => Some(Part::Api),
+                                _ => None,
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                r.widen_scope(&parts);
+                r.converged(
+                    RoundPlan {
+                        plan_id: v["planId"].as_str().unwrap_or_default().to_string(),
+                        summary: v["summary"].as_str().unwrap_or_default().to_string(),
+                        steps: v["steps"]
+                            .as_array()
+                            .map(|a| {
+                                a.iter()
+                                    .filter_map(|s| s.as_str().map(str::to_string))
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
+                        architecture: v["architecture"].clone(),
+                    },
+                    &at,
+                );
+            }
+            Err(e) => r.fail(&e.user_message(), &at),
+        }
+    }
+
+    /// When everyone answered: the AI writes the code and it is published.
+    fn finish_if_answered(&self, app: &str, user: &str) -> Result<Value, M0Error> {
+        let (plan_id, initiator, round_id) = {
+            let mut rs = self.rounds();
+            let Some(r) = rs.get_mut(app) else {
+                return self.round(app, Some(user));
+            };
+            if !r.all_answered() {
+                drop(rs);
+                return self.round(app, Some(user));
+            }
+            r.start_applying(&time::rfc3339(SystemTime::now()));
+            let plan_id = r
+                .plan
+                .as_ref()
+                .map(|p| p.plan_id.clone())
+                .unwrap_or_default();
+            (plan_id, r.initiator.clone(), r.id.clone())
+        };
+        let result = self.apply_plan(&plan_id, Some(&initiator), true);
+        let at = time::rfc3339(SystemTime::now());
+        {
+            let mut rs = self.rounds();
+            if let Some(r) = rs.get_mut(app).filter(|r| r.id == round_id) {
+                match &result {
+                    Ok(v) => r.done(v.clone(), &at),
+                    Err(M0Error::PlanNotFound) => r.fail(
+                        "修改計畫已超過 1 小時沒有部署而失效，請發起人重新收斂。",
+                        &at,
+                    ),
+                    Err(e) => r.fail(&e.user_message(), &at),
+                }
+            }
+        }
+        let mut v = self.round(app, Some(user))?;
+        if let Ok(applied) = result {
+            v["applied"] = applied;
+        }
+        Ok(v)
     }
 
     /// Namespace the apps are deployed to; the API is served under it.
     pub fn target_namespace(&self) -> &str {
         &self.settings.target_namespace
-    }
-
-    /// `POST .../apps/<name>/lock`: take (or extend) the edit lock as the
-    /// calling user.
-    pub fn lock(&self, app: &str, user: Option<&str>) -> Result<Value, M0Error> {
-        let user = user.ok_or(M0Error::Unauthenticated)?;
-        if !valid_app_name(app) {
-            return Err(M0Error::BadRequest("應用名稱不正確。"));
-        }
-        if !self.app_names()?.iter().any(|n| n == app) {
-            return Err(M0Error::AppNotFound);
-        }
-        let grant = self
-            .locks()
-            .acquire(app, user, Instant::now())
-            .map_err(lock_error)?;
-        Ok(json!({
-            "holder": grant.holder,
-            "ttlSeconds": grant.ttl.as_secs(),
-        }))
-    }
-
-    /// `POST .../apps/<name>/lock/renew`.
-    pub fn renew_lock(&self, app: &str, user: Option<&str>) -> Result<Value, M0Error> {
-        let user = user.ok_or(M0Error::Unauthenticated)?;
-        self.locks()
-            .renew(app, user, Instant::now())
-            .map_err(lock_error)?;
-        Ok(json!({ "ttlSeconds": crate::lock::LOCK_TTL.as_secs() }))
-    }
-
-    /// `POST .../apps/<name>/unlock`.
-    pub fn unlock(&self, app: &str, user: Option<&str>) -> Result<Value, M0Error> {
-        if let Some(u) = user {
-            self.locks().release(app, u);
-        }
-        Ok(json!({ "released": true }))
     }
 
     /// Full SHA of the commit that last changed the app.
@@ -923,13 +1285,26 @@ impl M0Service {
         if !valid_app_name(app) {
             return Err(M0Error::BadRequest("應用名稱不正確。"));
         }
-        self.require_lock(app, user)?;
+        require_user(user)?;
         let files = parse_generated(&body.files.to_string())
             .map_err(|e| M0Error::InvalidFiles(files_problem(&e.0)))?;
         let current = self.load_app(app)?;
         self.check_base(app, &body.base_commit)?;
         if files == current.files {
             return Err(M0Error::BadRequest("程式沒有任何變更。"));
+        }
+        // Files the running round is about stay as they are until it ends.
+        let blocked = self
+            .rounds()
+            .get(app)
+            .map(|r| r.blocked_files())
+            .unwrap_or_default();
+        let touched: Vec<&str> = crate::codegen::changed_files(&current.files, &files)
+            .into_iter()
+            .filter(|f| blocked.contains(f))
+            .collect();
+        if !touched.is_empty() {
+            return Err(M0Error::RoundScope(touched.join("、")));
         }
         let note = body
             .note
@@ -967,7 +1342,7 @@ impl M0Service {
         if !valid_app_name(app) {
             return Err(M0Error::BadRequest("應用名稱不正確。"));
         }
-        self.require_lock(app, user)?;
+        require_user(user)?;
         if body.positions.is_empty() || body.positions.len() > meta::MAX_LAYOUT_ENTRIES {
             return Err(M0Error::BadRequest("版面資料不正確。"));
         }
@@ -1017,7 +1392,8 @@ impl M0Service {
         let commit = body.commit.trim();
         let target = self.load_version(app, commit)?;
         let current = self.load_app(app)?;
-        self.require_lock(app, user)?;
+        require_user(user)?;
+        self.check_no_round(app)?;
         if target.files == current.files
             && target.plan == current.plan
             && target.layout == current.layout
@@ -1070,14 +1446,34 @@ struct Publish<'a> {
     message: String,
 }
 
-fn lock_error(e: LockError) -> M0Error {
-    match e {
-        LockError::Held(info) => M0Error::Locked {
-            holder: info.holder,
-            since: time::rfc3339(info.since),
-        },
-        LockError::NotHeld => M0Error::LockRequired,
+/// Changes need a verified caller.
+fn require_user(user: Option<&str>) -> Result<&str, M0Error> {
+    user.filter(|u| !u.is_empty())
+        .ok_or(M0Error::Unauthenticated)
+}
+
+fn state_label(s: State) -> &'static str {
+    match s {
+        State::Collecting => "收集意見中",
+        State::Converging => "AI 收斂中",
+        State::Confirming => "等待確認",
+        State::Applying => "AI 修改程式中",
+        State::Done => "已完成",
+        State::Failed => "失敗",
+        State::Cancelled => "已取消",
     }
+}
+
+/// Parts of the app whose plan changed (the code of those parts will).
+fn changed_parts(old: &crate::plan::AppPlan, new: &crate::plan::AppPlan) -> Vec<Part> {
+    let mut parts = Vec::new();
+    if old.web_modules != new.web_modules {
+        parts.push(Part::Web);
+    }
+    if old.api_modules != new.api_modules || old.endpoints != new.endpoints {
+        parts.push(Part::Api);
+    }
+    parts
 }
 
 /// A user-facing reason for hand-edited files failing the checks.
@@ -1129,6 +1525,12 @@ struct NoAudit;
 
 impl laoban_ai::AiAuditSink for NoAudit {
     fn record(&self, _event: laoban_ai::AiAuditEvent) {}
+}
+
+fn unix(t: SystemTime) -> u64 {
+    t.duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 #[cfg(test)]

@@ -42,7 +42,7 @@ laoban:
     back: ← 應用
     source: 程式碼（GitHub）
     loading: 讀取中…
-    changeTitle: 修改這個應用
+    changeTitle: 修改這個應用（意見收斂）
     currentSteps: 目前的建置步驟
     tabs:
       arch: 架構圖
@@ -83,17 +83,63 @@ laoban:
     hintPlan: 修改計畫與目前版本的差異：標示的是部署後會新增、刪除、修改的部分。
     hintCompare: "第 {n} 版與目前版本的差異：標示的是還原到第 {n} 版後會新增、刪除、修改的部分。"
     hintVersion: "第 {n} 版的架構。"
-  lock:
-    acquiring: 正在取得編輯權…
-    held: "你（{name}）正在編輯這個應用，其他人只能看。離開頁面或 3 分鐘沒有動作後會自動放開。"
-    other: "{name} 正在編輯這個應用。"
-    otherUnknown: 其他人正在編輯這個應用。
-    readOnly: 目前只能看，不能修改。
-    lost: 編輯權已失效（閒置太久，或在其他分頁打開了這個應用）。目前只能看。
-    error: 無法取得編輯權，目前只能看。
-    retry: 重新取得編輯權
+  round:
+    you: 你
+    opinionLabel: 你的意見
+    deadlineLabel: 收斂時間
+    deadlines:
+      m0: 立即（直接產生修改計畫）
+      m10: 10 分鐘後
+      m30: 30 分鐘後
+      m60: 1 小時後
+      m240: 4 小時後
+      m1440: 24 小時後
+    scopeLabel: 範圍
+    scopes:
+      all: 整個應用
+      web: 網頁
+      api: API
+    hintNow: AI 會馬上把你的意見做成修改計畫，你確認後就開工。
+    hintLater: 截止前其他人可以到這個應用的詳細頁提意見；時間到 AI 會把所有意見收斂成一份修改計畫，提過意見的人都確認後才開工。這段期間，範圍內的程式不能直接修改，也不能還原版本。
+    open: 開始一輪意見收斂
+    openNow: 產生修改計畫
+    converging: "AI 正在產生修改計畫（已 {seconds} 秒）…"
+    lastDone: "上一輪（{by} 發起）已部署。"
+    lastCancelled: 上一輪已取消。
+    states:
+      collecting: 收集意見中
+      converging: AI 收斂中
+      confirming: 等待確認
+      applying: 全部確認，AI 正在修改程式
+      done: 已完成
+      failed: 失敗
+      cancelled: 已取消
+    startedBy: "{by} 發起"
+    scope: "範圍：{scope}"
+    deadline: "{time} 收斂（還有 {minutes} 分鐘）"
+    addLabel: 你的意見
+    add: 提意見
+    convergingCount: "AI 正在收斂 {count} 則意見…"
+    planTitle: 收斂後的修改計畫
+    planHint: 右邊的 3D 圖標出這份計畫會新增、刪除、修改的部分。提過意見的人都確認後，AI 才會修改程式並部署。
+    answers:
+      pending: 等待中
+      confirmed: 已確認
+      skipped: 已略過
+    skip: 略過
+    confirm: 確認
+    object: 有意見
+    objectPlaceholder: 哪裡不對？這段話會加進意見，10 分鐘後重新收斂。
+    objectSend: 送出意見，重新收集
+    applying: "AI 正在修改程式並寫進 GitHub（已 {seconds} 秒）…"
+    retry: 重新收斂
+    cancel: 取消這一輪
+    log: "紀錄（{count}）"
+    hintPlan: 收斂後的修改計畫與目前版本的差異：標示的是部署後會新增、刪除、修改的部分。
   editor:
     hint: 直接修改這四個檔案。儲存後會成為新的一版（標記「手動修改」）並由 Fleet 部署，不呼叫 AI；儲存前會做和 AI 產生的程式一樣的檢查。
+    hintReadOnly: 目前只能看。
+    blocked: "這一輪意見收斂正在處理 {files}，結束前這些檔案只能看；其他檔案可以照常修改。"
     files: 檔案
     changedFile: 已修改
     note: 這次改了什麼（選填）
@@ -112,7 +158,7 @@ laoban:
     save: 儲存版面
   structure:
     title: 改結構
-    hint: 這裡的變更會寫進左邊的「要怎麼修改」，再按「產生修改計畫」由 AI 依新結構修改程式，確認後才部署。
+    hint: 這裡的變更會寫進左邊的「你的意見」，再開始一輪（或在收集意見時提出），由 AI 收斂成修改計畫，確認後才部署。
     nameRule: 只能用文字、數字與「.」「-」「_」，最多 40 個字。
     select: 模組
     none: 在 3D 圖點選，或從這裡選一個模組

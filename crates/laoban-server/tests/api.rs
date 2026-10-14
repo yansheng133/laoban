@@ -253,22 +253,29 @@ fn apps_endpoints() {
     let (status, _) = get(r.addr, "/api/apps/breakfast/other");
     assert_eq!(status, 404);
 
-    // Edit lock, code and layout.
-    let (status, _) = get(r.addr, "/api/apps/breakfast/lock");
+    // Rounds of 意見收斂, code and layout.
+    let (status, body) = get(r.addr, "/api/apps/breakfast/round");
+    assert_eq!(status, 200);
+    assert_eq!(
+        serde_json::from_str::<Value>(&body).unwrap()["round"],
+        Value::Null
+    );
+    let (status, head, _) = raw(r.addr, b"PUT /api/apps/breakfast/round HTTP/1.1\r\n\r\n");
     assert_eq!(status, 405);
-    // The holder is the caller, never a name in the body.
-    let (status, v) = post(r.addr, "/api/apps/breakfast/lock", "{}");
-    assert_eq!(status, 401);
+    assert!(head.contains("Allow: GET, POST"));
+    let open = r#"{"opinion":"x","deadlineMinutes":5}"#;
+    let (status, v) = post(r.addr, "/api/apps/breakfast/round", open);
+    assert_eq!(status, 401, "who opens a round is the verified caller");
     assert_error(&v, "unauthenticated");
-    let (status, v) = post_as(r.addr, "/api/apps/breakfast/lock", "{}", "u-test01");
+    let (status, v) = post_as(r.addr, "/api/apps/breakfast/round", open, "u-test01");
     assert_eq!(status, 404);
     assert_error(&v, "app_not_found");
-    let (status, v) = post_as(r.addr, "/api/apps/breakfast/lock/renew", "", "u-test01");
+    let (status, v) = post_as(r.addr, "/api/apps/breakfast/round", "{}", "u-test01");
+    assert_eq!(status, 400);
+    assert_error(&v, "bad_request");
+    let (status, v) = post_as(r.addr, "/api/apps/breakfast/round/confirm", "", "u-test01");
     assert_eq!(status, 409);
-    assert_error(&v, "lock_required");
-    let (status, v) = post(r.addr, "/api/apps/breakfast/unlock", "");
-    assert_eq!(status, 200);
-    assert_eq!(v["released"], true);
+    assert_error(&v, "round_state");
     let (status, body) = get(r.addr, "/api/apps/breakfast/files");
     assert_eq!(status, 404);
     assert_error(&serde_json::from_str(&body).unwrap(), "app_not_found");
@@ -285,7 +292,7 @@ fn apps_endpoints() {
     );
     assert_eq!(status, 400);
     assert_error(&v, "bad_request");
-    // Saving without the lock is refused before anything is read.
+    // Saving without a verified caller is refused before anything is read.
     let (status, v) = post(
         r.addr,
         "/api/apps/breakfast/layout",
@@ -299,8 +306,8 @@ fn apps_endpoints() {
         r#"{"baseCommit":"x","positions":{"web":{"x":1,"z":2}}}"#,
         "u-test01",
     );
-    assert_eq!(status, 409);
-    assert_error(&v, "lock_required");
+    assert_eq!(status, 404);
+    assert_error(&v, "app_not_found");
 
     // The same API under the aggregated path, only for the served namespace.
     let gv = format!(
@@ -361,13 +368,14 @@ fn request_validation() {
     );
     assert_eq!(status, 400);
     assert_error(&serde_json::from_str(&body).unwrap(), "bad_request");
-    // A chunked lock request, as kubectl's goes through the API server.
+    // A chunked request, as kubectl's goes through the API server.
     let (status, _, body) = raw(
         r.addr,
-        b"POST /api/apps/breakfast/lock HTTP/1.1\r\nX-Remote-User: u-test01\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n2\r\n{}\r\n0\r\n\r\n",
+        b"POST /api/apps/breakfast/round/opinions HTTP/1.1\r\nX-Remote-User: u-test01\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n8\r\n{\"text\":\r\n4\r\n\"x\"}\r\n0\r\n\r\n",
     );
-    assert_eq!(status, 404, "{body}");
-    assert_error(&serde_json::from_str(&body).unwrap(), "app_not_found");
+    // Read in full: refused only because there is no round.
+    assert_eq!(status, 409, "{body}");
+    assert_error(&serde_json::from_str(&body).unwrap(), "round_state");
     // Both framings at once: refused.
     let (status, _, _) = raw(
         r.addr,

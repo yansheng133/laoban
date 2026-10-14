@@ -111,6 +111,68 @@ pub fn parse_generated(text: &str) -> Result<GeneratedFiles, InvalidOutput> {
     Ok(files)
 }
 
+/// The four files with their paths ("web/index.html", ...).
+fn fields(f: &GeneratedFiles) -> [(&'static str, &String); 4] {
+    [
+        ("web/index.html", &f.index_html),
+        ("web/app.js", &f.app_js),
+        ("web/style.css", &f.style_css),
+        ("api/handler.py", &f.handler_py),
+    ]
+}
+
+/// Paths of the files that differ between `a` and `b`.
+pub fn changed_files(a: &GeneratedFiles, b: &GeneratedFiles) -> Vec<&'static str> {
+    fields(a)
+        .iter()
+        .zip(fields(b).iter())
+        .filter(|((_, x), (_, y))| x != y)
+        .map(|((p, _), _)| *p)
+        .collect()
+}
+
+/// Three-way merge per file. `base` is the code the AI started from,
+/// `ours` what it wrote, `theirs` the code now (edited by hand since). A
+/// file changed on one side only takes that side; changed on both to
+/// different contents is a conflict, and the paths are returned.
+pub fn merge_files(
+    base: &GeneratedFiles,
+    ours: &GeneratedFiles,
+    theirs: &GeneratedFiles,
+) -> Result<GeneratedFiles, Vec<&'static str>> {
+    let pick = |b: &String, o: &String, t: &String| -> Option<String> {
+        if o == t || t == b {
+            Some(o.clone())
+        } else if o == b {
+            Some(t.clone())
+        } else {
+            None
+        }
+    };
+    let merged = [
+        pick(&base.index_html, &ours.index_html, &theirs.index_html),
+        pick(&base.app_js, &ours.app_js, &theirs.app_js),
+        pick(&base.style_css, &ours.style_css, &theirs.style_css),
+        pick(&base.handler_py, &ours.handler_py, &theirs.handler_py),
+    ];
+    let conflicts: Vec<&'static str> = merged
+        .iter()
+        .zip(fields(base).iter())
+        .filter(|(m, _)| m.is_none())
+        .map(|(_, (p, _))| *p)
+        .collect();
+    if !conflicts.is_empty() {
+        return Err(conflicts);
+    }
+    let [index_html, app_js, style_css, handler_py] = merged.map(Option::unwrap_or_default);
+    Ok(GeneratedFiles {
+        index_html,
+        app_js,
+        style_css,
+        handler_py,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -168,5 +230,32 @@ mod tests {
         }
         total["api"]["handler.py"] = json!(format!("def handle(m,p,b): pass\n{}", "#".repeat(100)));
         assert!(parse_generated(&total.to_string()).is_err());
+    }
+
+    #[test]
+    fn three_way_merge_per_file() {
+        let f = |a: &str, b: &str| GeneratedFiles {
+            index_html: a.into(),
+            app_js: b.into(),
+            style_css: "c".into(),
+            handler_py: "def handle(m, p, b):\n    return 200, {}\n".into(),
+        };
+        let base = f("title", "js");
+        let ours = f("title", "js2"); // AI changed app.js
+        let theirs = f("title by hand", "js"); // someone changed index.html
+        let m = merge_files(&base, &ours, &theirs).unwrap();
+        assert_eq!(
+            (m.index_html.as_str(), m.app_js.as_str()),
+            ("title by hand", "js2")
+        );
+        assert_eq!(changed_files(&base, &m), ["web/index.html", "web/app.js"]);
+        // Both changed app.js differently.
+        let theirs2 = f("title", "js by hand");
+        assert_eq!(
+            merge_files(&base, &ours, &theirs2).unwrap_err(),
+            ["web/app.js"]
+        );
+        // Both made the same change: fine.
+        assert!(merge_files(&base, &ours, &ours).is_ok());
     }
 }

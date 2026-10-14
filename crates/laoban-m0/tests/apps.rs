@@ -107,17 +107,17 @@ fn list_is_empty_without_apps_dir() {
 #[test]
 fn get_app_and_errors() {
     let h = harness_with(MockProvider::new(), RefUpdate::Ok, 1_000_000, apps());
-    let v = h.service.get_app("todo").unwrap();
+    let v = h.service.get_app("todo", None).unwrap();
     assert_eq!(v["appName"], "todo");
     assert_eq!(v["history"][0]["request"], "加上刪除", "newest first");
     assert!(v["architecture"]["nodes"].as_array().unwrap().len() >= 4);
     assert!(v.get("files").is_none());
 
-    let err = h.service.get_app("legacy-shop").unwrap_err();
+    let err = h.service.get_app("legacy-shop", None).unwrap_err();
     assert_eq!((err.status(), err.code()), (409, "not_editable"));
-    let err = h.service.get_app("nope").unwrap_err();
+    let err = h.service.get_app("nope", None).unwrap_err();
     assert_eq!((err.status(), err.code()), (404, "app_not_found"));
-    let err = h.service.get_app("../x").unwrap_err();
+    let err = h.service.get_app("../x", None).unwrap_err();
     assert_eq!(err.code(), "bad_request");
 }
 
@@ -134,12 +134,12 @@ fn edit_plan_then_apply() {
         .then(ok(&new_files.to_string()));
     let h = harness_with(provider, RefUpdate::Ok, 1_000_000, apps());
 
-    // Without the edit lock nothing happens.
+    // Without a verified caller nothing happens.
     let err = h
         .service
-        .plan(&edit_req("加上飲料", "breakfast"), Some("u-tester"))
+        .plan(&edit_req("加上飲料", "breakfast"), None)
         .unwrap_err();
-    assert_eq!((err.status(), err.code()), (409, "lock_required"));
+    assert_eq!((err.status(), err.code()), (401, "unauthenticated"));
     assert_eq!(h.provider.call_count(), 0);
     let token = lock(&h, "breakfast");
     let plan = h
@@ -453,10 +453,10 @@ fn restore_refuses_the_current_content_and_bad_input() {
         .restore(
             "todo",
             &laoban_m0::RestoreRequest { commit: V1.into() },
-            Some("u-tester"),
+            None,
         )
         .unwrap_err();
-    assert_eq!(err.code(), "lock_required");
+    assert_eq!(err.code(), "unauthenticated");
     let token = lock(&h, "todo");
     let err = h
         .service
@@ -517,44 +517,6 @@ fn save_files(
         },
         token,
     )
-}
-
-#[test]
-fn edit_lock_is_one_person_at_a_time() {
-    let h = todo_harness();
-    let me = lock(&h, "todo");
-    assert_eq!(
-        h.service.get_app("todo").unwrap()["lock"]["holder"],
-        "u-tester"
-    );
-    let err = h.service.lock("todo", Some("u-someone")).unwrap_err();
-    assert_eq!((err.status(), err.code()), (409, "locked"));
-    assert!(err.user_message().contains("u-tester"));
-    // Someone else: refused, naming the holder.
-    let err = save_files(&h, files_value(), V2, Some("u-someone")).unwrap_err();
-    assert_eq!(err.code(), "locked");
-    // No verified caller at all.
-    assert_eq!(
-        h.service.lock("todo", None).unwrap_err().code(),
-        "unauthenticated"
-    );
-    assert_eq!(
-        save_files(&h, files_value(), V2, None).unwrap_err().code(),
-        "unauthenticated"
-    );
-    h.service.renew_lock("todo", Some(&me)).unwrap();
-    // Releasing someone else's lock does nothing.
-    h.service.unlock("todo", Some("u-someone")).unwrap();
-    assert_eq!(
-        h.service.get_app("todo").unwrap()["lock"]["holder"],
-        "u-tester"
-    );
-    h.service.unlock("todo", Some(&me)).unwrap();
-    assert!(h.service.get_app("todo").unwrap()["lock"].is_null());
-    assert!(h.service.lock("todo", Some("u-someone")).is_ok());
-    let err = h.service.lock("nope", Some("u-x")).unwrap_err();
-    assert_eq!(err.code(), "app_not_found");
-    assert_eq!(writes(&h.github), 0);
 }
 
 #[test]

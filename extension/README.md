@@ -54,7 +54,7 @@ extension/
 | 頁首資訊（模型、部署目標、程式庫、token 用量／上限） | `GET /config` | Rancher → rke2 API server → 後端 |
 | 產生計畫 | `POST /plans` `{prompt, appName?｜baseApp?}` | 同上 |
 | 確認並部署 | `POST /plans/<planId>/apply` | 同上 |
-| 應用、版本、程式碼、版面、編輯鎖 | `/apps/...` | 同上 |
+| 應用、版本、程式碼、版面、意見收斂 | `/apps/...` | 同上 |
 | 部署狀態 | `GET /v1/fleet.cattle.io.bundles/fleet-default` | Steve（Rancher local 叢集） |
 
 後端是 rke2 上的 Kubernetes aggregated API，基底路徑：

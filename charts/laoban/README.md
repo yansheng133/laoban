@@ -70,7 +70,7 @@ helm upgrade --install laoban charts/laoban -n laoban-system \
 - 遮蔽、token 上限等規則照常套用；token 數由端點回報，Ollama 的數字是近似值。
 - 本機模型照「只回 JSON」指示的穩定度比較差，`ai_invalid_output` 會比較常見。後端會去掉回應前後多出的說明文字再解析，但內容驗證跟原本一樣嚴格。
 
-Pod 標籤帶有 chart 版號（`helm.sh/chart`、`app.kubernetes.io/version`），所以只要 chart 版號改了，即使映像檔沒變，`helm upgrade` 也會換新 Pod；後端記憶體裡的計畫與編輯鎖會一起清掉。
+Pod 標籤帶有 chart 版號（`helm.sh/chart`、`app.kubernetes.io/version`），所以只要 chart 版號改了，即使映像檔沒變，`helm upgrade` 也會換新 Pod；後端記憶體裡的計畫與意見收斂（進行中的一輪）會一起清掉。
 
 `replicaCount` 只允許 1：M0 的計畫存在後端記憶體，稽核暫存區開啟時也是 ReadWriteOnce 卷，多副本要先改設計，HA 留到之後。更新策略用 `Recreate`，避免新舊 Pod 同時掛同一個 RWO 卷而卡住。
 

@@ -31,8 +31,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use laoban_m0::{
-    ApplyRequest, M0Error, M0Service, PlanRequestBody, RestoreRequest, SaveFilesRequest,
-    SaveLayoutRequest,
+    ApplyRequest, M0Error, M0Service, OpenRoundRequest, OpinionRequest, PlanRequestBody,
+    RestoreRequest, SaveFilesRequest, SaveLayoutRequest, SkipRequest,
 };
 use serde_json::json;
 
@@ -716,9 +716,14 @@ enum Route<'a> {
     Versions(&'a str),
     Version(&'a str, &'a str),
     Restore(&'a str),
-    Lock(&'a str),
-    RenewLock(&'a str),
-    Unlock(&'a str),
+    /// The app's round of 意見收斂: GET to read, POST to open one.
+    Round(&'a str),
+    RoundOpinions(&'a str),
+    RoundConfirm(&'a str),
+    RoundObject(&'a str),
+    RoundSkip(&'a str),
+    RoundCancel(&'a str),
+    RoundConverge(&'a str),
     Files(&'a str),
     Layout(&'a str),
     Plan,
@@ -752,9 +757,13 @@ impl<'a> Route<'a> {
             [name, "versions"] => Some(Route::Versions(name)),
             [name, "versions", commit] => Some(Route::Version(name, commit)),
             [name, "restore"] => Some(Route::Restore(name)),
-            [name, "lock"] => Some(Route::Lock(name)),
-            [name, "lock", "renew"] => Some(Route::RenewLock(name)),
-            [name, "unlock"] => Some(Route::Unlock(name)),
+            [name, "round"] => Some(Route::Round(name)),
+            [name, "round", "opinions"] => Some(Route::RoundOpinions(name)),
+            [name, "round", "confirm"] => Some(Route::RoundConfirm(name)),
+            [name, "round", "object"] => Some(Route::RoundObject(name)),
+            [name, "round", "skip"] => Some(Route::RoundSkip(name)),
+            [name, "round", "cancel"] => Some(Route::RoundCancel(name)),
+            [name, "round", "converge"] => Some(Route::RoundConverge(name)),
             [name, "files"] => Some(Route::Files(name)),
             [name, "layout"] => Some(Route::Layout(name)),
             _ => None,
@@ -764,13 +773,14 @@ impl<'a> Route<'a> {
     fn method(&self, request_method: &str) -> &'static str {
         match self {
             // Read for the editor, POST to save.
-            Route::Files(_) if request_method == "POST" => "POST",
+            Route::Files(_) | Route::Round(_) if request_method == "POST" => "POST",
             Route::Config
             | Route::Apps
             | Route::App(_)
             | Route::Versions(_)
             | Route::Version(..)
-            | Route::Files(_) => "GET",
+            | Route::Files(_)
+            | Route::Round(_) => "GET",
             _ => "POST",
         }
     }
@@ -809,7 +819,7 @@ fn route_api(api: &ApiState, head: &RequestHead, body: &[u8], caller: Option<&Ca
     };
     let allowed = route.method(&head.method);
     if head.method != allowed {
-        let allow = if matches!(route, Route::Files(_)) {
+        let allow = if matches!(route, Route::Files(_) | Route::Round(_)) {
             "GET, POST"
         } else {
             allowed
@@ -831,19 +841,20 @@ fn route_api(api: &ApiState, head: &RequestHead, body: &[u8], caller: Option<&Ca
         return reply(match route {
             Route::Config => Ok(service.config_json()),
             Route::Apps => service.list_apps(),
-            Route::App(name) => service.get_app(name),
+            Route::App(name) => service.get_app(name, caller.map(|c| c.user.as_str())),
+            Route::Round(name) => service.round(name, caller.map(|c| c.user.as_str())),
             Route::Versions(name) => service.versions(name),
             Route::Version(name, commit) => service.version(name, commit),
             Route::Files(name) => service.files(name),
             _ => return Response::api_error(404, "bad_request", "找不到這個 API。"),
         });
     }
-    let lock = caller.map(|c| c.user.as_str());
-    // Lock calls carry no body; the user is the verified caller.
+    let lock = caller.map(|c| c.user.as_str()); // the verified user
+                                                // These carry no body worth reading; the user is the verified caller.
     match route {
-        Route::Lock(name) => return reply(service.lock(name, lock)),
-        Route::RenewLock(name) => return reply(service.renew_lock(name, lock)),
-        Route::Unlock(name) => return reply(service.unlock(name, lock)),
+        Route::RoundConfirm(name) => return reply(service.confirm_round(name, lock)),
+        Route::RoundCancel(name) => return reply(service.cancel_round(name, lock)),
+        Route::RoundConverge(name) => return reply(service.retry_round(name, lock)),
         Route::ApplyPlan(id) => {
             let mut resp = reply(service.apply(
                 &ApplyRequest {
@@ -890,6 +901,30 @@ fn route_api(api: &ApiState, head: &RequestHead, body: &[u8], caller: Option<&Ca
                 return bad_request("請求格式不正確：需要 {\"commit\": \"…\"}。");
             };
             reply(service.restore(name, &req, lock))
+        }
+        Route::Round(name) => {
+            let Ok(req) = serde_json::from_slice::<OpenRoundRequest>(body) else {
+                return bad_request(
+                    "請求格式不正確：需要 {\"opinion\": \"…\", \"deadlineMinutes\": 0～1440}，可加 \"scope\"（web、api、all）。",
+                );
+            };
+            reply(service.open_round(name, &req, lock))
+        }
+        Route::RoundOpinions(name) | Route::RoundObject(name) => {
+            let Ok(req) = serde_json::from_slice::<OpinionRequest>(body) else {
+                return bad_request("請求格式不正確：需要 {\"text\": \"…\"}。");
+            };
+            if matches!(route, Route::RoundObject(_)) {
+                reply(service.object_in_round(name, &req, lock))
+            } else {
+                reply(service.add_opinion(name, &req, lock))
+            }
+        }
+        Route::RoundSkip(name) => {
+            let Ok(req) = serde_json::from_slice::<SkipRequest>(body) else {
+                return bad_request("請求格式不正確：需要 {\"user\": \"…\"}。");
+            };
+            reply(service.skip_in_round(name, &req, lock))
         }
         Route::Files(name) => {
             let Ok(req) = serde_json::from_slice::<SaveFilesRequest>(body) else {

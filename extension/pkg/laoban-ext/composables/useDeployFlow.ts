@@ -30,7 +30,7 @@ export interface DeployFlowHooks {
 }
 
 // A change published without AI: restore, hand-edited code, 3D layout.
-export type DirectKind = 'restore' | 'manual' | 'layout';
+export type DirectKind = 'restore' | 'manual' | 'layout' | 'round';
 
 export interface DeployFlow {
   config: Ref<ConfigResponse | null>;
@@ -62,6 +62,9 @@ export interface DeployFlow {
   restoring: ComputedRef<boolean>;
   // The kind of the current no-AI change, if any.
   directKind: Ref<DirectKind | null>;
+  // Wait for a change published elsewhere (a round finished by this or
+  // another user) like an apply.
+  watchApplied: (applied: ApplyResponse) => void;
   reset: () => void;
   messageFor: (e: unknown) => string;
 }
@@ -311,6 +314,17 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
     return true;
   }
 
+  function watchApplied(result: ApplyResponse) {
+    if (applied.value?.commit === result.commit) {
+      return;
+    }
+    reset();
+    directKind.value = 'round';
+    applied.value = result;
+    hooks.onApplied?.(result);
+    startPolling();
+  }
+
   // An earlier version published again: same deploy and wait as an apply.
   async function restore(app: string, commit: string) {
     await publishDirect('restore', (timeoutMs) => restoreVersion(store, app, commit, timeoutMs));
@@ -392,6 +406,7 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
     publishDirect,
     restoring,
     directKind,
+    watchApplied,
     reset,
     messageFor,
   };
