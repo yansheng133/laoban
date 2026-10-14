@@ -2,7 +2,7 @@
 // Bottom status line of the laoban pages: what the deploy flow is doing.
 import { defineComponent } from 'vue';
 import { useStore } from 'vuex';
-import { useI18n } from '@shell/composables/useI18n';
+import { useText } from '../composables/useText';
 
 export default defineComponent({
   name: 'LaobanStatusBar',
@@ -17,7 +17,7 @@ export default defineComponent({
 
   setup() {
     const store = useStore();
-    const { t } = useI18n(store);
+    const { t } = useText(store);
 
     return { t };
   },

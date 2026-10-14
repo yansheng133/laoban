@@ -85,6 +85,16 @@ jobs:
           sudo tar -xzf /tmp/kubeconform.tar.gz -C /usr/local/bin kubeconform
           helm version
           kubeconform -v
+      - name: Chart version matches the backend release
+        run: |
+          cargo_version="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"$/\1/p' Cargo.toml)"
+          chart_version="$(sed -n 's/^version: //p' charts/laoban/Chart.yaml)"
+          app_version="$(sed -n 's/^appVersion: "\(.*\)"$/\1/p' charts/laoban/Chart.yaml)"
+          echo "Cargo ${cargo_version}, chart ${chart_version}, appVersion ${app_version}"
+          if [ "$chart_version" != "$cargo_version" ] || [ "$app_version" != "$cargo_version" ]; then
+            echo "::error::charts/laoban/Chart.yaml version/appVersion must equal the Cargo workspace version ${cargo_version}"
+            exit 1
+          fi
       - name: helm lint
         # ci-values.yaml requires the CRDs, which lint cannot fake in the
         # cluster's capabilities; the template step below covers it with

@@ -14,7 +14,7 @@ import { useStore } from 'vuex';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
-import { useI18n } from '@shell/composables/useI18n';
+import { useText } from '../composables/useText';
 import {
   layoutArchitecture, withPositions, LAYERS, LAYER_Y, KIND_HEIGHT, SceneLayout, Positions
 } from '../utils/layout';
@@ -113,7 +113,7 @@ export default defineComponent({
 
   setup(props, { emit }) {
     const store = useStore();
-    const { t } = useI18n(store);
+    const { t } = useText(store);
 
     const root = ref<HTMLElement | null>(null);
     const stage = ref<HTMLElement | null>(null);

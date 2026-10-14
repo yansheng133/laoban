@@ -3,7 +3,7 @@
 // app's detail page, where it can be changed; "新增應用" goes to 總覽.
 import { defineComponent } from 'vue';
 import { useStore } from 'vuex';
-import { useI18n } from '@shell/composables/useI18n';
+import { useText } from '../composables/useText';
 import AppearanceMenu from '../components/AppearanceMenu.vue';
 import { useAppearance } from '../composables/useAppearance';
 import AppList from '../components/AppList.vue';
@@ -16,7 +16,7 @@ export default defineComponent({
 
   setup() {
     const store = useStore();
-    const { t } = useI18n(store);
+    const { t } = useText(store);
     const { palette } = useAppearance(store);
     const createRoute = { name: DASHBOARD_ROUTE_NAME, params: { product: PRODUCT_NAME, cluster: BLANK_CLUSTER } };
 

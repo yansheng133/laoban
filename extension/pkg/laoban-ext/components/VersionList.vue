@@ -6,7 +6,7 @@
 // {{ }} only, never v-html.
 import { defineComponent, ref, PropType } from 'vue';
 import { useStore } from 'vuex';
-import { useI18n } from '@shell/composables/useI18n';
+import { useText } from '../composables/useText';
 import { safeHttpsUrl, VersionEntry } from '../utils/backend';
 import { userLabel } from '../composables/useEditLock';
 
@@ -28,7 +28,7 @@ export default defineComponent({
 
   setup(_props, { emit }) {
     const store = useStore();
-    const { t } = useI18n(store);
+    const { t } = useText(store);
     const confirming = ref<string | null>(null);
 
     function formatTime(at: string): string {
