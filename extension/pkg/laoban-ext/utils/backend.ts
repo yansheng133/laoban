@@ -28,7 +28,7 @@ export interface PlanResponse {
 }
 
 export interface ApplyResponse {
-  mode?: 'create' | 'edit' | 'restore';
+  mode?: 'create' | 'edit' | 'restore' | 'manual' | 'layout';
   appName?: string;
   // Deployments to check after Fleet is ready (see utils/rollout.ts).
   rollout?: unknown;
@@ -52,6 +52,7 @@ export interface AppSummary {
   appUrl: string;
   path: string;
   fleet: FleetRef;
+  lock?: LockStatus | null;
 }
 
 export interface AppHistoryEntry {
@@ -75,13 +76,41 @@ export interface AppDetail {
   fleet: FleetRef;
 }
 
+// Who is editing an app (GET /api/apps/<name>, "lock").
+export interface LockStatus {
+  holder: string;
+  since: string;
+}
+
+// POST /api/apps/<name>/lock
+export interface LockGrant {
+  token: string;
+  holder: string;
+  ttlSeconds: number;
+}
+
+// The four generated files, as the AI and the editor see them.
+export interface AppFiles {
+  web: { 'index.html': string; 'app.js': string; 'style.css': string };
+  api: { 'handler.py': string };
+}
+
+// GET /api/apps/<name>/files
+export interface AppFilesResponse {
+  appName: string;
+  commit: string;
+  files: AppFiles;
+}
+
+export interface Position { x: number; z: number }
+
 // One entry of GET /api/apps/<name>/versions (newest first).
 export interface VersionEntry {
   version: number;
   commit: string;
   commitUrl: string;
   at: string;
-  kind: 'create' | 'edit' | 'restore' | 'commit' | string;
+  kind: 'create' | 'edit' | 'restore' | 'manual' | 'layout' | 'commit' | string;
   request: string;
   summary: string;
   model: string;
@@ -171,7 +200,13 @@ interface RequestOptions {
   method?: 'GET' | 'POST';
   body?: unknown;
   timeoutMs?: number;
+  // Edit lock token (X-Laoban-Lock), for changes to an existing app.
+  lock?: string | null;
+  // Let the request finish while the page unloads (releasing the lock).
+  keepalive?: boolean;
 }
+
+export const LOCK_HEADER = 'X-Laoban-Lock';
 
 async function requestJson<T>(store: StoreLike, url: string, opts: RequestOptions = {}): Promise<T> {
   const method = opts.method || 'GET';
@@ -179,6 +214,9 @@ async function requestJson<T>(store: StoreLike, url: string, opts: RequestOption
 
   if (opts.body !== undefined) {
     headers['Content-Type'] = 'application/json';
+  }
+  if (opts.lock) {
+    headers[LOCK_HEADER] = opts.lock;
   }
   if (method !== 'GET') {
     const csrf = csrfToken(store);
@@ -199,6 +237,7 @@ async function requestJson<T>(store: StoreLike, url: string, opts: RequestOption
       credentials: 'same-origin',
       body:        opts.body === undefined ? undefined : JSON.stringify(opts.body),
       signal:      controller.signal,
+      keepalive:   opts.keepalive || undefined,
     });
   } catch (e) {
     throw new RequestError(controller.signal.aborted ? 'timeout' : 'network', null);
@@ -254,10 +293,46 @@ export function getVersion(store: StoreLike, name: string, commit: string): Prom
   return requestJson<VersionDetail>(store, backendUrl(`/api/apps/${ encodeURIComponent(name) }/versions/${ encodeURIComponent(commit) }`));
 }
 
+function appPath(name: string, rest = ''): string {
+  return backendUrl(`/api/apps/${ encodeURIComponent(name) }${ rest }`);
+}
+
 /** Publish an earlier version again as a new version (no AI call). */
-export function restoreVersion(store: StoreLike, name: string, commit: string, timeoutMs: number): Promise<ApplyResponse> {
-  return requestJson<ApplyResponse>(store, backendUrl(`/api/apps/${ encodeURIComponent(name) }/restore`), {
-    method: 'POST', body: { commit }, timeoutMs
+export function restoreVersion(store: StoreLike, name: string, commit: string, timeoutMs: number, lock?: string | null): Promise<ApplyResponse> {
+  return requestJson<ApplyResponse>(store, appPath(name, '/restore'), {
+    method: 'POST', body: { commit }, timeoutMs, lock
+  });
+}
+
+export function acquireLock(store: StoreLike, name: string, holder: string): Promise<LockGrant> {
+  return requestJson<LockGrant>(store, appPath(name, '/lock'), { method: 'POST', body: { holder } });
+}
+
+export function renewLock(store: StoreLike, name: string, lock: string): Promise<{ ttlSeconds: number }> {
+  return requestJson(store, appPath(name, '/lock/renew'), { method: 'POST', lock });
+}
+
+export function releaseLock(store: StoreLike, name: string, lock: string): Promise<{ released: boolean }> {
+  return requestJson(store, appPath(name, '/unlock'), {
+    method: 'POST', lock, keepalive: true
+  });
+}
+
+export function getFiles(store: StoreLike, name: string): Promise<AppFilesResponse> {
+  return requestJson<AppFilesResponse>(store, appPath(name, '/files'));
+}
+
+/** Hand-edited code as a new version (no AI call). */
+export function saveFiles(store: StoreLike, name: string, baseCommit: string, files: AppFiles, note: string, timeoutMs: number, lock: string | null): Promise<ApplyResponse> {
+  return requestJson<ApplyResponse>(store, appPath(name, '/files'), {
+    method: 'POST', body: { baseCommit, files, note: note || undefined }, timeoutMs, lock
+  });
+}
+
+/** Dragged 3D positions as a new version (no AI call). */
+export function saveLayout(store: StoreLike, name: string, baseCommit: string, positions: Record<string, Position>, timeoutMs: number, lock: string | null): Promise<ApplyResponse> {
+  return requestJson<ApplyResponse>(store, appPath(name, '/layout'), {
+    method: 'POST', body: { baseCommit, positions }, timeoutMs, lock
   });
 }
 
@@ -265,7 +340,7 @@ export function restoreVersion(store: StoreLike, name: string, commit: string, t
  * New app: `appName` optional. Change an existing app: pass `baseApp`
  * (the backend keeps its name).
  */
-export function createPlan(store: StoreLike, prompt: string, appName: string | undefined, timeoutMs: number, baseApp?: string): Promise<PlanResponse> {
+export function createPlan(store: StoreLike, prompt: string, appName: string | undefined, timeoutMs: number, baseApp?: string, lock?: string | null): Promise<PlanResponse> {
   const body: Record<string, string> = { prompt };
 
   if (baseApp) {
@@ -275,13 +350,13 @@ export function createPlan(store: StoreLike, prompt: string, appName: string | u
   }
 
   return requestJson<PlanResponse>(store, backendUrl('/api/plan'), {
-    method: 'POST', body, timeoutMs
+    method: 'POST', body, timeoutMs, lock: baseApp ? lock : undefined
   });
 }
 
-export function applyPlan(store: StoreLike, planId: string, timeoutMs: number): Promise<ApplyResponse> {
+export function applyPlan(store: StoreLike, planId: string, timeoutMs: number, lock?: string | null): Promise<ApplyResponse> {
   return requestJson<ApplyResponse>(store, backendUrl('/api/apply'), {
-    method: 'POST', body: { planId }, timeoutMs
+    method: 'POST', body: { planId }, timeoutMs, lock
   });
 }
 

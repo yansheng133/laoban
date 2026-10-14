@@ -1,6 +1,6 @@
 import { describe, it, expect } from '@jest/globals';
 import {
-  layoutArchitecture, LAYER_Y, KIND_HEIGHT, MAX_NODES, MAX_NAME_LENGTH
+  layoutArchitecture, withPositions, LAYER_Y, KIND_HEIGHT, MAX_NODES, MAX_NAME_LENGTH
 } from '../layout';
 
 // The fixed M0 shape from docs/m0-design.md.
@@ -161,5 +161,41 @@ describe('layoutArchitecture', () => {
       expect(l.edges).toEqual([]);
       expect(l.plane.width).toBe(12);
     }
+  });
+});
+
+describe('withPositions', () => {
+  const arch = {
+    nodes: [
+      {
+        id: 'a', layer: 'code', kind: 'module', pos: { x: 0, z: 0 }
+      },
+      {
+        id: 'b', layer: 'code', kind: 'external', pos: { x: 4, z: 0 }
+      },
+      {
+        id: 'c', layer: 'data', kind: 'storage', pos: { x: 0, z: 2 }
+      },
+    ],
+  };
+
+  it('overrides only the given nodes', () => {
+    const l = layoutArchitecture(withPositions(arch, { b: { x: 7, z: -3 } }));
+
+    expect(l.nodes.find((n) => n.id === 'b')).toMatchObject({ x: 7, z: -3 });
+    expect(l.nodes.find((n) => n.id === 'a')).toMatchObject({ x: 0, z: 0 });
+  });
+
+  it('returns the same object without positions', () => {
+    expect(withPositions(arch, null)).toBe(arch);
+    expect(withPositions(arch, {})).toBe(arch);
+    expect(withPositions('x', { a: { x: 1, z: 1 } })).toBe('x');
+  });
+
+  it('places the external and storage kinds on their layers', () => {
+    const l = layoutArchitecture(arch);
+
+    expect(l.nodes.find((n) => n.id === 'b')?.y).toBeCloseTo(4 + KIND_HEIGHT.external);
+    expect(l.nodes.find((n) => n.id === 'c')?.y).toBeCloseTo(0 + KIND_HEIGHT.storage);
   });
 });

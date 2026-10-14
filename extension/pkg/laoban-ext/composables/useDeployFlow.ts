@@ -25,7 +25,14 @@ export interface DeployFlowHooks {
   onApplied?: (applied: ApplyResponse) => void;
   // When the new version is running (or Fleet stopped at "modified").
   onReady?: (applied: ApplyResponse) => void;
+  // Edit lock token for changes to an existing app (useEditLock).
+  lockToken?: () => string | null;
+  // A request failed; lets the lock notice "locked"/"lock_required".
+  onError?: (e: unknown) => void;
 }
+
+// A change published without AI: restore, hand-edited code, 3D layout.
+export type DirectKind = 'restore' | 'manual' | 'layout';
 
 export interface DeployFlow {
   config: Ref<ConfigResponse | null>;
@@ -50,8 +57,13 @@ export interface DeployFlow {
   generatePlan: (prompt: string, opts?: { appName?: string; baseApp?: string }) => Promise<void>;
   confirmAndDeploy: () => Promise<void>;
   restore: (app: string, commit: string) => Promise<void>;
+  // Publish a change made without AI and wait for it like an apply.
+  // Resolves true once the commit exists.
+  publishDirect: (kind: DirectKind, call: (timeoutMs: number, lock: string | null) => Promise<ApplyResponse>) => Promise<boolean>;
   // True while the current deploy is a restore (no AI involved).
-  restoring: Ref<boolean>;
+  restoring: ComputedRef<boolean>;
+  // The kind of the current no-AI change, if any.
+  directKind: Ref<DirectKind | null>;
   reset: () => void;
   messageFor: (e: unknown) => string;
 }
@@ -67,7 +79,8 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
   const pollError = ref(false);
   const rollingOut = ref(false);
   const elapsed = ref(0);
-  const restoring = ref(false);
+  const directKind = ref<DirectKind | null>(null);
+  const restoring = computed(() => directKind.value === 'restore');
 
   let elapsedTimer: ReturnType<typeof setInterval> | null = null;
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
@@ -85,6 +98,14 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
   const commitLink = computed(() => safeHttpsUrl(applied.value?.commitUrl));
   const shortCommit = computed(() => String(applied.value?.commit || '').slice(0, 12));
   const appLink = computed(() => resolveAppUrl(applied.value?.appUrl, window.location.origin));
+
+  const lock = () => hooks.lockToken?.() ?? null;
+
+  function fail(e: unknown): string {
+    hooks.onError?.(e);
+
+    return messageFor(e);
+  }
 
   function messageFor(e: unknown): string {
     if (e instanceof RequestError && e.userMessage) {
@@ -216,7 +237,7 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
   }
 
   function reset() {
-    restoring.value = false;
+    directKind.value = null;
     stopPolling();
     stopElapsed();
     errorText.value = '';
@@ -236,10 +257,10 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
     phase.value = 'planning';
     startElapsed();
     try {
-      plan.value = await createPlan(store, prompt.trim(), opts.appName || undefined, aiRequestTimeoutMs(config.value), opts.baseApp);
+      plan.value = await createPlan(store, prompt.trim(), opts.appName || undefined, aiRequestTimeoutMs(config.value), opts.baseApp, lock());
       phase.value = 'planned';
     } catch (e) {
-      errorText.value = messageFor(e);
+      errorText.value = fail(e);
       phase.value = 'idle';
     } finally {
       stopElapsed();
@@ -255,9 +276,9 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
     phase.value = 'applying';
     startElapsed();
     try {
-      applied.value = await applyPlan(store, plan.value.planId, aiRequestTimeoutMs(config.value));
+      applied.value = await applyPlan(store, plan.value.planId, aiRequestTimeoutMs(config.value), lock());
     } catch (e) {
-      errorText.value = messageFor(e);
+      errorText.value = fail(e);
       phase.value = 'planned';
       stopElapsed();
 
@@ -269,27 +290,34 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
     startPolling();
   }
 
-  // An earlier version published again: same deploy and wait as an apply.
-  async function restore(app: string, commit: string) {
+  async function publishDirect(kind: DirectKind, call: (timeoutMs: number, lock: string | null) => Promise<ApplyResponse>): Promise<boolean> {
     if (busy.value) {
-      return;
+      return false;
     }
     reset();
-    restoring.value = true;
+    directKind.value = kind;
     phase.value = 'applying';
     startElapsed();
     try {
-      applied.value = await restoreVersion(store, app, commit, aiRequestTimeoutMs(config.value));
+      // No AI call, but a GitHub commit: same timeout as an apply.
+      applied.value = await call(aiRequestTimeoutMs(config.value), lock());
     } catch (e) {
-      errorText.value = messageFor(e);
+      errorText.value = fail(e);
       phase.value = 'idle';
-      restoring.value = false;
+      directKind.value = null;
       stopElapsed();
 
-      return;
+      return false;
     }
     hooks.onApplied?.(applied.value);
     startPolling();
+
+    return true;
+  }
+
+  // An earlier version published again: same deploy and wait as an apply.
+  async function restore(app: string, commit: string) {
+    await publishDirect('restore', (timeoutMs, l) => restoreVersion(store, app, commit, timeoutMs, l));
   }
 
   const statusText = computed(() => {
@@ -299,7 +327,14 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
     case 'planned':
       return t('laoban.dashboard.status.planned');
     case 'applying':
-      return restoring.value ? t('laoban.versions.restoring', { seconds: elapsed.value }) : t('laoban.dashboard.status.applying', { seconds: elapsed.value });
+      if (directKind.value === 'restore') {
+        return t('laoban.versions.restoring', { seconds: elapsed.value });
+      }
+      if (directKind.value) {
+        return t('laoban.editor.saving', { seconds: elapsed.value });
+      }
+
+      return t('laoban.dashboard.status.applying', { seconds: elapsed.value });
     case 'deploying': {
       const r = readiness.value;
 
@@ -358,7 +393,9 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
     generatePlan,
     confirmAndDeploy,
     restore,
+    publishDirect,
     restoring,
+    directKind,
     reset,
     messageFor,
   };

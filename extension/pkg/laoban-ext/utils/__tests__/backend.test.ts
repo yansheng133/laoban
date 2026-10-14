@@ -3,7 +3,8 @@ import {
 } from '@jest/globals';
 import {
   parseBackendError, resolveAppUrl, safeHttpsUrl, backendUrl, aiRequestTimeoutMs, ConfigResponse,
-  createPlan, getApp, listApps, listVersions, getVersion, restoreVersion
+  createPlan, getApp, listApps, listVersions, getVersion, restoreVersion, applyPlan,
+  acquireLock, renewLock, releaseLock, getFiles, saveFiles, saveLayout, LOCK_HEADER
 } from '../backend';
 import { AI_REQUEST_TIMEOUT_MS } from '../../config/backend';
 
@@ -137,5 +138,62 @@ describe('apps and plan requests', () => {
     expect(calls[0].url).toBe(backendUrl('/api/apps/todo/restore'));
     expect(calls[0].init.method).toBe('POST');
     expect(JSON.parse(String(calls[0].init.body))).toEqual({ commit: sha });
+  });
+
+  it('sends the edit lock token only on changes to an existing app', async() => {
+    const headers = () => calls[0].init.headers as Record<string, string>;
+
+    mockFetch(200, { planId: 'p-1', appName: 'todo' });
+    await createPlan(store, 'x', undefined, 1000, 'todo', 'abc123');
+    expect(headers()[LOCK_HEADER]).toBe('abc123');
+    mockFetch(200, { planId: 'p-1', appName: 'shop' });
+    await createPlan(store, 'x', 'shop', 1000, undefined, 'abc123');
+    expect(headers()[LOCK_HEADER]).toBeUndefined();
+
+    mockFetch(200, { commit: 'c' });
+    await applyPlan(store, 'p-1', 1000, 'abc123');
+    expect(headers()[LOCK_HEADER]).toBe('abc123');
+    await restoreVersion(store, 'todo', 'a'.repeat(40), 1000, 'abc123');
+    expect((calls[1].init.headers as Record<string, string>)[LOCK_HEADER]).toBe('abc123');
+  });
+
+  it('takes, renews and releases the lock', async() => {
+    mockFetch(200, { token: 'abc', holder: 'sam', ttlSeconds: 180 });
+    await acquireLock(store, 'todo', 'sam');
+    expect(calls[0].url).toBe(backendUrl('/api/apps/todo/lock'));
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ holder: 'sam' });
+
+    mockFetch(200, { ttlSeconds: 180 });
+    await renewLock(store, 'todo', 'abc');
+    expect(calls[0].url).toBe(backendUrl('/api/apps/todo/lock/renew'));
+    expect((calls[0].init.headers as Record<string, string>)[LOCK_HEADER]).toBe('abc');
+
+    mockFetch(200, { released: true });
+    await releaseLock(store, 'todo', 'abc');
+    expect(calls[0].url).toBe(backendUrl('/api/apps/todo/unlock'));
+    expect(calls[0].init.keepalive).toBe(true);
+  });
+
+  it('reads and saves code and layout', async() => {
+    const files = {
+      web: {
+        'index.html': 'a', 'app.js': 'b', 'style.css': 'c'
+      },
+      api: { 'handler.py': 'def handle(m, p, b):\n    return 200, {}\n' },
+    };
+
+    mockFetch(200, { appName: 'todo', commit: 'c', files });
+    await getFiles(store, 'todo');
+    expect(calls[0].url).toBe(backendUrl('/api/apps/todo/files'));
+
+    mockFetch(200, { mode: 'manual', commit: 'd' });
+    await saveFiles(store, 'todo', 'c', files, '', 1000, 'tok');
+    expect(calls[0].init.method).toBe('POST');
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ baseCommit: 'c', files });
+
+    mockFetch(200, { mode: 'layout', commit: 'e' });
+    await saveLayout(store, 'todo', 'c', { 'mod-web-x': { x: 1, z: 2 } }, 1000, 'tok');
+    expect(calls[0].url).toBe(backendUrl('/api/apps/todo/layout'));
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ baseCommit: 'c', positions: { 'mod-web-x': { x: 1, z: 2 } } });
   });
 });

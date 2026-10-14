@@ -46,6 +46,9 @@ laoban:
     loading: 読み込み中…
     changeTitle: このアプリを変更
     currentSteps: 現在の構築手順
+    tabs:
+      arch: 構成図
+      code: コード
   appearance:
     theme: 外観
     themes:
@@ -67,6 +70,8 @@ laoban:
       edit: 変更
       restore: 復元
       commit: その他の変更
+      manual: 手動修正
+      layout: レイアウト変更
     view: 表示
     viewCurrent: 現在の版
     restore: この版に戻す
@@ -80,6 +85,80 @@ laoban:
     hintPlan: 変更計画と現在の版の差分：デプロイ後に追加・削除・変更される部分を示します。
     hintCompare: "第 {n} 版と現在の版の差分：第 {n} 版に戻すと追加・削除・変更される部分を示します。"
     hintVersion: "第 {n} 版の構成です。"
+  lock:
+    acquiring: 編集権を取得しています…
+    held: "あなた（{name}）がこのアプリを編集中です。ほかの人は閲覧のみです。ページを離れるか、3 分間操作がないと解放されます。"
+    otherUnknown: ほかの人がこのアプリを編集中です。
+    readOnly: 閲覧のみです。
+    lost: 編集権が切れました（長時間操作がない、またはほかのタブで開いた）。閲覧のみです。
+    error: 編集権を取得できませんでした。閲覧のみです。
+    retry: 編集権を取り直す
+  editor:
+    hint: 4 つのファイルを直接編集します。保存すると新しいバージョン（「手動修正」）になり Fleet がデプロイします。AI は呼び出しません。AI が生成したコードと同じチェックを行います。
+    files: ファイル
+    changedFile: 変更あり
+    note: 変更内容（任意）
+    notePlaceholder: 例：タイトルの文言を変更
+    defaultNote: コードの手動修正
+    changed: "{count} 個のファイルを変更"
+    unchanged: まだ変更はありません。
+    discard: 変更を破棄
+    reload: 再読み込み
+    save: 新しいバージョンとして保存
+    saving: "チェックして GitHub に書き込んでいます（AI なし、{seconds} 秒）…"
+  layout:
+    dragHint: コンポーネントをドラッグして移動、空白をドラッグして回転、ホイールでズーム。クリックで選択。
+    moved: "{count} 個のコンポーネントを移動（未保存）"
+    discard: 位置を元に戻す
+    save: レイアウトを保存
+  structure:
+    title: 構成を変更
+    hint: ここでの変更は左の「どう変更するか」に追加されます。「変更計画を作成」で AI がコードを変更し、確認するまでデプロイされません。
+    select: モジュール
+    none: 3D 図でクリックするか、ここで選択
+    renameTo: 新しい名前
+    rename: 名前を変更
+    connectTo: 接続先…
+    connect: 接続を追加
+    delete: このモジュールを削除
+    addTo: 追加先
+    addName: 新しいモジュール名
+    addPurpose: 用途（任意）
+    add: モジュールを追加
+    parts:
+      web: Web 部分
+      api: API 部分
+    addKind:
+      database: データベースを追加
+      queue: メッセージキューを追加
+      ingress: Ingress を追加
+    unsupported: 試食版では未対応
+    lines:
+      rename: "モジュール「{from}」の名前を「{to}」に変更する。"
+      delete: "モジュール「{name}」と、それだけが使うコードを削除する。"
+      connect: "「{from}」から「{to}」を呼び出す。"
+      add: "{part}にモジュール「{name}」を追加する。"
+      addWithPurpose: "{part}にモジュール「{name}」を追加する。用途：{purpose}。"
+  kinds:
+    title: コンポーネントの種類（7 種）
+    ingress: Ingress
+    service: ネットワークサービス
+    netpol: ネットワークポリシー
+    app: プログラム
+    module: プログラムモジュール
+    database: データベース
+    table: テーブル
+    queue: メッセージキュー
+    external: 外部依存サービス
+    storage: ストレージ
+    shape:
+      app: 箱、プログラム層
+      service: 円柱、ネットワーク層
+      database: 高い円柱、データ層
+      ingress: 八面体、ネットワーク層
+      external: 十二面体、プログラム層
+      storage: 平たい六角柱、データ層
+      queue: カプセル、データ層
   diff:
     added: "追加 {count}"
     removed: "削除 {count}"

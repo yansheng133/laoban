@@ -1,8 +1,9 @@
 <script lang="ts">
 // 3D view of a plan's architecture: three layer planes (network, code, data),
-// one mesh per component, curved lines for connections. Display, orbit and
-// zoom only. Ported from web/viewer-prototype/index.html (three.js 0.160.0)
-// without version diff, detail levels or dragging.
+// one mesh per component, curved lines for connections. Orbit and zoom;
+// clicking a component selects it, and with `editable` a component can be
+// dragged along its layer plane (the page saves the new positions as a
+// version). Ported from web/viewer-prototype/index.html (three.js 0.160.0).
 //
 // Names and labels come from AI output: they are put on screen with
 // textContent only, never innerHTML.
@@ -15,7 +16,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import { useI18n } from '@shell/composables/useI18n';
 import {
-  layoutArchitecture, LAYERS, LAYER_Y, KIND_HEIGHT, SceneLayout
+  layoutArchitecture, withPositions, LAYERS, LAYER_Y, KIND_HEIGHT, SceneLayout, Positions
 } from '../utils/layout';
 import { edgeKey, DiffStatus, DiffSummary } from '../utils/graphDiff';
 
@@ -40,7 +41,16 @@ const GEOM: Record<string, () => THREE.BufferGeometry> = {
   database: () => new THREE.CylinderGeometry(0.85, 0.85, 1.1, 32),
   table:    () => new THREE.BoxGeometry(1.0, 0.3, 0.75),
   queue:    () => new THREE.CapsuleGeometry(0.35, 0.9, 6, 16).rotateZ(Math.PI / 2),
+  external: () => new THREE.DodecahedronGeometry(0.6),
+  storage:  () => new THREE.CylinderGeometry(0.9, 0.9, 0.35, 6),
 };
+
+// The seven kinds of the phase-1 3D view, for the legend.
+export const COMPONENT_KINDS = ['app', 'service', 'database', 'ingress', 'external', 'storage', 'queue'] as const;
+
+// Pointer travel (px) below which a press is a click, not a drag.
+const CLICK_SLOP = 4;
+const MAX_COORD = 100;
 
 const COLOR_TOKENS = ['layer-network', 'layer-code', 'layer-data', 'edge', 'diff-added', 'diff-removed', 'diff-changed'];
 
@@ -83,9 +93,25 @@ export default defineComponent({
       type:    Object as PropType<DiffMarks | null>,
       default: null,
     },
+    // Unsaved dragged positions, by node id.
+    positions: {
+      type:    Object as PropType<Positions | null>,
+      default: null,
+    },
+    // Components can be dragged (latest version only).
+    editable: {
+      type:    Boolean,
+      default: false,
+    },
+    selected: {
+      type:    String as PropType<string | null>,
+      default: null,
+    },
   },
 
-  setup(props) {
+  emits: ['move', 'select'],
+
+  setup(props, { emit }) {
     const store = useStore();
     const { t } = useI18n(store);
 
@@ -94,7 +120,7 @@ export default defineComponent({
     const labels = ref<HTMLElement | null>(null);
     const webglFailed = ref(false);
 
-    const layout = computed<SceneLayout>(() => layoutArchitecture(props.architecture));
+    const layout = computed<SceneLayout>(() => layoutArchitecture(withPositions(props.architecture, props.positions)));
 
     // three.js objects live outside Vue reactivity.
     let renderer: THREE.WebGLRenderer | null = null;
@@ -107,6 +133,10 @@ export default defineComponent({
     let themeObserver: MutationObserver | null = null;
     let reduceMotion = false;
     let renderQueued = false;
+    // Meshes that can be picked, by node id.
+    let pickable: THREE.Mesh[] = [];
+    const raycaster = new THREE.Raycaster();
+    let drag: { mesh: THREE.Mesh; id: string; plane: THREE.Plane; startX: number; startY: number; moved: boolean; pointerId: number } | null = null;
 
     function render() {
       if (renderer && labelRenderer && scene && camera) {
@@ -157,6 +187,7 @@ export default defineComponent({
         return;
       }
       disposeObject(world);
+      pickable = [];
       const l = layout.value;
       const colors = readColors();
       const {
@@ -211,10 +242,22 @@ export default defineComponent({
         const mesh = new THREE.Mesh((GEOM[n.kind] || GEOM.module)(), material);
 
         mesh.position.set(n.x, n.y, n.z);
+        mesh.userData.nodeId = n.id;
         world.add(mesh);
+        pickable.push(mesh);
         positions.set(n.id, mesh.position.clone());
 
-        const lbl = makeLabel(`${ (status && DIFF_PREFIX[status]) || '' }${ n.name }`, status ? `laoban-node-label laoban-diff-${ status }` : 'laoban-node-label');
+        const cls = ['laoban-node-label'];
+
+        if (status) {
+          cls.push(`laoban-diff-${ status }`);
+        }
+        if (props.selected === n.id) {
+          cls.push('laoban-selected');
+          material.emissive = colors['diff-changed'];
+          material.emissiveIntensity = Math.max(material.emissiveIntensity, 0.35);
+        }
+        const lbl = makeLabel(`${ (status && DIFF_PREFIX[status]) || '' }${ n.name }`, cls.join(' '));
 
         lbl.position.set(0, (KIND_HEIGHT[n.kind] ?? KIND_HEIGHT.module) + 0.2, 0);
         mesh.add(lbl);
@@ -262,6 +305,86 @@ export default defineComponent({
       requestRender();
     }
 
+    function pointerRay(ev: PointerEvent): boolean {
+      if (!renderer || !camera) {
+        return false;
+      }
+      const r = renderer.domElement.getBoundingClientRect();
+
+      if (!r.width || !r.height) {
+        return false;
+      }
+      raycaster.setFromCamera(new THREE.Vector2(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1), camera);
+
+      return true;
+    }
+
+    function onPointerDown(ev: PointerEvent) {
+      if (ev.button !== 0 || !pointerRay(ev)) {
+        return;
+      }
+      const hit = raycaster.intersectObjects(pickable, false)[0];
+
+      if (!hit) {
+        return;
+      }
+      const mesh = hit.object as THREE.Mesh;
+
+      drag = {
+        mesh,
+        id:        String(mesh.userData.nodeId),
+        plane:     new THREE.Plane(new THREE.Vector3(0, 1, 0), -mesh.position.y),
+        startX:    ev.clientX,
+        startY:    ev.clientY,
+        moved:     false,
+        pointerId: ev.pointerId,
+      };
+      if (props.editable && controls) {
+        // Dragging a component, not the camera.
+        controls.enabled = false;
+        renderer?.domElement.setPointerCapture?.(ev.pointerId);
+      }
+    }
+
+    function onPointerMove(ev: PointerEvent) {
+      if (!drag || ev.pointerId !== drag.pointerId) {
+        return;
+      }
+      if (!drag.moved && Math.hypot(ev.clientX - drag.startX, ev.clientY - drag.startY) < CLICK_SLOP) {
+        return;
+      }
+      drag.moved = true;
+      if (!props.editable || !pointerRay(ev)) {
+        return;
+      }
+      const p = new THREE.Vector3();
+
+      if (raycaster.ray.intersectPlane(drag.plane, p)) {
+        drag.mesh.position.x = Math.max(-MAX_COORD, Math.min(MAX_COORD, p.x));
+        drag.mesh.position.z = Math.max(-MAX_COORD, Math.min(MAX_COORD, p.z));
+        requestRender();
+      }
+    }
+
+    function onPointerUp(ev: PointerEvent) {
+      if (!drag || ev.pointerId !== drag.pointerId) {
+        return;
+      }
+      const d = drag;
+
+      drag = null;
+      if (controls) {
+        controls.enabled = true;
+      }
+      if (!d.moved) {
+        emit('select', d.id === props.selected ? null : d.id);
+      } else if (props.editable) {
+        const round = (v: number) => Math.round(v * 10) / 10;
+
+        emit('move', d.id, { x: round(d.mesh.position.x), z: round(d.mesh.position.z) });
+      }
+    }
+
     function resize() {
       if (!stage.value || !renderer || !labelRenderer || !camera) {
         return;
@@ -290,6 +413,12 @@ export default defineComponent({
       }
       renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
       stage.value.prepend(renderer.domElement);
+      // Before OrbitControls' own listeners, so a drag on a component can
+      // turn the camera off for that gesture.
+      renderer.domElement.addEventListener('pointerdown', onPointerDown);
+      renderer.domElement.addEventListener('pointermove', onPointerMove);
+      renderer.domElement.addEventListener('pointerup', onPointerUp);
+      renderer.domElement.addEventListener('pointercancel', onPointerUp);
       labelRenderer = new CSS2DRenderer({ element: labels.value });
 
       scene = new THREE.Scene();
@@ -335,15 +464,21 @@ export default defineComponent({
       }
     });
 
-    watch(layout, () => build());
-    // Same graph, other marks (comparison turned on or off): keep the camera.
-    watch(() => props.diff, () => build(false));
+    watch(() => props.architecture, () => build());
+    // Same graph, other marks, positions or selection: keep the camera.
+    watch(() => [props.diff, props.positions, props.selected], () => build(false), { deep: true });
 
     onBeforeUnmount(() => {
       resizeObserver?.disconnect();
       themeObserver?.disconnect();
       renderer?.setAnimationLoop(null);
       controls?.removeEventListener('change', requestRender);
+      if (renderer) {
+        renderer.domElement.removeEventListener('pointerdown', onPointerDown);
+        renderer.domElement.removeEventListener('pointermove', onPointerMove);
+        renderer.domElement.removeEventListener('pointerup', onPointerUp);
+        renderer.domElement.removeEventListener('pointercancel', onPointerUp);
+      }
       controls?.dispose();
       if (world) {
         disposeObject(world);
@@ -363,7 +498,7 @@ export default defineComponent({
     });
 
     return {
-      t, root, stage, labels, layout, webglFailed, layers: LAYERS
+      t, root, stage, labels, layout, webglFailed, layers: LAYERS, kinds: COMPONENT_KINDS
     };
   },
 });
@@ -413,7 +548,7 @@ export default defineComponent({
           />{{ t(`laoban.diff.${ s }`, { count: diff.summary[s] }) }}
         </span>
       </template>
-      <span class="text-muted">{{ t('laoban.dashboard.arch.hint') }}</span>
+      <span class="text-muted">{{ editable ? t('laoban.layout.dragHint') : t('laoban.dashboard.arch.hint') }}</span>
     </div>
     <details class="laoban-arch-list">
       <summary>{{ t('laoban.dashboard.arch.listTitle', { count: layout.nodes.length }) }}</summary>
@@ -422,7 +557,18 @@ export default defineComponent({
           v-for="n in layout.nodes"
           :key="n.id"
         >
-          {{ t(`laoban.dashboard.arch.layers.${ n.layer }`) }} · {{ n.kind }} · {{ n.name }}
+          {{ t(`laoban.dashboard.arch.layers.${ n.layer }`) }} · {{ t(`laoban.kinds.${ n.kind }`) }} · {{ n.name }}
+        </li>
+      </ul>
+    </details>
+    <details class="laoban-arch-list">
+      <summary>{{ t('laoban.kinds.title') }}</summary>
+      <ul>
+        <li
+          v-for="k in kinds"
+          :key="k"
+        >
+          {{ t(`laoban.kinds.${ k }`) }} — {{ t(`laoban.kinds.shape.${ k }`) }}
         </li>
       </ul>
     </details>
@@ -485,6 +631,11 @@ export default defineComponent({
     border-color: var(--laoban-diff-removed);
     color: var(--muted);
     text-decoration: line-through;
+  }
+
+  :deep(.laoban-selected) {
+    outline: 2px solid var(--primary);
+    font-weight: bold;
   }
 
   :deep(.laoban-edge-label) {

@@ -19,6 +19,8 @@ export default defineComponent({
     loading:   { type: Boolean, default: false },
     error:     { type: String, default: '' },
     truncated: { type: Boolean, default: false },
+    // Without the edit lock: versions can be viewed but not restored.
+    readOnly:  { type: Boolean, default: false },
   },
 
   emits: ['select', 'restore'],
@@ -35,7 +37,7 @@ export default defineComponent({
     }
 
     function kindLabel(kind: string): string {
-      return ['create', 'edit', 'restore'].includes(kind) ? t(`laoban.versions.kind.${ kind }`) : t('laoban.versions.kind.commit');
+      return ['create', 'edit', 'restore', 'manual', 'layout'].includes(kind) ? t(`laoban.versions.kind.${ kind }`) : t('laoban.versions.kind.commit');
     }
 
     function confirm(commit: string) {
@@ -103,7 +105,7 @@ export default defineComponent({
           >
             {{ v.current ? t('laoban.versions.viewCurrent') : t('laoban.versions.view') }}
           </button>
-          <template v-if="!v.current">
+          <template v-if="!v.current && !readOnly">
             <button
               v-if="confirming !== v.commit"
               type="button"
