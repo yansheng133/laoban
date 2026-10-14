@@ -181,6 +181,9 @@ fn opinions_until_the_deadline_then_everyone_confirms() {
     assert_eq!(state(&v), "done");
     let log = v["round"]["log"].to_string();
     assert!(log.contains("略過 u-b 的確認"), "{log}");
+    // Each entry also has a code and its values, for the page's language.
+    assert!(log.contains(r#""code":"skipped""#), "{log}");
+    assert!(log.contains(r#""user":"u-b""#), "{log}");
 }
 
 #[test]

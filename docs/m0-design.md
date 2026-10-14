@@ -143,7 +143,7 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 | `POST .../round/cancel` | 發起人 | 取消（收集中、等待確認或失敗時） |
 | `POST .../round/converge` | 發起人 | 收斂或發布失敗後重新收斂 |
 
-狀態：`collecting` → `converging` → `confirming` → `applying` → `done`；也可能是 `failed`、`cancelled`。每一輪的 `you` 寫出呼叫者是不是發起人、要不要確認、能不能提意見；`log` 記錄每個動作與時間。
+狀態：`collecting` → `converging` → `confirming` → `applying` → `done`；也可能是 `failed`、`cancelled`。每一輪的 `you` 寫出呼叫者是不是發起人、要不要確認、能不能提意見；`log` 記錄每個動作與時間：每筆有繁中的 `event`，以及給頁面依介面語言顯示的 `code`（`opened`、`opinion`、`objected`、`converging`、`converged`、`failed`、`confirmed`、`skipped`、`applying`、`done`、`cancelled`）與 `args`（`minutes`、`count`、`user`、`message`）。
 
 - **收斂**：截止時間到了，後端（每 10 秒檢查一次）把所有意見連同作者交給 AI，用修改既有應用的計畫流程，另外指示 AI 合併重複的意見、衝突時採較小較安全的改動並在 notes 說明；不需要修改或做不到時，也要在 notes 說明原因。計畫的 `notes` 會顯示在頁面上。收斂後的計畫實際動到的部分（網頁模組、API 模組或端點）會加進這一輪的範圍。範圍是依計畫的模組判斷的，AI 實際改寫的檔案可能超出範圍；超出範圍的手動修改由下面的保留檢查保護。
 - **確認**：要確認的人是這一輪提過意見的人。修改計畫 1 小時內沒有全部確認就會失效，發起人需要重新收斂。

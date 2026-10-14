@@ -140,10 +140,22 @@ laoban:
     hintPlan: "The converged plan compared with the current version: marked parts are added, removed or changed by deploying it."
     hintPlanSame: "The converged plan does not change the architecture (same modules and API): it may change code only, or nothing needs to change. See the steps and notes."
     lastLog: "Last round's log ({count})"
-    notes: "AI notes: "
+    notes: "AI notes (may be inaccurate): "
     lost: "The running round is gone, probably because the backend restarted (rounds are kept in its memory only). Start a new round if needed."
     showCurrent: Show current architecture
     showPlan: Show converged plan
+    events:
+      opened: "started a round (converges in {minutes} min)"
+      opinion: gave an opinion
+      objected: "disagreed; converging again in {minutes} min"
+      converging: "the AI started converging {count} opinion(s)"
+      converged: change plan ready, waiting for confirmation
+      failed: "failed: {message}"
+      confirmed: confirmed
+      skipped: "skipped {user}'s confirmation"
+      applying: all confirmed, the AI started changing the code
+      done: new version deployed
+      cancelled: cancelled this round
   editor:
     hint: Edit the four files directly. Saving creates a new version (marked "Manual edit") that Fleet deploys, without calling the AI; the files get the same checks as AI-generated code.
     hintReadOnly: View only.

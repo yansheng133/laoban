@@ -101,6 +101,23 @@ export default defineComponent({
     const canOpen = computed(() => !busy.value && !active.value && !!props.draft.trim());
     const canAdd = computed(() => !busy.value && !!you.value?.canAddOpinion && !!props.draft.trim());
 
+    // Log entries in the page's language; the backend's Chinese text when
+    // the code is unknown.
+    const EVENTS = ['opened', 'opinion', 'objected', 'converging', 'converged', 'failed', 'confirmed', 'skipped', 'applying', 'done', 'cancelled'];
+
+    function logText(l: RoundView['log'][number]): string {
+      if (!l.code || !EVENTS.includes(l.code)) {
+        return l.event;
+      }
+      const args = { ...(l.args || {}) };
+
+      if (args.user) {
+        args.user = who(args.user);
+      }
+
+      return t(`laoban.round.events.${ l.code }`, args);
+    }
+
     function formatTime(at: string): string {
       const d = new Date(at);
 
@@ -144,6 +161,7 @@ export default defineComponent({
       canOpen,
       canAdd,
       formatTime,
+      logText,
       open,
       addOpinion,
       sendObjection,
@@ -157,6 +175,13 @@ export default defineComponent({
     class="laoban-round"
     data-testid="laoban-round"
   >
+    <p
+      v-if="notice"
+      class="laoban-round-notice"
+      role="status"
+    >
+      {{ notice }}
+    </p>
     <!-- No round running: open one. -->
     <form
       v-if="!active"
@@ -186,7 +211,7 @@ export default defineComponent({
             :key="i"
           >
             <span class="text-muted">{{ formatTime(l.at) }}</span>
-            {{ l.by === 'laoban' ? 'laoban' : who(l.by) }}：{{ l.event }}
+            {{ l.by === 'laoban' ? 'laoban' : who(l.by) }}：{{ logText(l) }}
           </li>
         </ul>
       </details>
@@ -464,19 +489,12 @@ export default defineComponent({
             :key="i"
           >
             <span class="text-muted">{{ formatTime(l.at) }}</span>
-            {{ l.by === 'laoban' ? 'laoban' : who(l.by) }}：{{ l.event }}
+            {{ l.by === 'laoban' ? 'laoban' : who(l.by) }}：{{ logText(l) }}
           </li>
         </ul>
       </details>
     </template>
 
-    <p
-      v-if="notice"
-      class="laoban-hint laoban-round-notice"
-      role="status"
-    >
-      {{ notice }}
-    </p>
     <p
       v-if="error"
       class="laoban-error text-error"
@@ -488,6 +506,13 @@ export default defineComponent({
 </template>
 
 <style lang="scss" scoped>
+.laoban-round-notice {
+  margin: 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--warning);
+  background: var(--box-bg);
+}
+
 .laoban-round {
   display: flex;
   flex-direction: column;
