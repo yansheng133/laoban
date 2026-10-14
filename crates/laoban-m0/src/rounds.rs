@@ -138,6 +138,9 @@ pub struct RoundPlan {
     pub summary: String,
     pub steps: Vec<String>,
     pub architecture: serde_json::Value,
+    /// The AI's notes: opinions not followed, or why nothing changes.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub notes: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -294,6 +297,15 @@ impl Round {
             s.push_str(&format!("{}. （{}）{}\n", i + 1, o.by, o.text));
         }
         s
+    }
+
+    /// The opinions as a short list for the history: "（user）text；…".
+    pub fn opinion_list(&self) -> String {
+        self.opinions
+            .iter()
+            .map(|o| format!("（{}）{}", o.by, o.text))
+            .collect::<Vec<_>>()
+            .join("；")
     }
 
     /// People who must confirm: everyone who gave an opinion, in order.
@@ -495,6 +507,7 @@ mod tests {
             summary: "s".into(),
             steps: vec!["x".into()],
             architecture: serde_json::json!({}),
+            notes: String::new(),
         }
     }
 

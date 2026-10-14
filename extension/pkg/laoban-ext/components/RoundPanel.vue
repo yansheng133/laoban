@@ -12,6 +12,7 @@ import { useStore } from 'vuex';
 import { useText } from '../composables/useText';
 import { RoundView } from '../utils/backend';
 import { userLabel } from '../utils/users';
+import { formatDateTime, formatClock } from '../utils/time';
 
 export const DEADLINES = [0, 10, 30, 60, 240, 1440];
 
@@ -45,6 +46,11 @@ export default defineComponent({
       type:    Boolean,
       default: false,
     },
+    // A note from the page (the round disappeared, the deploy's progress).
+    notice: {
+      type:    String,
+      default: '',
+    },
   },
 
   emits: ['update:draft', 'open', 'act'],
@@ -65,7 +71,18 @@ export default defineComponent({
 
     onBeforeUnmount(() => clearInterval(clock));
 
-    const state = computed(() => props.round?.state || 'none');
+    // This page's confirm or skip is the last answer: the AI is now
+    // changing the code (the request returns when it is published).
+    const willApply = computed(() => {
+      const r = props.round;
+
+      if (!r || r.state !== 'confirming' || (props.pending !== 'confirm' && props.pending !== 'skip')) {
+        return false;
+      }
+
+      return r.confirmers.filter((c) => c.answer === 'pending').length <= 1;
+    });
+    const state = computed(() => (willApply.value ? 'applying' : props.round?.state || 'none'));
     const active = computed(() => ['collecting', 'converging', 'confirming', 'applying', 'failed'].includes(state.value));
     const busy = computed(() => props.disabled || !!props.pending);
     const you = computed(() => props.round?.you);
@@ -77,9 +94,9 @@ export default defineComponent({
         return '';
       }
       const d = new Date(r.deadline * 1000);
-      const left = Math.max(0, Math.ceil((r.deadline * 1000 - now.value) / 60000));
+      const left = Math.max(0, Math.round((r.deadline * 1000 - now.value) / 60000));
 
-      return t('laoban.round.deadline', { time: d.toLocaleTimeString(), minutes: left });
+      return t('laoban.round.deadline', { time: formatClock(store, d), minutes: left });
     });
     const canOpen = computed(() => !busy.value && !active.value && !!props.draft.trim());
     const canAdd = computed(() => !busy.value && !!you.value?.canAddOpinion && !!props.draft.trim());
@@ -87,7 +104,7 @@ export default defineComponent({
     function formatTime(at: string): string {
       const d = new Date(at);
 
-      return Number.isNaN(d.getTime()) ? at : d.toLocaleString();
+      return Number.isNaN(d.getTime()) ? at : formatDateTime(store, d);
     }
 
     function open() {
@@ -118,6 +135,7 @@ export default defineComponent({
       objecting,
       objection,
       state,
+      willApply,
       active,
       busy,
       you,
@@ -157,6 +175,21 @@ export default defineComponent({
       >
         {{ t('laoban.round.lastCancelled') }}
       </p>
+      <details
+        v-if="round && round.log.length"
+        class="laoban-round-log"
+      >
+        <summary>{{ t('laoban.round.lastLog', { count: round.log.length }) }}</summary>
+        <ul>
+          <li
+            v-for="(l, i) in round.log"
+            :key="i"
+          >
+            <span class="text-muted">{{ formatTime(l.at) }}</span>
+            {{ l.by === 'laoban' ? 'laoban' : who(l.by) }}：{{ l.event }}
+          </li>
+        </ul>
+      </details>
       <label
         for="laoban-opinion"
         class="laoban-label"
@@ -305,6 +338,12 @@ export default defineComponent({
             {{ s }}
           </li>
         </ol>
+        <p
+          v-if="round.plan.notes"
+          class="laoban-text laoban-round-notes"
+        >
+          {{ t('laoban.round.notes') }}{{ round.plan.notes }}
+        </p>
         <p class="text-muted laoban-hint">
           {{ t('laoban.round.planHint') }}
         </p>
@@ -372,23 +411,18 @@ export default defineComponent({
             {{ t('laoban.round.objectSend') }}
           </button>
         </form>
-        <p
-          v-if="pending === 'confirm' || pending === 'skip'"
-          class="text-muted laoban-hint"
-        >
-          {{ t('laoban.round.applying', { seconds: elapsed }) }}
-        </p>
       </div>
 
       <p
         v-if="state === 'applying'"
         class="text-muted"
+        role="status"
       >
         <i
           class="icon icon-spinner icon-spin"
           aria-hidden="true"
         />
-        {{ t('laoban.round.states.applying') }}
+        {{ willApply ? t('laoban.round.applying', { seconds: elapsed }) : t('laoban.round.states.applying') }}
       </p>
 
       <div
@@ -436,6 +470,13 @@ export default defineComponent({
       </details>
     </template>
 
+    <p
+      v-if="notice"
+      class="laoban-hint laoban-round-notice"
+      role="status"
+    >
+      {{ notice }}
+    </p>
     <p
       v-if="error"
       class="laoban-error text-error"

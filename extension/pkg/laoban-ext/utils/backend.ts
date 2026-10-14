@@ -97,7 +97,7 @@ export interface RoundView {
   deadline: number;
   opinions: { by: string; at: string; text: string }[];
   confirmers: { user: string; answer: 'pending' | 'confirmed' | 'skipped'; at?: string }[];
-  plan: { planId: string; summary: string; steps: string[]; architecture: Architecture } | null;
+  plan: { planId: string; summary: string; steps: string[]; architecture: Architecture; notes?: string } | null;
   message: string;
   result: ApplyResponse | null;
   log: { at: string; by: string; event: string }[];

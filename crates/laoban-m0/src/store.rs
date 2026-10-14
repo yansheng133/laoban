@@ -21,6 +21,12 @@ pub struct StoredPlan {
     pub model: String,
     /// Set when the plan changes an existing app.
     pub base: Option<BaseApp>,
+    /// Set for a round's plan: the files when the round started, so hand
+    /// edits made during the round can be told to the AI and checked.
+    pub round_start: Option<GeneratedFiles>,
+    /// Set for a round's plan: the opinions, as shown in the history
+    /// (masked), instead of the request sent to the AI.
+    pub label: Option<String>,
 }
 
 /// The existing app a plan changes, as read when the plan was made.
@@ -165,6 +171,8 @@ mod tests {
             masked_prompt: String::new(),
             model: "m".into(),
             base: None,
+            round_start: None,
+            label: None,
         }
     }
 

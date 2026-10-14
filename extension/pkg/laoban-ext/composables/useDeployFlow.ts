@@ -107,6 +107,10 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
   }
 
   function messageFor(e: unknown): string {
+    // Codes with a message in the UI language.
+    if (e instanceof RequestError && e.code === 'not_editable') {
+      return t('laoban.apps.legacy');
+    }
     if (e instanceof RequestError && e.userMessage) {
       return e.userMessage;
     }

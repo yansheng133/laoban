@@ -291,3 +291,84 @@ fn unauthenticated_and_bad_input() {
         "no round yet"
     );
 }
+
+const V1: &str = "1111111111111111111111111111111111111111";
+
+fn with_hand_edit(files: &mut Value) {
+    let py = files["api"]["handler.py"].as_str().unwrap().to_string();
+    files["api"]["handler.py"] = json!(format!("# kept by hand\n{py}"));
+}
+
+#[test]
+fn hand_edits_during_a_round_are_kept_or_nothing_is_published() {
+    let todo = todo_app().remove(0);
+    let versions = vec![(
+        "todo".to_string(),
+        V1.to_string(),
+        todo.1.clone().unwrap(),
+        "2026-10-14T01:00:00Z".to_string(),
+    )];
+    // The AI rewrites handler.py without the hand-added line first, then
+    // keeps it after the round is converged again.
+    let mut dropped = files_value();
+    dropped["api"]["handler.py"] =
+        json!("MENU = []\n\n\ndef handle(method, path, body):\n    return 200, {\"count\": 0}\n");
+    let mut kept = dropped.clone();
+    with_hand_edit(&mut kept);
+    let provider = MockProvider::new()
+        .then(ok(&changed_plan()))
+        .then(ok(&dropped.to_string()))
+        .then(ok(&changed_plan()))
+        .then(ok(&kept.to_string()));
+    let h = harness_versions(provider, RefUpdate::Ok, 1_000_000, vec![todo], versions);
+
+    h.service
+        .open_round("todo", &open(30, "web"), Some("u-a"))
+        .unwrap();
+    // While opinions are collected, u-b edits handler.py (outside the scope).
+    let mut files = h.service.files("todo").unwrap()["files"].clone();
+    with_hand_edit(&mut files);
+    h.service
+        .save_files(
+            "todo",
+            &laoban_m0::SaveFilesRequest {
+                base_commit: V1.into(),
+                files,
+                note: None,
+            },
+            Some("u-b"),
+        )
+        .unwrap();
+    h.service.tick(now() + 31 * 60);
+
+    // The AI is told about the hand edit; its code drops it: not published.
+    let v = h.service.confirm_round("todo", Some("u-a")).unwrap();
+    assert_eq!(state(&v), "failed", "{v}");
+    assert!(v["round"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("api/handler.py"));
+    let sent = h.provider.received();
+    assert!(sent[1].system.contains("lines that were added by hand"));
+    assert!(sent[1]
+        .messages
+        .iter()
+        .any(|m| m.content.contains("manual_edits") && m.content.contains("# kept by hand")));
+    let commits_before = writes(&h.github);
+
+    // Converged again; this time the code keeps it and is published.
+    let v = h.service.retry_round("todo", Some("u-a")).unwrap();
+    assert_eq!(state(&v), "confirming");
+    let v = h.service.confirm_round("todo", Some("u-a")).unwrap();
+    assert_eq!(state(&v), "done", "{v}");
+    assert!(writes(&h.github) > commits_before);
+    let blobs = blob_contents(&h.github);
+    let m = blobs
+        .iter()
+        .rev()
+        .find_map(|b| meta::parse("todo", b).ok())
+        .unwrap();
+    assert!(m.files.handler_py.contains("# kept by hand"));
+    // The history shows the opinions, not the request sent to the AI.
+    assert_eq!(m.history.last().unwrap().request, "（u-a）清單要能排序");
+}

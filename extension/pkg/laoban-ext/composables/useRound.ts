@@ -21,11 +21,14 @@ export interface RoundHooks {
   // Timeout for calls that run the AI (open with deadline 0, converge,
   // the last confirm or skip).
   aiTimeoutMs: () => number;
+  // Shown when a running round is gone (the backend restarted).
+  lostMessage: () => string;
 }
 
 export interface RoundFlow {
   round: Ref<RoundView | null>;
   error: Ref<string>;
+  notice: Ref<string>;
   // The action in progress ("open", "confirm", ...), for spinners.
   pending: Ref<string | null>;
   elapsed: Ref<number>;
@@ -45,6 +48,7 @@ const SLOW: RoundAction[] = ['confirm', 'skip', 'converge'];
 export function useRound(store: StoreLike, hooks: RoundHooks): RoundFlow {
   const round = ref<RoundView | null>(null);
   const error = ref('');
+  const notice = ref('');
   const pending = ref<string | null>(null);
   const elapsed = ref(0);
   let app = '';
@@ -62,7 +66,14 @@ export function useRound(store: StoreLike, hooks: RoundHooks): RoundFlow {
       return;
     }
     const r = res.round || null;
+    const wasActive = !!round.value && ACTIVE.includes(round.value.state);
 
+    // A running round that is gone: the backend keeps rounds in memory.
+    if (wasActive && !r) {
+      notice.value = hooks.lostMessage();
+    } else if (r && r.id !== round.value?.id) {
+      notice.value = '';
+    }
     round.value = r;
     const applied = res.applied || (r?.state === 'done' ? r.result : null);
 
@@ -158,6 +169,7 @@ export function useRound(store: StoreLike, hooks: RoundHooks): RoundFlow {
     started = false;
     round.value = null;
     error.value = '';
+    notice.value = '';
     seenApplied.clear();
     refresh();
     poll = setInterval(() => {
@@ -173,6 +185,6 @@ export function useRound(store: StoreLike, hooks: RoundHooks): RoundFlow {
   });
 
   return {
-    round, error, pending, elapsed, active, refresh, open, act, start, stop
+    round, error, notice, pending, elapsed, active, refresh, open, act, start, stop
   };
 }

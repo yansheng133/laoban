@@ -35,6 +35,7 @@ import {
 import { appendLine } from '../utils/structure';
 import { mergeForDiff } from '../utils/graphDiff';
 import { APPS_ROUTE_NAME, PRODUCT_NAME, BLANK_CLUSTER } from '../config/laoban';
+import { formatDateTime } from '../utils/time';
 
 export default defineComponent({
   name: 'LaobanAppDetail',
@@ -68,6 +69,11 @@ export default defineComponent({
     const selectedNode = ref<string | null>(null);
     const editorReload = ref(0);
     const editorDirty = ref(false);
+    // While a round waits for confirmation the 3D view shows its plan; this
+    // switches back to the current version (to rearrange it, for example).
+    const showPlan = ref(true);
+    // Someone else published a version this page has not loaded.
+    const staleNotice = ref('');
 
     const name = computed(() => String(route.params.name || ''));
 
@@ -125,6 +131,7 @@ export default defineComponent({
     }
 
     function reloadAll() {
+      staleNotice.value = '';
       selectVersion(null);
       pending.value = {};
       editorReload.value++;
@@ -137,6 +144,7 @@ export default defineComponent({
       onApplied:    (applied) => flow.watchApplied(applied),
       messageFor:   flow.messageFor,
       aiTimeoutMs:  () => aiRequestTimeoutMs(flow.config.value),
+      lostMessage:  () => t('laoban.round.lost'),
     });
 
     // Permissions are checked by the Kubernetes API server; the page lets
@@ -146,6 +154,11 @@ export default defineComponent({
     const deploying = computed(() => flow.phase.value === 'deploying');
     const currentCommit = computed(() => versions.value.find((v) => v.current)?.commit || '');
     const roundPlan = computed(() => (round.round.value?.state === 'confirming' ? round.round.value.plan : null));
+    const showingPlan = computed(() => !!roundPlan.value && showPlan.value);
+
+    watch(() => roundPlan.value?.planId, () => {
+      showPlan.value = true;
+    });
     // Files a running round is about: the code editor leaves them alone.
     const blockedFiles = computed(() => {
       const r = round.round.value;
@@ -157,7 +170,7 @@ export default defineComponent({
       return r.scope.flatMap((p) => (p === 'web' ? ['web/index.html', 'web/app.js', 'web/style.css'] : ['api/handler.py']));
     });
     // Only the latest version, as it is, can be rearranged.
-    const canArrange = computed(() => canEdit.value && !busy.value && !roundPlan.value && !selectedVersion.value && !selectedCommit.value);
+    const canArrange = computed(() => canEdit.value && !busy.value && !showingPlan.value && !selectedVersion.value && !selectedCommit.value);
     const pendingCount = computed(() => Object.keys(pending.value).length);
     const appsRoute = { name: APPS_ROUTE_NAME, params: { product: PRODUCT_NAME, cluster: BLANK_CLUSTER } };
     const openLink = computed(() => resolveAppUrl(detail.value?.appUrl, window.location.origin));
@@ -177,10 +190,11 @@ export default defineComponent({
     const view = computed(() => {
       const current = detail.value?.architecture || null;
 
-      if (roundPlan.value && !selectedVersion.value) {
+      if (showingPlan.value && roundPlan.value && !selectedVersion.value) {
         const d = mergeForDiff(current, roundPlan.value.architecture);
+        const same = !d.summary.added && !d.summary.removed && !d.summary.changed;
 
-        return { architecture: d.architecture, diff: d, hint: t('laoban.round.hintPlan') };
+        return { architecture: d.architecture, diff: d, hint: t(same ? 'laoban.round.hintPlanSame' : 'laoban.round.hintPlan') };
       }
       if (selectedVersion.value) {
         if (compare.value) {
@@ -253,12 +267,45 @@ export default defineComponent({
       }
     }
 
+    // The deploy's progress, shown under the round as well.
+    const deployNotice = computed(() => (flow.phase.value === 'deploying' ? flow.statusText.value : ''));
+    const roundNotice = computed(() => round.notice.value || deployNotice.value || staleNotice.value);
+    const detailStatus = computed(() => (flow.phase.value === 'idle' ? t('laoban.detail.idle') : flow.statusText.value));
+
+    // Every 30 s: has someone else published a version? Reload when nothing
+    // unsaved would be lost; otherwise say so.
+    const VERSION_POLL_MS = 30 * 1000;
+    let versionTimer: ReturnType<typeof setInterval> | null = null;
+
+    async function checkVersions() {
+      const app = name.value;
+
+      if (!app || busy.value || document.visibilityState === 'hidden' || !currentCommit.value) {
+        return;
+      }
+      try {
+        const res = await listVersions(store, app);
+        const latest = (res.versions || []).find((v) => v.current)?.commit;
+
+        if (app !== name.value || !latest || latest === currentCommit.value || busy.value) {
+          return;
+        }
+        if (editorDirty.value || pendingCount.value) {
+          staleNotice.value = t('laoban.detail.stale');
+        } else {
+          reloadAll();
+        }
+      } catch {
+        // Next time.
+      }
+    }
+
     const currentSteps = computed(() => (Array.isArray(detail.value?.steps) ? detail.value!.steps.map(String) : []));
 
     function formatTime(at: string): string {
       const d = new Date(at);
 
-      return Number.isNaN(d.getTime()) ? at : d.toLocaleString();
+      return Number.isNaN(d.getTime()) ? at : formatDateTime(store, d);
     }
 
     watch(name, (n) => {
@@ -287,9 +334,15 @@ export default defineComponent({
         round.start(name.value);
       }
       window.addEventListener('beforeunload', beforeUnload);
+      versionTimer = setInterval(checkVersions, VERSION_POLL_MS);
     });
 
-    onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload));
+    onBeforeUnmount(() => {
+      window.removeEventListener('beforeunload', beforeUnload);
+      if (versionTimer) {
+        clearInterval(versionTimer);
+      }
+    });
 
     return {
       t,
@@ -321,6 +374,10 @@ export default defineComponent({
       deploying,
       blockedFiles,
       roundPlan,
+      showPlan,
+      showingPlan,
+      roundNotice,
+      detailStatus,
       roundState: round.round,
       roundActive: round.active,
       roundPending: round.pending,
@@ -422,6 +479,7 @@ export default defineComponent({
           :elapsed="roundElapsed"
           :error="roundError"
           :disabled="deploying || phase === 'applying'"
+          :notice="roundNotice"
           @open="openRound"
           @act="roundAct"
         />
@@ -540,6 +598,14 @@ export default defineComponent({
           >
             {{ t('laoban.versions.backToCurrent') }}
           </button>
+          <button
+            v-if="roundPlan && !selectedVersion"
+            type="button"
+            class="btn btn-sm role-secondary"
+            @click="showPlan = !showPlan"
+          >
+            {{ showPlan ? t('laoban.round.showCurrent') : t('laoban.round.showPlan') }}
+          </button>
         </div>
         <p
           v-if="selectedVersion"
@@ -591,7 +657,7 @@ export default defineComponent({
 
     <StatusBar
       v-if="detail"
-      :text="statusText"
+      :text="detailStatus"
       :spinning="busy || phase === 'deploying'"
       :message="showStatusMessage && readiness ? readiness.message : ''"
       :poll-error="phase === 'deploying' && pollError"
