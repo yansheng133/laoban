@@ -52,6 +52,7 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 - 後端以 `APIService` `v1alpha1.api.laoban.yansheng133.github.io` 掛在 rke2 的 API server 底下（chart 的 `apiservice.yaml`）。Rancher 代理的請求到 API server 時已是登入的 Rancher 使用者（Rancher 以 impersonation 代為發出），API server 驗證身分、用這個使用者的 RBAC 授權（以 namespace 為範圍，所以跟著 Rancher Project 走），再以自己的 proxy client 憑證透過 TLS 轉給後端，使用者放在 `X-Remote-User`、`X-Remote-Group`。
 - 後端只在 TLS 連線、且 client 憑證由 request-header CA 簽發、CN 在允許清單內時才採信這些 header；CA、允許的名稱與 header 名稱於啟動時從 `kube-system/extension-apiserver-authentication` 讀取（後端 ServiceAccount 唯一的權限：內建 Role `extension-apiserver-authentication-reader`）。其他人（例如直接連 Service 的 Pod）拿不出這張憑證，無法冒充別人。
 - 8080 port 只提供 `/healthz`、`/version`；API 只在 8443（TLS）。
+- 有請求本體的寫入要以 JSON 送出（`Content-Type: application/json`），用來擋跨站的表單送出。經 API server 轉來、身分已驗證的請求可以不帶 `Content-Type`（`kubectl create --raw` 不會送）；帶了其他類型照樣回 400。（v0.1.7，任務書 13 的 B6）
 - 使用者權限：chart 的 `laoban-api-edit`／`laoban-api-view` 帶有標準聚合標籤，所以在 `laoban-dev` 有內建 edit／admin 的人可以使用、有 view 的人可以看。Rancher 管理者有全部權限；Rancher 的 Project 成員角色是另外的 role template，要用 laoban 需加上這個 API group 的規則（第一階段的角色設計處理）。沒有權限時 API server 回 403，頁面顯示「你沒有這個操作的權限…」。
 - 使用者名稱是 API server 給的名稱，Rancher 使用者是 Rancher 的 user ID（例如 `u-abc12`）。這個名稱記進每一版的紀錄（`history[].by`、版本清單的 `by`）與後端 log（`user=`）。
 - 文件：https://kubernetes.io/docs/tasks/extend-kubernetes/configure-aggregation-layer/
@@ -144,13 +145,15 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 
 狀態：`collecting` → `converging` → `confirming` → `applying` → `done`；也可能是 `failed`、`cancelled`。每一輪的 `you` 寫出呼叫者是不是發起人、要不要確認、能不能提意見；`log` 記錄每個動作與時間。
 
-- **收斂**：截止時間到了，後端（每 10 秒檢查一次）把所有意見連同作者交給 AI，用修改既有應用的計畫流程，另外指示 AI 合併重複的意見、衝突時採較小較安全的改動並在 notes 說明。收斂後的計畫實際動到的部分（網頁模組、API 模組或端點）會加進這一輪的範圍。
+- **收斂**：截止時間到了，後端（每 10 秒檢查一次）把所有意見連同作者交給 AI，用修改既有應用的計畫流程，另外指示 AI 合併重複的意見、衝突時採較小較安全的改動並在 notes 說明；不需要修改或做不到時，也要在 notes 說明原因。計畫的 `notes` 會顯示在頁面上。收斂後的計畫實際動到的部分（網頁模組、API 模組或端點）會加進這一輪的範圍。範圍是依計畫的模組判斷的，AI 實際改寫的檔案可能超出範圍；超出範圍的手動修改由下面的保留檢查保護。
 - **確認**：要確認的人是這一輪提過意見的人。修改計畫 1 小時內沒有全部確認就會失效，發起人需要重新收斂。
 - **一輪進行中（收集、收斂、等待確認、發布、失敗）時**：
   - 另外產生修改計畫（有 `baseApp` 的 `/api/plan`、套用修改計畫）與還原，回 `409 round_active`。
   - 直接存程式時，改到範圍內的檔案回 `409 round_scope`，範圍外照常存。網頁範圍是 `index.html`、`app.js`、`style.css`；API 範圍是 `handler.py`。
   - 存版面不受影響（只改位置，不碰程式）。
 - **發布時逐檔合併**：AI 依計畫產生程式後，跟「現在的版本」逐檔比較。只有一邊改過的檔案取那一邊；AI 和手動都改了、內容又不同的檔案是衝突，回 `409 merge_conflict`，這一輪變成失敗，不發布。修改紀錄與版面也用現在的版本，期間的手動修改與版面調整都會留下。這個合併規則也適用於一般的修改計畫。
+- **保留這一輪期間的手動修改**：後端記下一輪開始時的四個檔。收斂時，如果有檔案在這之後被手動改過，產生程式時會把手動加入與刪除的行（data block `manual_edits`）交給 AI，並要求保留。AI 產生的程式如果改了這個檔，卻少了手動加入的行、或帶回手動刪除的行，就回 `409 merge_conflict`，這一輪變成失敗，不發布；發起人可以重新收斂。比對以去掉前後空白的整行為單位，忽略空行。（v0.1.7，任務書 13 的 B7）
+- **修改紀錄**：一輪發布的版本，紀錄裡的「需求」是意見清單「（使用者）意見；…」，不是送給 AI 的完整指示。
 - **限制**：一輪存在後端記憶體（與計畫一樣，單一 replica）。後端重啟（包含升級）時，進行中的一輪會消失，需要重新開。
 
 ### `GET /api/apps/<appName>/files`、`POST /api/apps/<appName>/files`

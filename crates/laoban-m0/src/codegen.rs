@@ -3,7 +3,7 @@
 //! Anything else, a missing key, a non-string value or a file over the
 //! size limits is rejected as invalid output.
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::plan::strip_fence;
 use crate::InvalidOutput;
@@ -173,6 +173,76 @@ pub fn merge_files(
     })
 }
 
+/// Told to the code call when files were edited by hand during a round;
+/// the data block manual_edits lists the lines.
+pub const MANUAL_EDITS_INSTRUCTIONS: &str = r#"Some files were edited by hand after the change was discussed. The data block manual_edits lists, per file, lines that were added by hand (keep every one of them, unchanged, unless the approved plan explicitly says to change that line) and lines that were removed by hand (do not bring them back)."#;
+
+/// Lines added and removed by hand in one file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManualEdit {
+    pub path: &'static str,
+    pub added: Vec<String>,
+    pub removed: Vec<String>,
+}
+
+fn line_set(text: &str) -> std::collections::BTreeSet<&str> {
+    text.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect()
+}
+
+/// What was edited by hand between `start` and `now`, per file. Lines are
+/// compared trimmed; blank lines are ignored.
+pub fn manual_edits(start: &GeneratedFiles, now: &GeneratedFiles) -> Vec<ManualEdit> {
+    fields(start)
+        .iter()
+        .zip(fields(now).iter())
+        .filter(|((_, a), (_, b))| a != b)
+        .filter_map(|((path, a), (_, b))| {
+            let (sa, sb) = (line_set(a), line_set(b));
+            let added: Vec<String> = sb.difference(&sa).map(|l| l.to_string()).collect();
+            let removed: Vec<String> = sa.difference(&sb).map(|l| l.to_string()).collect();
+            (!added.is_empty() || !removed.is_empty()).then_some(ManualEdit {
+                path,
+                added,
+                removed,
+            })
+        })
+        .collect()
+}
+
+/// The data block for [`MANUAL_EDITS_INSTRUCTIONS`].
+pub fn manual_edits_block(edits: &[ManualEdit]) -> String {
+    let v: Vec<Value> = edits
+        .iter()
+        .map(|e| json!({"file": e.path, "addedLines": e.added, "removedLines": e.removed}))
+        .collect();
+    serde_json::to_string_pretty(&v).unwrap_or_default()
+}
+
+/// Files whose hand edits the AI's code drops: a line added by hand is
+/// missing, or a line removed by hand is back. Files the AI did not change
+/// (`ours` equal to `now`) are fine whatever was edited.
+pub fn lost_edits(
+    edits: &[ManualEdit],
+    now: &GeneratedFiles,
+    ours: &GeneratedFiles,
+) -> Vec<&'static str> {
+    let ours_by_path: std::collections::HashMap<&str, &String> = fields(ours).into_iter().collect();
+    let now_by_path: std::collections::HashMap<&str, &String> = fields(now).into_iter().collect();
+    edits
+        .iter()
+        .filter(|e| ours_by_path[e.path] != now_by_path[e.path])
+        .filter(|e| {
+            let o = line_set(ours_by_path[e.path]);
+            e.added.iter().any(|l| !o.contains(l.as_str()))
+                || e.removed.iter().any(|l| o.contains(l.as_str()))
+        })
+        .map(|e| e.path)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -257,5 +327,36 @@ mod tests {
         );
         // Both made the same change: fine.
         assert!(merge_files(&base, &ours, &ours).is_ok());
+    }
+
+    #[test]
+    fn hand_edits_dropped_by_the_ai_are_found() {
+        let f = |py: &str| GeneratedFiles {
+            index_html: "<p>x</p>".into(),
+            app_js: "a();".into(),
+            style_css: "p{}".into(),
+            handler_py: py.into(),
+        };
+        let start = f("def handle():\n    return 1\n# old\n");
+        let now = f("# by hand\ndef handle():\n    return 1\n");
+        let edits = manual_edits(&start, &now);
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0].path, "api/handler.py");
+        assert_eq!(edits[0].added, ["# by hand"]);
+        assert_eq!(edits[0].removed, ["# old"]);
+        assert!(manual_edits_block(&edits).contains("# by hand"));
+
+        // AI keeps the line (and changes something else): fine.
+        let kept = f("# by hand\ndef handle():\n    return 2\n");
+        assert!(lost_edits(&edits, &now, &kept).is_empty());
+        // AI drops it, or brings the removed line back: lost.
+        let dropped = f("def handle():\n    return 2\n");
+        assert_eq!(lost_edits(&edits, &now, &dropped), ["api/handler.py"]);
+        let back = f("# by hand\ndef handle():\n    return 2\n# old\n");
+        assert_eq!(lost_edits(&edits, &now, &back), ["api/handler.py"]);
+        // AI does not touch the file: fine.
+        assert!(lost_edits(&edits, &now, &now).is_empty());
+        // Nothing edited by hand: nothing to check.
+        assert!(manual_edits(&now, &now).is_empty());
     }
 }

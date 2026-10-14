@@ -45,6 +45,8 @@ laoban:
     source: コード（GitHub）
     loading: 読み込み中…
     changeTitle: このアプリを変更（意見の収束）
+    idle: 左の「意見の収束」でこのアプリを変更します。コードと 3D レイアウトは直接編集することもできます。
+    stale: 他の人が新しい版を公開しました。変更を保存するか破棄すると、新しい版を読み込みます。
     currentSteps: 現在の構築手順
     tabs:
       arch: 構成図
@@ -116,7 +118,7 @@ laoban:
       done: 完了
       failed: 失敗
       cancelled: 取り消し
-    startedBy: "{by} が開始"
+    startedBy: "{by}が開始"
     scope: "範囲：{scope}"
     deadline: "{time} に収束（残り {minutes} 分）"
     addLabel: あなたの意見
@@ -138,6 +140,12 @@ laoban:
     cancel: この回を取り消す
     log: "記録（{count}）"
     hintPlan: 収束した計画と現在のバージョンの差分です。
+    hintPlanSame: 収束した計画はアーキテクチャを変えません（モジュールと API は同じ）。コードだけの変更か、今回は変更不要の可能性があります。手順と説明を確認してください。
+    lastLog: "前回の記録（{count}）"
+    notes: "AI の説明："
+    lost: 進行中のラウンドがなくなりました。バックエンドが再起動した可能性があります（ラウンドはバックエンドのメモリにのみ保存）。必要なら新しいラウンドを開始してください。
+    showCurrent: 現在のアーキテクチャを表示
+    showPlan: 収束した計画を表示
   editor:
     hint: 4 つのファイルを直接編集します。保存すると新しいバージョン（「手動修正」）になり Fleet がデプロイします。AI は呼び出しません。AI が生成したコードと同じチェックを行います。
     hintReadOnly: 閲覧のみです。
@@ -213,58 +221,58 @@ laoban:
     changed: "変更 {count}"
   dashboard:
     title: laoban
-    description: Describe what you need in one sentence. laoban proposes a plan and an architecture view first; only after you confirm does it generate code, commit it to GitHub and let Fleet deploy it. This is the M0 preview.
+    description: 必要なことを一文で書いてください。laoban はまず計画とアーキテクチャ図を提案し、確認後にコードを生成して GitHub にコミットし、Fleet がデプロイします。これは M0 プレビューです。
     toApps: これまでに作成したアプリを見る →
     config:
-      model: Model
-      targetNamespace: Target
-      repo: Repository
-      tokenBudget: Token usage
+      model: モデル
+      targetNamespace: デプロイ先
+      repo: リポジトリ
+      tokenBudget: トークン使用量
       tokenUsage: "{used} / {cap}"
-      unavailable: Could not read the laoban backend settings.
+      unavailable: laoban バックエンドの設定を読み取れませんでした。
     chat:
-      title: Request
-      promptLabel: What do you want to build
-      promptPlaceholder: "For example: a breakfast shop ordering page where people pick items and submit an order"
-      appNameLabel: App name (optional)
+      title: 依頼
+      promptLabel: 何を作りますか
+      promptPlaceholder: "例：朝食店の注文ページ。メニューから選んで注文を送信できる"
+      appNameLabel: アプリ名（任意）
       appNamePlaceholder: breakfast
-      appNameHint: Starts with a lowercase letter; lowercase letters, digits and hyphens only; 2 to 31 characters. Leave empty to let the AI choose.
-      generate: Generate plan
+      appNameHint: 英小文字で始まり、英小文字・数字・ハイフンのみ、2～31 文字。空欄なら AI が決めます。
+      generate: 計画を作成
     plan:
-      title: "Plan: {appName}"
-      steps: Steps
-      masked: "{count} possibly sensitive items were masked before sending to the AI."
-      usage: "This used {input} input tokens and {output} output tokens."
-      apply: Confirm and deploy
+      title: "計画：{appName}"
+      steps: 手順
+      masked: "AI に送る前に、機密の可能性がある {count} 件をマスクしました。"
+      usage: "入力 {input} トークン、出力 {output} トークンを使用しました。"
+      apply: 確認してデプロイ
     result:
       viewApp: アプリページで見る
-      committed: "Committed to GitHub:"
-      openApp: Open app
-      badAppUrl: The app URL returned by the backend is not valid, so no link is shown.
+      committed: "GitHub にコミットしました："
+      openApp: アプリを開く
+      badAppUrl: バックエンドから返されたアプリの URL が正しくないため、リンクを表示しません。
     arch:
-      title: Architecture view
-      empty: The 3D architecture of the app appears here after a plan is generated.
-      hint: Drag to rotate, scroll or pinch to zoom.
-      noWebgl: WebGL is not available in this browser, so the 3D view cannot be shown. See the component list below.
-      ariaLabel: "3D architecture view with {count} components"
-      listTitle: "Components ({count})"
+      title: アーキテクチャ図
+      empty: 計画を作成すると、ここにアプリの 3D アーキテクチャが表示されます。
+      hint: ドラッグで回転、スクロールまたはピンチで拡大縮小。
+      noWebgl: このブラウザでは WebGL が使えないため 3D 表示できません。下のコンポーネント一覧を見てください。
+      ariaLabel: "{count} 個のコンポーネントの 3D アーキテクチャ図"
+      listTitle: "コンポーネント（{count}）"
       layers:
-        network: Network
-        code: Code
-        data: Data
+        network: ネットワーク
+        code: コード
+        data: データ
     status:
-      idle: Enter a request and select Generate plan.
-      planning: "The AI is generating a plan. This usually takes 30 to 60 seconds ({seconds} s so far)…"
-      planned: Plan ready. Review it, then select Confirm and deploy.
-      applying: "The AI is generating code and committing it to GitHub. This usually takes 30 to 60 seconds ({seconds} s so far)…"
-      waitingBundle: "Committed. Waiting for Fleet to pick up the change ({seconds} s so far)…"
-      deploying: "Fleet is deploying: {ready} / {desired} ready…"
+      idle: 依頼を入力して「計画を作成」を選んでください。
+      planning: "AI が計画を作成しています。通常 30～60 秒かかります（{seconds} 秒経過）…"
+      planned: 計画ができました。確認して「確認してデプロイ」を選んでください。
+      applying: "AI がコードを生成して GitHub にコミットしています。通常 30～60 秒かかります（{seconds} 秒経過）…"
+      waitingBundle: "コミットしました。Fleet が変更を取り込むのを待っています（{seconds} 秒経過）…"
+      deploying: "Fleet がデプロイしています：{ready} / {desired} 準備完了…"
       rollingOut: "Fleet が適用しました。新しい Pod の起動を待っています（{seconds} 秒）…"
-      bundleError: "Fleet reports a deployment error ({ready} / {desired} ready). Still checking…"
-      ready: Deployed. You can open the app.
+      bundleError: "Fleet がデプロイエラーを報告しています（{ready} / {desired} 準備完了）。確認を続けています…"
+      ready: デプロイしました。アプリを開けます。
       readyModified: "アプリはデプロイされ実行中なので開けます。ただし Fleet は実際のオブジェクトが Git と一致しない（Modified）と報告しています。詳細は Continuous Delivery の {workspace} ワークスペースで確認してください。"
-      timeout: "Not ready after {minutes} minutes, stopped checking. Check the bundle status in the {workspace} workspace under Continuous Delivery."
-      pollFailed: Could not read the Fleet status this time. Retrying in 5 seconds.
+      timeout: "{minutes} 分たっても準備ができないため、確認を止めました。Continuous Delivery の {workspace} ワークスペースで bundle の状態を確認してください。"
+      pollFailed: 今回は Fleet の状態を読み取れませんでした。5 秒後に再試行します。
     errors:
-      generic: Could not reach the laoban backend. Please try again later.
-      timeout: The laoban backend did not respond in time. Please try again later.
+      generic: laoban バックエンドに接続できませんでした。しばらくしてから再試行してください。
+      timeout: laoban バックエンドが時間内に応答しませんでした。しばらくしてから再試行してください。

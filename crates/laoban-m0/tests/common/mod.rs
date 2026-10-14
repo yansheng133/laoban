@@ -3,7 +3,7 @@
 #![allow(dead_code)]
 
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use laoban_ai::{MockProvider, ProviderResponse, StopReason};
 use laoban_m0::{GithubCommitter, GithubConfig, GithubToken, M0Service, M0Settings};
@@ -71,6 +71,10 @@ pub fn github_mock_versions(
     versions: Vec<Version>,
 ) -> MockServer {
     let blobs = Arc::new(AtomicUsize::new(0));
+    // An app's laoban.json as committed: a blob holding an app's metadata
+    // becomes what later reads return once the branch moves.
+    let apps = Arc::new(Mutex::new(apps));
+    let pending: Arc<Mutex<Vec<(String, String)>>> = Arc::new(Mutex::new(Vec::new()));
     MockServer::start(move |r: &Recorded| {
         let p = r.path.as_str();
         let repo = "/repos/example-owner/laoban-apps/";
@@ -111,6 +115,7 @@ pub fn github_mock_versions(
             let Some(path) = rest.strip_suffix("?ref=main") else {
                 return Reply::json(400, r#"{"message":"missing ref"}"#);
             };
+            let apps = apps.lock().unwrap();
             if path == "apps" {
                 if apps.is_empty() {
                     return Reply::json(404, r#"{"message":"Not Found"}"#);
@@ -122,7 +127,7 @@ pub fn github_mock_versions(
                 list.push(json!({"name": ".gitkeep", "path": "apps/.gitkeep", "type": "file"}));
                 return Reply::json(200, serde_json::Value::Array(list).to_string());
             }
-            for (n, meta) in &apps {
+            for (n, meta) in apps.iter() {
                 if path == format!("apps/{n}/laoban.json") {
                     if r.header("accept") != Some("application/vnd.github.raw+json") {
                         return Reply::json(415, r#"{"message":"want raw"}"#);
@@ -148,20 +153,44 @@ pub fn github_mock_versions(
             ),
             ("POST", "/blobs") => {
                 let n = blobs.fetch_add(1, Ordering::SeqCst) + 1;
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&r.body_str()) {
+                    let content = v["content"].as_str().unwrap_or_default();
+                    if let Ok(m) = serde_json::from_str::<serde_json::Value>(content) {
+                        if let (Some(_), Some(app)) = (m.get("schema"), m["appName"].as_str()) {
+                            pending
+                                .lock()
+                                .unwrap()
+                                .push((app.to_string(), content.to_string()));
+                        }
+                    }
+                }
                 Reply::json(201, json!({"sha": format!("{n:040x}")}).to_string())
             }
             ("POST", "/trees") => Reply::json(201, json!({"sha": NEW_TREE}).to_string()),
             ("POST", "/commits") => Reply::json(201, json!({"sha": NEW_COMMIT}).to_string()),
             ("PATCH", "/refs/heads/main") => match update {
-                RefUpdate::Ok => Reply::json(
-                    200,
-                    json!({"ref": "refs/heads/main", "object": {"sha": NEW_COMMIT}}).to_string(),
-                ),
-                RefUpdate::Status(s) => Reply::json(
-                    s,
-                    json!({"message": "Update is not a fast forward", "status": s.to_string()})
-                        .to_string(),
-                ),
+                RefUpdate::Ok => {
+                    let mut apps = apps.lock().unwrap();
+                    for (app, meta) in pending.lock().unwrap().drain(..) {
+                        match apps.iter_mut().find(|(n, _)| *n == app) {
+                            Some(entry) => entry.1 = Some(meta),
+                            None => apps.push((app, Some(meta))),
+                        }
+                    }
+                    Reply::json(
+                        200,
+                        json!({"ref": "refs/heads/main", "object": {"sha": NEW_COMMIT}})
+                            .to_string(),
+                    )
+                }
+                RefUpdate::Status(s) => {
+                    pending.lock().unwrap().clear();
+                    Reply::json(
+                        s,
+                        json!({"message": "Update is not a fast forward", "status": s.to_string()})
+                            .to_string(),
+                    )
+                }
             },
             _ => Reply::json(404, r#"{"message":"Not Found"}"#),
         }

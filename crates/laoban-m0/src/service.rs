@@ -16,7 +16,10 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use thiserror::Error;
 
-use crate::codegen::{parse_generated, CODEGEN_INSTRUCTIONS, EDIT_CODEGEN_INSTRUCTIONS};
+use crate::codegen::{
+    lost_edits, manual_edits, manual_edits_block, parse_generated, GeneratedFiles,
+    CODEGEN_INSTRUCTIONS, EDIT_CODEGEN_INSTRUCTIONS, MANUAL_EDITS_INSTRUCTIONS,
+};
 use crate::config::M0Settings;
 use crate::github::{GithubCommitter, GithubError};
 use crate::meta::{self, AppMeta, HistoryEntry, Layout, Pos, META_FILE};
@@ -178,6 +181,9 @@ pub enum M0Error {
     /// Applying a change met a file changed by hand since the plan.
     #[error("merge conflict in {0}")]
     MergeConflict(String),
+    /// The AI's code drops hand edits made during the round.
+    #[error("the AI's code drops hand edits in {0}")]
+    ManualEditLost(String),
     #[error("round: {0:?}")]
     Round(RoundError),
     /// The request carried no verified user (it did not come through the
@@ -209,7 +215,7 @@ impl M0Error {
             M0Error::VersionNotFound => "version_not_found",
             M0Error::RoundActive => "round_active",
             M0Error::RoundScope(_) => "round_scope",
-            M0Error::MergeConflict(_) => "merge_conflict",
+            M0Error::MergeConflict(_) | M0Error::ManualEditLost(_) => "merge_conflict",
             M0Error::Round(RoundError::Invalid(_)) | M0Error::Round(RoundError::Full) => {
                 "bad_request"
             }
@@ -249,6 +255,7 @@ impl M0Error {
             M0Error::RoundActive
             | M0Error::RoundScope(_)
             | M0Error::MergeConflict(_)
+            | M0Error::ManualEditLost(_)
             | M0Error::VersionConflict
             | M0Error::Round(RoundError::WrongState(_))
             | M0Error::Round(RoundError::NotConfirmer) => 409,
@@ -294,6 +301,9 @@ impl M0Error {
             ),
             M0Error::MergeConflict(files) => format!(
                 "這一輪期間 {files} 也被直接修改過，和 AI 的修改衝突，沒有部署。請發起人重新收斂。"
+            ),
+            M0Error::ManualEditLost(files) => format!(
+                "AI 的修改會蓋掉這一輪期間對 {files} 的手動修改，沒有部署。請發起人重新收斂；如果手動修改不需要保留，請先把它改回去。"
             ),
             M0Error::Round(RoundError::Invalid(m)) => (*m).into(),
             M0Error::Round(RoundError::Full) => {
@@ -360,6 +370,8 @@ pub struct M0Service {
     store: Mutex<PlanStore>,
     /// The latest round of 意見收斂 per app (active or finished).
     rounds: Mutex<HashMap<String, Round>>,
+    /// Per app: (round ID, the files when that round started).
+    round_starts: Mutex<HashMap<String, (String, GeneratedFiles)>>,
 }
 
 impl M0Service {
@@ -396,6 +408,7 @@ impl M0Service {
             github,
             store: Mutex::new(PlanStore::default()),
             rounds: Mutex::new(HashMap::new()),
+            round_starts: Mutex::new(HashMap::new()),
         })
     }
 
@@ -440,7 +453,7 @@ impl M0Service {
         &self,
         body: &PlanRequestBody,
         user: Option<&str>,
-        extra: Option<&str>,
+        round: Option<RoundInput>,
         max_chars: usize,
     ) -> Result<Value, M0Error> {
         let prompt = body.prompt.trim();
@@ -486,8 +499,10 @@ impl M0Service {
                 let completion = self.orchestrator.complete(&CompletionRequest {
                     principal: PRINCIPAL.into(),
                     requested_model: None,
-                    instructions: match extra {
-                        Some(x) => format!("{PLAN_INSTRUCTIONS}\n{EDIT_PLAN_INSTRUCTIONS}\n{x}"),
+                    instructions: match round {
+                        Some(_) => format!(
+                            "{PLAN_INSTRUCTIONS}\n{EDIT_PLAN_INSTRUCTIONS}\n{ROUND_PLAN_INSTRUCTIONS}"
+                        ),
                         None => format!("{PLAN_INSTRUCTIONS}\n{EDIT_PLAN_INSTRUCTIONS}"),
                     },
                     blocks: vec![
@@ -569,6 +584,7 @@ impl M0Service {
             "architecture": arch,
             "maskedFindings": masked.findings.len(),
             "changedParts": parts,
+            "notes": plan.notes,
             "usage": {
                 "inputTokens": completion.input_tokens,
                 "outputTokens": completion.output_tokens,
@@ -582,6 +598,10 @@ impl M0Service {
                 masked_prompt: masked.text,
                 model: completion.model,
                 base,
+                label: round
+                    .as_ref()
+                    .map(|r| self.orchestrator.mask_for_ai(&r.label).text),
+                round_start: round.and_then(|r| r.start),
             },
             Instant::now(),
         );
@@ -729,6 +749,11 @@ impl M0Service {
             content: plan_json,
         }];
         let mut instructions = CODEGEN_INSTRUCTIONS.to_string();
+        // Hand edits made during a round, before its plan was made.
+        let edits = match (&stored.base, &stored.round_start) {
+            (Some(base), Some(start)) => manual_edits(start, &base.files),
+            _ => Vec::new(),
+        };
         if let Some(base) = &stored.base {
             blocks.push(UntrustedBlock {
                 kind: "current_code",
@@ -738,6 +763,15 @@ impl M0Service {
             });
             instructions.push('\n');
             instructions.push_str(EDIT_CODEGEN_INSTRUCTIONS);
+            if !edits.is_empty() {
+                blocks.push(UntrustedBlock {
+                    kind: "manual_edits",
+                    label: None,
+                    content: manual_edits_block(&edits),
+                });
+                instructions.push('\n');
+                instructions.push_str(MANUAL_EDITS_INSTRUCTIONS);
+            }
         }
         let completion = self.orchestrator.complete(&CompletionRequest {
             principal: PRINCIPAL.into(),
@@ -747,6 +781,12 @@ impl M0Service {
             max_tokens: Some(CODEGEN_MAX_TOKENS),
         })?;
         let generated = parse_generated(&completion.content).map_err(M0Error::AiInvalidOutput)?;
+        if let Some(base) = &stored.base {
+            let lost = lost_edits(&edits, &base.files, &generated);
+            if !lost.is_empty() {
+                return Err(M0Error::ManualEditLost(lost.join("、")));
+            }
+        }
 
         let app = stored.app.as_str();
         // A change is merged into the app as it is now, file by file: files
@@ -764,7 +804,10 @@ impl M0Service {
             None => (generated, Vec::new(), Layout::new()),
         };
         let masked_summary = self.orchestrator.mask_for_ai(&stored.plan.summary).text;
-        let masked_prompt = self.orchestrator.mask_for_ai(&stored.masked_prompt).text;
+        let masked_prompt = match &stored.label {
+            Some(label) => label.clone(),
+            None => self.orchestrator.mask_for_ai(&stored.masked_prompt).text,
+        };
         let (kind, message) = if stored.base.is_some() {
             (
                 "edit",
@@ -975,7 +1018,7 @@ impl M0Service {
         let scope = rounds::parse_scope(body.scope.as_deref().unwrap_or("all"))
             .ok_or(M0Error::BadRequest("範圍只能是 web、api 或 all。"))?;
         // Only apps laoban can change.
-        self.load_app(app)?;
+        let start_files = self.load_app(app)?.files;
         let now = SystemTime::now();
         let at = time::rfc3339(now);
         let id = time::plan_id(now).replacen("p-", "r-", 1);
@@ -995,6 +1038,10 @@ impl M0Service {
                 &at,
             )
             .map_err(M0Error::Round)?;
+            self.round_starts
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(app.to_string(), (r.id.clone(), start_files));
             rs.insert(app.to_string(), r);
         }
         if body.deadline_minutes == 0 {
@@ -1133,15 +1180,22 @@ impl M0Service {
 
     /// The AI turns the round's opinions into one change plan.
     fn converge(&self, app: &str, round_id: &str) {
-        let (request, initiator) = {
+        let (request, label, initiator) = {
             let rs = self.rounds();
             match rs.get(app) {
                 Some(r) if r.id == round_id && r.state == State::Converging => {
-                    (r.change_request(), r.initiator.clone())
+                    (r.change_request(), r.opinion_list(), r.initiator.clone())
                 }
                 _ => return,
             }
         };
+        let start = self
+            .round_starts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(app)
+            .filter(|(id, _)| id == round_id)
+            .map(|(_, f)| f.clone());
         let body = PlanRequestBody {
             prompt: request,
             app_name: None,
@@ -1150,7 +1204,7 @@ impl M0Service {
         let result = self.plan_with(
             &body,
             Some(&initiator),
-            Some(ROUND_PLAN_INSTRUCTIONS),
+            Some(RoundInput { label, start }),
             rounds::MAX_ROUND_CHARS + 2_000,
         );
         let at = time::rfc3339(SystemTime::now());
@@ -1189,6 +1243,7 @@ impl M0Service {
                             })
                             .unwrap_or_default(),
                         architecture: v["architecture"].clone(),
+                        notes: v["notes"].as_str().unwrap_or_default().to_string(),
                     },
                     &at,
                 );
@@ -1525,6 +1580,14 @@ struct NoAudit;
 
 impl laoban_ai::AiAuditSink for NoAudit {
     fn record(&self, _event: laoban_ai::AiAuditEvent) {}
+}
+
+/// What a round adds to [`M0Service::plan_with`].
+struct RoundInput {
+    /// The opinions, for the history.
+    label: String,
+    /// The files when the round started.
+    start: Option<GeneratedFiles>,
 }
 
 fn unix(t: SystemTime) -> u64 {

@@ -9,6 +9,7 @@ import { useStore } from 'vuex';
 import { useText } from '../composables/useText';
 import { safeHttpsUrl, VersionEntry } from '../utils/backend';
 import { userLabel } from '../utils/users';
+import { formatDateTime } from '../utils/time';
 
 export default defineComponent({
   name: 'LaobanVersionList',
@@ -34,7 +35,7 @@ export default defineComponent({
     function formatTime(at: string): string {
       const d = new Date(at);
 
-      return Number.isNaN(d.getTime()) ? at : d.toLocaleString();
+      return Number.isNaN(d.getTime()) ? at : formatDateTime(store, d);
     }
 
     function kindLabel(kind: string): string {

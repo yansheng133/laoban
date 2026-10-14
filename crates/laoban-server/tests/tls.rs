@@ -199,7 +199,23 @@ fn proxy_certificate_and_headers_identify_the_user() {
         tls_request(r.tls, Arc::clone(&good), &lock_req(Some("u-test01"))).unwrap();
     assert_eq!(status, 404, "{body}");
     assert!(body.contains("app_not_found"));
-    // Without a user header: refused.
+    // `kubectl create --raw` sends no content type: accepted for a
+    // verified user; another content type is still refused.
+    let no_type = lock_req(Some("u-test01")).replace("Content-Type: application/json\r\n", "");
+    let (status, body) = tls_request(r.tls, Arc::clone(&good), &no_type).unwrap();
+    assert_eq!(status, 404, "{body}");
+    let form = lock_req(Some("u-test01")).replace("application/json", "text/plain");
+    let (status, body) = tls_request(r.tls, Arc::clone(&good), &form).unwrap();
+    assert_eq!(status, 400, "{body}");
+    // Without a user header: refused (with or without a content type).
+    let (status, body) = tls_request(
+        r.tls,
+        Arc::clone(&good),
+        &lock_req(None).replace("Content-Type: application/json\r\n", ""),
+    )
+    .unwrap();
+    assert_ne!(status, 200, "{body}");
+
     let (status, body) = tls_request(r.tls, Arc::clone(&good), &lock_req(None)).unwrap();
     assert_eq!(status, 401, "{body}");
 

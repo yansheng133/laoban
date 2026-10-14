@@ -43,6 +43,8 @@ laoban:
     source: 程式碼（GitHub）
     loading: 讀取中…
     changeTitle: 修改這個應用（意見收斂）
+    idle: 用左邊的「意見收斂」修改這個應用；程式碼與 3D 版面也可以直接修改。
+    stale: 別人剛發布了新版本。存檔或放棄目前的修改後，頁面會載入新版本。
     currentSteps: 目前的建置步驟
     tabs:
       arch: 架構圖
@@ -136,6 +138,12 @@ laoban:
     cancel: 取消這一輪
     log: "紀錄（{count}）"
     hintPlan: 收斂後的修改計畫與目前版本的差異：標示的是部署後會新增、刪除、修改的部分。
+    hintPlanSame: 收斂後的計畫沒有改變架構（模組與 API 都一樣），可能只改程式內容，或這次不需要修改。請看步驟與說明。
+    lastLog: "上一輪的紀錄（{count}）"
+    notes: "AI 的說明："
+    lost: 進行中的一輪已經不在了，可能是後端重新啟動（一輪只存在後端記憶體裡）。需要的話請重新開一輪。
+    showCurrent: 看目前的架構
+    showPlan: 看收斂後的計畫
   editor:
     hint: 直接修改這四個檔案。儲存後會成為新的一版（標記「手動修改」）並由 Fleet 部署，不呼叫 AI；儲存前會做和 AI 產生的程式一樣的檢查。
     hintReadOnly: 目前只能看。

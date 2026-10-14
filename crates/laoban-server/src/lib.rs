@@ -494,6 +494,8 @@ struct RequestHead {
     content_length: Option<usize>,
     chunked: bool,
     json_content_type: bool,
+    /// Any `Content-Type` header was sent.
+    has_content_type: bool,
     /// All headers as (lower-case name, trimmed value), at most
     /// [`MAX_HEADERS`].
     headers: Vec<(String, String)>,
@@ -516,6 +518,7 @@ fn parse_head(head: &[u8]) -> Result<RequestHead, u16> {
     let mut content_length: Option<usize> = None;
     let mut chunked = false;
     let mut json_content_type = false;
+    let mut has_content_type = false;
     let mut headers = Vec::new();
     for line in lines {
         let line = line.trim_end_matches('\r');
@@ -547,6 +550,7 @@ fn parse_head(head: &[u8]) -> Result<RequestHead, u16> {
         } else if name.eq_ignore_ascii_case("content-type") {
             let mime = value.split(';').next().unwrap_or("").trim();
             json_content_type = mime.eq_ignore_ascii_case("application/json");
+            has_content_type = true;
         }
     }
     // Both framings at once is a request smuggling signal.
@@ -559,6 +563,7 @@ fn parse_head(head: &[u8]) -> Result<RequestHead, u16> {
         content_length,
         chunked,
         json_content_type,
+        has_content_type,
         headers,
     })
 }
@@ -868,8 +873,12 @@ fn route_api(api: &ApiState, head: &RequestHead, body: &[u8], caller: Option<&Ca
         _ => {}
     }
     // Requiring a JSON content type also keeps plain cross-site form
-    // posts (which cannot set it without a CORS preflight) out.
-    if !head.json_content_type {
+    // posts (which cannot set it without a CORS preflight) out. Requests
+    // forwarded by the API server for a verified user may leave it out:
+    // `kubectl create --raw` sends none, and a browser cannot reach the
+    // aggregated port without the API server's client certificate. A
+    // content type other than JSON is refused either way.
+    if !head.json_content_type && (head.has_content_type || caller.is_none()) {
         return bad_request("請以 JSON 送出（Content-Type: application/json）。");
     }
     match route {

@@ -12,6 +12,7 @@ import {
 } from '../utils/backend';
 import { bundleReadiness, Bundle, ReadinessState } from '../utils/bundle';
 import { appDetailRoute } from '../config/laoban';
+import { formatDateTime } from '../utils/time';
 
 export default defineComponent({
   name: 'LaobanAppList',
@@ -68,7 +69,7 @@ export default defineComponent({
       }
       const d = new Date(at);
 
-      return Number.isNaN(d.getTime()) ? at : d.toLocaleString();
+      return Number.isNaN(d.getTime()) ? at : formatDateTime(store, d);
     }
 
     function stateLabel(name: string): string {
@@ -166,7 +167,7 @@ export default defineComponent({
                 class="laoban-apps-round"
               >{{ t(`laoban.round.states.${ app.round }`) }}</span>
               <span
-                v-else
+                v-if="!app.editable"
                 class="text-muted"
               >{{ t('laoban.apps.legacy') }}</span>
             </td>

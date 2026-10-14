@@ -180,15 +180,18 @@ export default defineComponent({
 
 <template>
   <div class="laoban-editor">
-    <p class="text-muted laoban-hint">
-      {{ editable ? t('laoban.editor.hint') : t('laoban.editor.hintReadOnly') }}
-    </p>
     <p
       v-if="blockedFiles.length"
       class="text-warning laoban-hint"
       role="status"
     >
       {{ t('laoban.editor.blocked', { files: blockedFiles.map((f) => f.split('/').pop()).join('、') }) }}
+    </p>
+    <p
+      v-else
+      class="text-muted laoban-hint"
+    >
+      {{ editable ? t('laoban.editor.hint') : t('laoban.editor.hintReadOnly') }}
     </p>
     <p
       v-if="loading && !base"
