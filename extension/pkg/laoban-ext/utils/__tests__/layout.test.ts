@@ -1,6 +1,6 @@
 import { describe, it, expect } from '@jest/globals';
 import {
-  layoutArchitecture, withPositions, LAYER_Y, KIND_HEIGHT, MAX_NODES, MAX_NAME_LENGTH
+  layoutArchitecture, withPositions, relatedNodes, LAYER_Y, KIND_HEIGHT, MAX_NODES, MAX_NAME_LENGTH
 } from '../layout';
 
 // The fixed M0 shape from docs/m0-design.md.
@@ -197,5 +197,24 @@ describe('withPositions', () => {
 
     expect(l.nodes.find((n) => n.id === 'b')?.y).toBeCloseTo(4 + KIND_HEIGHT.external);
     expect(l.nodes.find((n) => n.id === 'c')?.y).toBeCloseTo(0 + KIND_HEIGHT.storage);
+  });
+});
+
+describe('relatedNodes', () => {
+  it('keeps the selected node, what it connects to, its parent and children', () => {
+    const l = layoutArchitecture({
+      nodes: [
+        { id: 'svc', layer: 'network', kind: 'service', name: 'svc' },
+        { id: 'app', layer: 'code', kind: 'app', name: 'app' },
+        { id: 'm1', layer: 'code', kind: 'module', name: 'm1', parent: 'app' },
+        { id: 'm2', layer: 'code', kind: 'module', name: 'm2', parent: 'app' },
+        { id: 'db', layer: 'data', kind: 'database', name: 'db' },
+      ],
+      edges: [{ from: 'svc', to: 'app', kind: 'http' }, { from: 'm1', to: 'db', kind: 'sql' }],
+    });
+
+    expect([...relatedNodes(l, 'app')].sort()).toEqual(['app', 'm1', 'm2', 'svc']);
+    expect([...relatedNodes(l, 'm1')].sort()).toEqual(['app', 'db', 'm1']);
+    expect([...relatedNodes(l, 'db')].sort()).toEqual(['db', 'm1']);
   });
 });

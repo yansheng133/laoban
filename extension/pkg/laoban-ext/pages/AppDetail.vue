@@ -13,13 +13,11 @@
 //
 // Text from the backend or AI is rendered with {{ }} only, never v-html.
 import {
-  defineComponent, ref, computed, onMounted, onBeforeUnmount, watch
+  defineComponent, ref, computed, onMounted, onBeforeUnmount, watch, nextTick
 } from 'vue';
 import { useStore } from 'vuex';
 import { useRoute } from 'vue-router';
 import { useText } from '../composables/useText';
-import AppearanceMenu from '../components/AppearanceMenu.vue';
-import { useAppearance } from '../composables/useAppearance';
 import ArchitectureView from '../components/ArchitectureView.vue';
 import RoundPanel from '../components/RoundPanel.vue';
 import OpinionList from '../components/OpinionList.vue';
@@ -40,19 +38,21 @@ import {
 } from '../utils/opinions';
 import { APPS_ROUTE_NAME, PRODUCT_NAME, BLANK_CLUSTER } from '../config/laoban';
 import { formatDateTime } from '../utils/time';
+import {
+  versionKindKey, previousOf, CompareMode, COMPARE_MODES
+} from '../utils/versions';
 
 export default defineComponent({
   name: 'LaobanAppDetail',
 
   components: {
-    ArchitectureView, RoundPanel, OpinionList, StatusBar, AppearanceMenu, VersionList, CodeEditor, StructureEdit
+    ArchitectureView, RoundPanel, OpinionList, StatusBar, VersionList, CodeEditor, StructureEdit
   },
 
   setup() {
     const store = useStore();
     const route = useRoute();
     const { t } = useText(store);
-    const { palette } = useAppearance(store);
 
     const detail = ref<AppDetail | null>(null);
     const loading = ref(false);
@@ -66,7 +66,12 @@ export default defineComponent({
     // Commit of the version being viewed; null means the current one.
     const selectedCommit = ref<string | null>(null);
     const selectedVersion = ref<VersionDetail | null>(null);
-    const compare = ref(true);
+    // What a selected version is compared with: the version before it (what
+    // it changed), the current one (what restoring it would change), or
+    // nothing.
+    const compareMode = ref<CompareMode>('previous');
+    // Architectures of the versions used as the "previous" side, by commit.
+    const previousCache = ref<Record<string, VersionDetail['architecture'] | null>>({});
     const tab = ref<'arch' | 'code'>('arch');
     // Dragged but not yet saved positions, by node id.
     const pending = ref<Record<string, Position>>({});
@@ -89,6 +94,7 @@ export default defineComponent({
       try {
         detail.value = await getApp(store, name.value);
         loadError.value = '';
+        nextTick(measureStage);
       } catch (e) {
         detail.value = null;
         loadError.value = flow.messageFor(e);
@@ -178,6 +184,22 @@ export default defineComponent({
       window.removeEventListener('keydown', onExpandedKey);
     }
 
+    // The 3D view's height on the page: what is left of the window below
+    // its top (measured with the page scrolled to the top), between 320 and
+    // 520 px, so the whole view is on the first screen.
+    const stageHeight = ref(0);
+
+    function measureStage() {
+      const el = archPanel.value?.querySelector<HTMLElement>('.laoban-arch-stage');
+
+      if (!el || expanded.value) {
+        return;
+      }
+      const top = el.getBoundingClientRect().top + window.scrollY;
+
+      stageHeight.value = Math.round(Math.max(320, Math.min(520, window.innerHeight - top - 16)));
+    }
+
     function toggleFullscreen() {
       if (document.fullscreenElement) {
         document.exitFullscreen?.().catch(() => undefined);
@@ -189,7 +211,30 @@ export default defineComponent({
     const changes = computed(() => diffEntries(view.value.diff));
 
     function versionKind(kind: string): string {
-      return ['create', 'edit', 'restore', 'manual', 'layout'].includes(kind) ? t(`laoban.versions.kind.${ kind }`) : t('laoban.versions.kind.commit');
+      return t(`laoban.versions.kind.${ versionKindKey(kind) }`);
+    }
+
+    // The enlarged view's side column: one tab at a time, so the list of
+    // changes is never below a long timeline.
+    const sideTab = ref<'versions' | 'changes' | 'opinions'>('versions');
+    const showOpinionsTab = computed(() => (!!round.round.value && round.active.value) || drafts.value.length > 0);
+
+    watch(showOpinionsTab, (on) => {
+      if (!on && sideTab.value === 'opinions') {
+        sideTab.value = 'versions';
+      }
+    });
+
+    // Picking a version in the timeline shows what it changed.
+    function pickTimeline(v: { commit: string; current: boolean }) {
+      selectVersion(v.current ? null : v.commit);
+      if (compareMode.value !== 'none') {
+        sideTab.value = 'changes';
+      }
+    }
+
+    function pickChange(nodeId: string) {
+      selectedNode.value = nodeId;
     }
 
     // Shown while the page loads a version someone else published.
@@ -254,14 +299,62 @@ export default defineComponent({
       return repo && path ? safeHttpsUrl(`https://github.com/${ repo }/tree/main/${ path }`) : null;
     });
     const selectedNumber = computed(() => versions.value.find((v) => v.commit === selectedCommit.value)?.version ?? 0);
+    const currentNumber = computed(() => versions.value.find((v) => v.current)?.version ?? 0);
+
+    // The version before the one being looked at: a selected version, or in
+    // the enlarged view also the current one (what the latest change did).
+    const previous = computed(() => {
+      if (compareMode.value !== 'previous' || (!selectedCommit.value && !expanded.value)) {
+        return null;
+      }
+
+      return previousOf(versions.value, selectedCommit.value, versionsTruncated.value);
+    });
+
+    watch(previous, async(p) => {
+      if (p?.kind !== 'version' || p.entry.commit in previousCache.value) {
+        return;
+      }
+      const commit = p.entry.commit;
+      const app = name.value;
+
+      try {
+        const v = await getVersion(store, app, commit);
+
+        if (app === name.value) {
+          previousCache.value = { ...previousCache.value, [commit]: v.architecture };
+        }
+      } catch (e) {
+        versionsError.value = flow.messageFor(e);
+      }
+    });
 
     // What the 3D view shows:
     // - a change plan: the change compared with the current version;
-    // - a selected earlier version: that version, compared with the current
-    //   one when "compare" is on (marks = what restoring it would change);
-    // - otherwise the current version.
+    // - a selected earlier version, compared with the version before it
+    //   (marks = what that version changed), with the current one (marks =
+    //   what restoring it would change), or on its own;
+    // - otherwise the current version; in the enlarged view compared with
+    //   the version before it.
     const view = computed(() => {
       const current = detail.value?.architecture || null;
+      const prev = previous.value;
+      // Against the previous version: the diff, or a hint while it loads or
+      // when there is nothing before it.
+      const againstPrevious = (arch: unknown, n: number) => {
+        if (prev?.kind === 'first') {
+          const d = mergeForDiff(null, arch as VersionDetail['architecture']);
+
+          return { architecture: d.architecture, diff: d, hint: t('laoban.versions.hintFirst', { n }) };
+        }
+        if (prev?.kind === 'version' && prev.entry.commit in previousCache.value) {
+          const d = mergeForDiff(previousCache.value[prev.entry.commit], arch as VersionDetail['architecture']);
+
+          return { architecture: d.architecture, diff: d, hint: t('laoban.versions.hintPrevious', { n, p: prev.entry.version }) };
+        }
+
+        return null;
+      };
 
       if (showingPlan.value && roundPlan.value && !selectedVersion.value) {
         const d = mergeForDiff(current, roundPlan.value.architecture);
@@ -270,16 +363,18 @@ export default defineComponent({
         return { architecture: d.architecture, diff: d, hint: t(same ? 'laoban.round.hintPlanSame' : 'laoban.round.hintPlan') };
       }
       if (selectedVersion.value) {
-        if (compare.value) {
+        if (compareMode.value === 'current') {
           const d = mergeForDiff(current, selectedVersion.value.architecture);
 
           return { architecture: d.architecture, diff: d, hint: t('laoban.versions.hintCompare', { n: selectedNumber.value }) };
         }
+        const p = compareMode.value === 'previous' ? againstPrevious(selectedVersion.value.architecture, selectedNumber.value) : null;
 
-        return { architecture: selectedVersion.value.architecture, diff: null, hint: t('laoban.versions.hintVersion', { n: selectedNumber.value }) };
+        return p || { architecture: selectedVersion.value.architecture, diff: null, hint: t('laoban.versions.hintVersion', { n: selectedNumber.value }) };
       }
+      const p = expanded.value && compareMode.value === 'previous' && current ? againstPrevious(current, currentNumber.value) : null;
 
-      return { architecture: current, diff: null, hint: t('laoban.edit.currentArch') };
+      return p || { architecture: current, diff: null, hint: t('laoban.edit.currentArch') };
     });
 
     function restore(commit: string) {
@@ -402,7 +497,10 @@ export default defineComponent({
 
     // The deploy's progress, shown under the round as well.
     const deployNotice = computed(() => (flow.phase.value === 'deploying' ? flow.statusText.value : ''));
-    const roundNotice = computed(() => round.notice.value || deployNotice.value || (reloading.value ? t('laoban.detail.reloading') : staleNotice.value));
+    const roundNotice = computed(() => round.notice.value || deployNotice.value);
+    // Someone else's new version: a notice fixed on screen, seen wherever
+    // the page is scrolled.
+    const toast = computed(() => (reloading.value ? t('laoban.detail.reloading') : staleNotice.value));
     const detailStatus = computed(() => (flow.phase.value === 'idle' ? t('laoban.detail.idle') : flow.statusText.value));
 
     // Every 15 s: has someone else published a version? Reload when nothing
@@ -446,6 +544,7 @@ export default defineComponent({
       clearOpinions();
       selectedNode.value = null;
       tab.value = 'arch';
+      previousCache.value = {};
       reloadAll();
       if (n) {
         round.start(n);
@@ -468,12 +567,14 @@ export default defineComponent({
       }
       window.addEventListener('beforeunload', beforeUnload);
       document.addEventListener('fullscreenchange', onFullscreenChange);
+      window.addEventListener('resize', measureStage);
       versionTimer = setInterval(checkVersions, VERSION_POLL_MS);
     });
 
     onBeforeUnmount(() => {
       closeExpanded();
       document.removeEventListener('fullscreenchange', onFullscreenChange);
+      window.removeEventListener('resize', measureStage);
       window.removeEventListener('beforeunload', beforeUnload);
       if (versionTimer) {
         clearInterval(versionTimer);
@@ -482,7 +583,6 @@ export default defineComponent({
 
     return {
       t,
-      palette,
       ...flow,
       busy,
       detail,
@@ -501,7 +601,14 @@ export default defineComponent({
       selectedCommit,
       selectedVersion,
       selectedNumber,
-      compare,
+      compareMode,
+      compareModes: COMPARE_MODES,
+      sideTab,
+      showOpinionsTab,
+      pickTimeline,
+      pickChange,
+      toast,
+      stageHeight,
       selectVersion,
       restore,
       currentSteps,
@@ -561,11 +668,7 @@ export default defineComponent({
 </script>
 
 <template>
-  <div
-    class="laoban-m0"
-    :data-laoban-palette="palette"
-  >
-    <AppearanceMenu class="laoban-appearance-bar" />
+  <div class="laoban-m0">
     <header class="laoban-header">
       <div>
         <router-link :to="appsRoute">
@@ -656,11 +759,8 @@ export default defineComponent({
           {{ errorText }}
         </p>
 
-        <details
-          class="laoban-detail-section"
-          :open="!roundPlan"
-        >
-          <summary>{{ t('laoban.detail.currentSteps') }}</summary>
+        <details class="laoban-detail-section">
+          <summary>{{ t('laoban.detail.currentSteps') }}（{{ currentSteps.length }}）</summary>
           <ol>
             <li
               v-for="(step, i) in currentSteps"
@@ -741,6 +841,7 @@ export default defineComponent({
           role="tabpanel"
           class="laoban-arch-panel"
           :class="{ 'laoban-arch-expanded': expanded }"
+          :style="stageHeight ? { '--laoban-stage-h': `${ stageHeight }px` } : null"
         >
         <div class="laoban-arch-main">
         <div class="laoban-view-head">
@@ -751,11 +852,17 @@ export default defineComponent({
             v-if="selectedVersion"
             class="laoban-compare"
           >
-            <input
-              v-model="compare"
-              type="checkbox"
+            {{ t('laoban.versions.compareWith') }}
+            <select
+              v-model="compareMode"
+              class="laoban-compare-select"
             >
-            {{ t('laoban.versions.compare') }}
+              <option
+                v-for="m in compareModes"
+                :key="m"
+                :value="m"
+              >{{ t(`laoban.versions.compareModes.${ m }`) }}</option>
+            </select>
           </label>
           <button
             v-if="selectedVersion"
@@ -773,25 +880,6 @@ export default defineComponent({
           >
             {{ showPlan ? t('laoban.round.showCurrent') : t('laoban.round.showPlan') }}
           </button>
-          <span class="laoban-expand-actions">
-            <button
-              v-if="expanded && fullscreenSupported"
-              type="button"
-              class="btn btn-sm role-secondary"
-              @click="toggleFullscreen"
-            >
-              {{ isFullscreen ? t('laoban.expand.exitFullscreen') : t('laoban.expand.fullscreen') }}
-            </button>
-            <button
-              type="button"
-              class="btn btn-sm"
-              :class="expanded ? 'role-primary' : 'role-secondary'"
-              :aria-pressed="expanded ? 'true' : 'false'"
-              @click="expanded ? closeExpanded() : openExpanded()"
-            >
-              {{ expanded ? t('laoban.expand.close') : t('laoban.expand.open') }}
-            </button>
-          </span>
         </div>
         <p
           v-if="selectedVersion"
@@ -829,7 +917,27 @@ export default defineComponent({
           :badges="badges"
           @move="onMove"
           @select="selectedNode = $event"
-        />
+        >
+          <template #tools>
+            <button
+              v-if="expanded && fullscreenSupported"
+              type="button"
+              class="btn btn-sm role-secondary"
+              @click="toggleFullscreen"
+            >
+              {{ isFullscreen ? t('laoban.expand.exitFullscreen') : t('laoban.expand.fullscreen') }}
+            </button>
+            <button
+              type="button"
+              class="btn btn-sm"
+              :class="expanded ? 'role-primary' : 'role-secondary'"
+              :aria-pressed="expanded ? 'true' : 'false'"
+              @click="expanded ? closeExpanded() : openExpanded()"
+            >
+              {{ expanded ? t('laoban.expand.close') : t('laoban.expand.open') }}
+            </button>
+          </template>
+        </ArchitectureView>
         <form
           v-if="canComment && selectedNode && selectedNodeName"
           class="laoban-component-opinion"
@@ -878,16 +986,45 @@ export default defineComponent({
           v-if="expanded"
           class="laoban-arch-side"
         >
-          <section>
-            <h3>{{ t('laoban.expand.versions') }}</h3>
-            <label class="laoban-compare">
-              <input
-                v-model="compare"
-                type="checkbox"
-                :disabled="!selectedCommit"
-              >
-              {{ t('laoban.versions.compare') }}
-            </label>
+          <div
+            class="laoban-side-tabs"
+            role="tablist"
+          >
+            <button
+              v-for="st in (showOpinionsTab ? ['versions', 'changes', 'opinions'] : ['versions', 'changes'])"
+              :key="st"
+              type="button"
+              role="tab"
+              class="laoban-side-tab"
+              :class="{ selected: sideTab === st }"
+              :aria-selected="sideTab === st ? 'true' : 'false'"
+              @click="sideTab = st"
+            >
+              {{ t(`laoban.expand.tabs.${ st }`) }}<template v-if="st === 'changes' && view.diff">
+                （{{ changes.length }}）
+              </template><template v-if="st === 'opinions' && roundState && roundActive">
+                （{{ roundState.opinions.length }}）
+              </template>
+            </button>
+          </div>
+          <label class="laoban-compare">
+            {{ t('laoban.versions.compareWith') }}
+            <select
+              v-model="compareMode"
+              class="laoban-compare-select"
+            >
+              <option
+                v-for="m in compareModes"
+                :key="m"
+                :value="m"
+              >{{ t(`laoban.versions.compareModes.${ m }`) }}</option>
+            </select>
+          </label>
+          <section
+            v-if="sideTab === 'versions'"
+            role="tabpanel"
+            class="laoban-side-panel"
+          >
             <ol class="laoban-timeline">
               <li
                 v-for="v in versions"
@@ -899,24 +1036,75 @@ export default defineComponent({
                   :class="{ selected: selectedCommit === v.commit || (!selectedCommit && v.current) }"
                   :aria-current="(selectedCommit === v.commit || (!selectedCommit && v.current)) ? 'true' : undefined"
                   :disabled="busy"
-                  @click="selectVersion(v.current ? null : v.commit)"
+                  @click="pickTimeline(v)"
                 >
-                  <strong>{{ t('laoban.versions.number', { n: v.version }) }}</strong>
-                  <span
-                    v-if="v.current"
-                    class="badge-state bg-success"
-                  >{{ t('laoban.versions.current') }}</span>
-                  <span class="text-muted">{{ versionKind(v.kind) }} · {{ formatTime(v.at) }}</span>
+                  <span class="laoban-timeline-line">
+                    <strong>{{ t('laoban.versions.number', { n: v.version }) }}</strong>
+                    <span
+                      v-if="v.current"
+                      class="badge-state bg-success"
+                    >{{ t('laoban.versions.current') }}</span>
+                    <span class="text-muted">{{ formatTime(v.at) }} · {{ versionKind(v.kind) }}</span>
+                  </span>
                   <span
                     v-if="v.request"
                     class="laoban-timeline-request laoban-text"
+                    :title="v.request"
                   >{{ v.request }}</span>
                 </button>
               </li>
             </ol>
           </section>
-          <section v-if="(roundState && roundActive) || drafts.length">
-            <h3>{{ t('laoban.opinions.sideTitle') }}</h3>
+          <section
+            v-else-if="sideTab === 'changes'"
+            role="tabpanel"
+            class="laoban-side-panel"
+          >
+            <p class="text-muted laoban-hint">
+              {{ view.hint }}
+            </p>
+            <p
+              v-if="!view.diff"
+              class="text-muted laoban-hint"
+            >
+              {{ t(compareMode === 'none' ? 'laoban.expand.noComparisonOff' : 'laoban.expand.noComparison') }}
+            </p>
+            <p
+              v-else-if="!changes.length"
+              class="text-muted laoban-hint"
+            >
+              {{ t('laoban.expand.noChanges') }}
+            </p>
+            <ul
+              v-else
+              class="laoban-changes"
+            >
+              <li
+                v-for="c in changes"
+                :key="c.type + c.id"
+              >
+                <button
+                  type="button"
+                  class="laoban-change"
+                  :class="[`laoban-change-${ c.status }`, { selected: selectedNode === c.nodeId }]"
+                  @click="pickChange(c.nodeId)"
+                >
+                  <span class="laoban-change-status">{{ t(`laoban.expand.status.${ c.status }`) }}</span>
+                  <span class="laoban-text">{{ c.label }}</span>
+                  <span class="text-muted">{{ c.type === 'edge' ? t('laoban.expand.connection') : c.kind }}</span>
+                  <span
+                    v-if="c.file"
+                    class="text-muted laoban-change-file"
+                  >{{ t(`laoban.expand.file.${ c.file }`) }}</span>
+                </button>
+              </li>
+            </ul>
+          </section>
+          <section
+            v-else
+            role="tabpanel"
+            class="laoban-side-panel"
+          >
             <OpinionList
               v-if="roundState && roundActive"
               :opinions="roundState.opinions"
@@ -949,41 +1137,6 @@ export default defineComponent({
               </p>
             </template>
           </section>
-          <section>
-            <h3>{{ t('laoban.expand.changes') }}</h3>
-            <p
-              v-if="!view.diff"
-              class="text-muted laoban-hint"
-            >
-              {{ t('laoban.expand.noComparison') }}
-            </p>
-            <p
-              v-else-if="!changes.length"
-              class="text-muted laoban-hint"
-            >
-              {{ t('laoban.expand.noChanges') }}
-            </p>
-            <ul
-              v-else
-              class="laoban-changes"
-            >
-              <li
-                v-for="c in changes"
-                :key="c.type + c.id"
-              >
-                <button
-                  type="button"
-                  class="laoban-change"
-                  :class="[`laoban-change-${ c.status }`, { selected: selectedNode === c.nodeId }]"
-                  @click="selectedNode = c.nodeId"
-                >
-                  <span class="laoban-change-status">{{ t(`laoban.expand.status.${ c.status }`) }}</span>
-                  <span class="laoban-text">{{ c.label }}</span>
-                  <span class="text-muted">{{ c.type === 'edge' ? t('laoban.expand.connection') : c.kind }}</span>
-                </button>
-              </li>
-            </ul>
-          </section>
         </aside>
         </div>
       </section>
@@ -996,15 +1149,20 @@ export default defineComponent({
       :message="showStatusMessage && readiness ? readiness.message : ''"
       :poll-error="phase === 'deploying' && pollError"
     />
+    <div
+      v-if="toast"
+      class="laoban-toast"
+      role="status"
+      aria-live="polite"
+    >
+      {{ toast }}
+    </div>
   </div>
 </template>
 
 <style lang="scss" scoped>
 @import '../styles/layout.scss';
 
-.laoban-appearance-bar {
-  justify-content: flex-end;
-}
 
 .laoban-detail-name {
   font-family: monospace;
@@ -1096,7 +1254,7 @@ export default defineComponent({
   // 3D view, or its components end up out of sight.
   :deep(.laoban-arch-stage) {
     flex: none;
-    height: min(520px, 70vh);
+    height: var(--laoban-stage-h, min(520px, 70vh));
     min-height: 320px;
   }
 }
@@ -1135,12 +1293,6 @@ export default defineComponent({
   align-items: center;
 }
 
-.laoban-expand-actions {
-  display: inline-flex;
-  gap: 6px;
-  margin-left: auto;
-}
-
 // Enlarged: the panel covers the window (the same element, so the 3D view
 // keeps its state); versions and changes on the right.
 .laoban-arch-panel.laoban-arch-expanded {
@@ -1172,9 +1324,9 @@ export default defineComponent({
 .laoban-arch-side {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 10px;
   min-height: 0;
-  overflow-y: auto;
+  overflow: hidden;
   padding-left: 16px;
   border-left: 1px solid var(--border);
 
@@ -1215,13 +1367,79 @@ export default defineComponent({
   }
 }
 
+// Two lines per version: number, time and kind; then the request.
+.laoban-timeline-item {
+  flex-direction: column;
+  align-items: stretch;
+  padding: 4px 8px;
+}
+
+.laoban-timeline-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  align-items: baseline;
+  font-size: 13px;
+}
+
 .laoban-timeline-request {
-  flex-basis: 100%;
   font-size: 12px;
   overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.laoban-side-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+
+.laoban-side-tab {
+  padding: 6px 10px;
+  border: none;
+  border-bottom: 3px solid transparent;
+  background: none;
+  color: var(--body-text);
+  cursor: pointer;
+
+  &.selected {
+    border-bottom-color: var(--primary);
+    font-weight: bold;
+  }
+}
+
+.laoban-side-panel {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.laoban-change-file {
+  flex-basis: 100%;
+  font-size: 12px;
+  padding-left: calc(3em + 8px);
+}
+
+.laoban-compare-select {
+  width: auto;
+  margin-left: 6px;
+  padding: 2px 6px;
+}
+
+// Fixed on screen: seen wherever the page is scrolled.
+.laoban-toast {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 1001;
+  max-width: min(420px, calc(100vw - 48px));
+  padding: 10px 14px;
+  border-left: 4px solid var(--primary);
+  border-radius: var(--border-radius);
+  background: var(--body-bg);
+  color: var(--body-text);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
 }
 
 .laoban-change-status {
@@ -1273,4 +1491,8 @@ export default defineComponent({
     margin-bottom: 6px;
   }
 }
+</style>
+
+<style lang="scss">
+@import '../styles/global.scss';
 </style>

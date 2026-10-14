@@ -135,6 +135,28 @@ export interface DiffEntry {
   kind: string;
   // For a connection: the node to select when it is clicked.
   nodeId: string;
+  // For a code module whose name is not a file name: which of the app's
+  // files holds it ('web': index.html, app.js, style.css; 'api':
+  // api/handler.py); '' otherwise.
+  file: '' | 'web' | 'api';
+}
+
+const WEB_FILES = ['index.html', 'app.js', 'style.css'];
+
+// Code modules are parts of the app's four files, named by the AI
+// (backend plan.rs module_nodes: parent app-web or app-api).
+export function moduleFile(n: { kind?: string; parent?: string; name?: string } | undefined): DiffEntry['file'] {
+  if (!n || n.kind !== 'module') {
+    return '';
+  }
+  if (n.parent === 'app-api') {
+    return n.name === 'handler.py' ? '' : 'api';
+  }
+  if (n.parent === 'app-web') {
+    return WEB_FILES.includes(n.name || '') ? '' : 'web';
+  }
+
+  return '';
 }
 
 const STATUS_ORDER: Record<DiffEntry['status'], number> = { added: 0, changed: 1, removed: 2 };
@@ -155,7 +177,7 @@ export function diffEntries(d: MergedDiff | null | undefined): DiffEntry[] {
 
     if (s === 'added' || s === 'removed' || s === 'changed') {
       out.push({
-        id: n.id, type: 'node', status: s, label: name(n.id), kind: n.kind || n.layer, nodeId: n.id
+        id: n.id, type: 'node', status: s, label: name(n.id), kind: n.kind || n.layer, nodeId: n.id, file: moduleFile(n)
       });
     }
   }
@@ -165,7 +187,7 @@ export function diffEntries(d: MergedDiff | null | undefined): DiffEntry[] {
 
     if (s === 'added' || s === 'removed' || s === 'changed') {
       out.push({
-        id: k, type: 'edge', status: s, label: `${ name(String(e.from)) } → ${ name(String(e.to)) }`, kind: e.kind || '', nodeId: String(e.from)
+        id: k, type: 'edge', status: s, label: `${ name(String(e.from)) } → ${ name(String(e.to)) }`, kind: e.kind || '', nodeId: String(e.from), file: ''
       });
     }
   }

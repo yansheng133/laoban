@@ -10,8 +10,6 @@
 import { defineComponent, ref, computed, onMounted } from 'vue';
 import { useStore } from 'vuex';
 import { useText } from '../composables/useText';
-import AppearanceMenu from '../components/AppearanceMenu.vue';
-import { useAppearance } from '../composables/useAppearance';
 import ArchitectureView from '../components/ArchitectureView.vue';
 import PlanResult from '../components/PlanResult.vue';
 import StatusBar from '../components/StatusBar.vue';
@@ -25,13 +23,12 @@ export default defineComponent({
   name: 'LaobanDashboard',
 
   components: {
-    ArchitectureView, PlanResult, StatusBar, AppearanceMenu
+    ArchitectureView, PlanResult, StatusBar
   },
 
   setup() {
     const store = useStore();
     const { t } = useText(store);
-    const { palette } = useAppearance(store);
     const flow = useDeployFlow(store, t);
 
     const prompt = ref('');
@@ -54,7 +51,6 @@ export default defineComponent({
 
     return {
       t,
-      palette,
       ...flow,
       prompt,
       appName,
@@ -70,11 +66,7 @@ export default defineComponent({
 </script>
 
 <template>
-  <div
-    class="laoban-m0"
-    :data-laoban-palette="palette"
-  >
-    <AppearanceMenu class="laoban-appearance-bar" />
+  <div class="laoban-m0">
     <header class="laoban-header">
       <div>
         <h1>{{ t('laoban.dashboard.title') }}</h1>
@@ -225,9 +217,6 @@ export default defineComponent({
 <style lang="scss" scoped>
 @import '../styles/layout.scss';
 
-.laoban-appearance-bar {
-  justify-content: flex-end;
-}
 
 .laoban-config {
   display: grid;
@@ -246,4 +235,8 @@ export default defineComponent({
     overflow-wrap: anywhere;
   }
 }
+</style>
+
+<style lang="scss">
+@import '../styles/global.scss';
 </style>

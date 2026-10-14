@@ -12,6 +12,7 @@ import { useText } from '../composables/useText';
 import { safeHttpsUrl, VersionEntry } from '../utils/backend';
 import { userLabel } from '../utils/users';
 import { formatDateTime } from '../utils/time';
+import { versionKindKey } from '../utils/versions';
 
 const COLLAPSED = 5;
 
@@ -47,7 +48,7 @@ export default defineComponent({
     }
 
     function kindLabel(kind: string): string {
-      return ['create', 'edit', 'restore', 'manual', 'layout'].includes(kind) ? t(`laoban.versions.kind.${ kind }`) : t('laoban.versions.kind.commit');
+      return t(`laoban.versions.kind.${ versionKindKey(kind) }`);
     }
 
     function confirm(commit: string) {

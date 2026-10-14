@@ -1,6 +1,6 @@
 import { describe, it, expect } from '@jest/globals';
 import {
-  mergeForDiff, edgeKey, REMOVED_OFFSET_Z, diffEntries
+  mergeForDiff, edgeKey, REMOVED_OFFSET_Z, diffEntries, moduleFile
 } from '../graphDiff';
 import type { Architecture } from '../layout';
 
@@ -102,5 +102,44 @@ describe('diffEntries', () => {
   it('is empty without a comparison or without changes', () => {
     expect(diffEntries(null)).toEqual([]);
     expect(diffEntries(mergeForDiff(target, target))).toEqual([]);
+  });
+});
+
+describe('comparing with the previous version', () => {
+  const web = (purpose: string) => ({
+    nodes: [
+      { id: 'app-web', layer: 'code', kind: 'app', name: 'web' },
+      { id: 'app-api', layer: 'code', kind: 'app', name: 'api' },
+      { id: 'w-app', layer: 'code', kind: 'module', name: 'app.js', parent: 'app-web', props: { purpose } },
+      { id: 'w-ui', layer: 'code', kind: 'module', name: 'board_ui', parent: 'app-web' },
+      { id: 'a-board', layer: 'code', kind: 'module', name: 'message_board_api.py', parent: 'app-api' },
+    ],
+    edges: [],
+  });
+
+  it('a version that changed only code has no architecture changes against the one before it', () => {
+    // A hand edit of index.html: same plan, so the same architecture.
+    expect(diffEntries(mergeForDiff(web('list'), web('list')))).toEqual([]);
+  });
+
+  it('lists only what that version changed, not what differs from the current one', () => {
+    const v8 = web('list');
+    const v9 = web('list');
+    const current = web('list and sort');
+
+    expect(diffEntries(mergeForDiff(v8, v9))).toEqual([]);
+    expect(diffEntries(mergeForDiff(current, v9)).map((e) => e.label)).toEqual(['app.js']);
+  });
+
+  it('says which file holds a module named by the AI', () => {
+    const a = web('x');
+    const byName = (n: string) => a.nodes.find((x) => x.name === n);
+
+    expect(moduleFile(byName('message_board_api.py'))).toBe('api');
+    expect(moduleFile(byName('board_ui'))).toBe('web');
+    expect(moduleFile(byName('app.js'))).toBe('');
+    expect(moduleFile(byName('web'))).toBe('');
+    expect(moduleFile({ kind: 'module', parent: 'app-api', name: 'handler.py' })).toBe('');
+    expect(moduleFile(undefined)).toBe('');
   });
 });

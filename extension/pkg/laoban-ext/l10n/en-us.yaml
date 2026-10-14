@@ -50,13 +50,11 @@ laoban:
     tabs:
       arch: Architecture
       code: Code
-  appearance:
-    theme: Theme
-    themes:
-      light: Light
-      auto: Auto
-      dark: Dark
-    palette: Colors
+  view3d:
+    resetView: Reset view
+    palette: 3D view colors
+    paletteNote: Affects the 3D view only; remembered in this browser.
+    selected: Selected
     palettes:
       rancher: Rancher default
       ocean: Ocean
@@ -83,7 +81,13 @@ laoban:
     showMore: "Show {count} earlier version(s)"
     showLess: Show recent versions only
     restoring: "Restoring and writing to GitHub ({seconds} s)…"
-    compare: Compare with current
+    compareWith: Compare with
+    compareModes:
+      previous: Previous version
+      current: Current version
+      none: Nothing
+    hintPrevious: "Version {n} compared with version {p}: marked parts are what version {n} added, removed or changed."
+    hintFirst: "Version {n} is the first version: everything is new."
     backToCurrent: Back to current version
     hintPlan: "Change plan compared with the current version: marked parts are added, removed or changed once deployed."
     hintCompare: "Version {n} compared with the current version: marked parts are added, removed or changed by restoring version {n}."
@@ -170,9 +174,17 @@ laoban:
     exitFullscreen: Exit full screen
     versions: Versions
     changes: Changes
-    noComparison: Pick a version on the left, or view a round's converged plan, to list what is added, removed or changed compared with the current version.
-    noChanges: "No architecture changes compared with the current version (the code may still differ)."
+    noComparison: "Pick a version in the Versions tab, or view a round's converged plan, to list what is added, removed or changed."
+    noChanges: "No architecture changes compared with the chosen version (the code may still differ)."
     connection: connection
+    tabs:
+      versions: Versions
+      changes: Changes
+      opinions: Opinions
+    noComparisonOff: "\"Compare with\" is set to Nothing, so no changes are marked."
+    file:
+      web: "in the web files (index.html, app.js, style.css)"
+      api: in the API file api/handler.py
     status:
       added: Added
       removed: Removed

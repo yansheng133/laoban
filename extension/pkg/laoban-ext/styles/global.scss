@@ -1,0 +1,3 @@
+// Global (unscoped) styles every laoban page imports once, in a
+// <style lang="scss"> block without `scoped`.
+@import './palettes.scss';

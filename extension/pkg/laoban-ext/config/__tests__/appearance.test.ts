@@ -1,6 +1,6 @@
 import { describe, it, expect } from '@jest/globals';
 import {
-  loadPalette, savePalette, isPalette, isThemePref, DEFAULT_PALETTE, PALETTE_STORAGE_KEY, PALETTES
+  loadPalette, savePalette, isPalette, DEFAULT_PALETTE, PALETTE_STORAGE_KEY, PALETTES
 } from '../appearance';
 
 function memory(initial: Record<string, string> = {}) {
@@ -50,8 +50,8 @@ describe('palette storage', () => {
     expect(isPalette('Sunset')).toBe(false);
   });
 
-  it("accepts Rancher's theme preference values only", () => {
-    expect(['light', 'auto', 'dark'].every(isThemePref)).toBe(true);
-    expect(isThemePref('ui-dark')).toBe(false);
+  it('keeps the storage key, so a palette chosen before v0.1.12 carries over', () => {
+    expect(PALETTE_STORAGE_KEY).toBe('laoban.palette');
+    expect(loadPalette(memory({ 'laoban.palette': 'grape' }))).toBe('grape');
   });
 });

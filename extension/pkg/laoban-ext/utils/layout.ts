@@ -74,6 +74,8 @@ export interface SceneNode {
   layer: Layer;
   kind: string;
   name: string;
+  // Containing node (a module's app), "" if none.
+  parent: string;
   x: number;
   y: number;
   z: number;
@@ -227,13 +229,14 @@ export function layoutArchitecture(arch: unknown): SceneLayout {
     const p = placed.get(n.id) || { x: 0, z: 0 };
 
     return {
-      id:    n.id,
-      layer: n.layer,
-      kind:  n.kind,
-      name:  n.name,
-      x:     p.x,
-      y:     LAYER_Y[n.layer] + (KIND_HEIGHT[n.kind] ?? KIND_HEIGHT.module),
-      z:     p.z,
+      id:     n.id,
+      layer:  n.layer,
+      kind:   n.kind,
+      name:   n.name,
+      parent: n.parent,
+      x:      p.x,
+      y:      LAYER_Y[n.layer] + (KIND_HEIGHT[n.kind] ?? KIND_HEIGHT.module),
+      z:      p.z,
     };
   });
 
@@ -315,4 +318,30 @@ export function withPositions(arch: unknown, positions: Positions | null): unkno
       return typeof id === 'string' && Object.prototype.hasOwnProperty.call(positions, id) ? { ...n, pos: positions[id] } : n;
     }),
   };
+}
+
+/**
+ * The selected node and the nodes it shares a connection with, plus its
+ * parent and children (a module and its app): what stays at full strength
+ * in the 3D view while the rest fades.
+ */
+export function relatedNodes(l: SceneLayout, id: string): Set<string> {
+  const out = new Set<string>([id]);
+
+  for (const e of l.edges) {
+    if (e.from === id) {
+      out.add(e.to);
+    } else if (e.to === id) {
+      out.add(e.from);
+    }
+  }
+  for (const n of l.nodes) {
+    if (n.id === id && n.parent) {
+      out.add(n.parent);
+    } else if (n.parent && n.parent === id) {
+      out.add(n.id);
+    }
+  }
+
+  return out;
 }

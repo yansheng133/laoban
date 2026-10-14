@@ -52,18 +52,16 @@ laoban:
     tabs:
       arch: 構成図
       code: コード
-  appearance:
-    theme: 外観
-    themes:
-      light: ライト
-      auto: 自動
-      dark: ダーク
-    palette: 配色
+  view3d:
+    resetView: 視点をリセット
+    palette: 3D 図の配色
+    paletteNote: 3D 図だけに適用され、このブラウザに保存されます。
+    selected: 選択中
     palettes:
-      rancher: Rancher 既定
-      ocean: オーシャン
-      sunset: サンセット
-      grape: グレープ
+      rancher: Rancher 標準
+      ocean: 海
+      sunset: 夕日
+      grape: ぶどう
   versions:
     title: "バージョン（{count}）"
     number: "第 {n} 版"
@@ -85,7 +83,13 @@ laoban:
     showMore: "以前の {count} 版を表示"
     showLess: 最近の版のみ表示
     restoring: "復元して GitHub に書き込み中（{seconds} 秒）…"
-    compare: 現在の版と比較
+    compareWith: 比較対象
+    compareModes:
+      previous: 前の版
+      current: 現在の版
+      none: 比較しない
+    hintPrevious: "第 {n} 版と第 {p} 版の差分：第 {n} 版で追加・削除・変更された部分を示します。"
+    hintFirst: "第 {n} 版は最初の版です：すべて追加です。"
     backToCurrent: 現在の版に戻る
     hintPlan: 変更計画と現在の版の差分：デプロイ後に追加・削除・変更される部分を示します。
     hintCompare: "第 {n} 版と現在の版の差分：第 {n} 版に戻すと追加・削除・変更される部分を示します。"
@@ -172,9 +176,17 @@ laoban:
     exitFullscreen: 全画面を終了
     versions: 版
     changes: 変更
-    noComparison: 左の版を選ぶか、確認待ちの計画を表示すると、現在の版と比べて追加・削除・変更された部分がここに一覧表示されます。
-    noChanges: 現在の版と比べてアーキテクチャの変更はありません（コードだけ変わっている可能性があります）。
+    noComparison: 「版」タブで版を選ぶか、確認待ちの計画を表示すると、追加・削除・変更された部分がここに一覧表示されます。
+    noChanges: 比較対象と比べてアーキテクチャの変更はありません（コードだけ変わっている可能性があります）。
     connection: 接続
+    tabs:
+      versions: 版
+      changes: 変更
+      opinions: 意見
+    noComparisonOff: 比較対象が「比較しない」のため、変更は表示されません。
+    file:
+      web: Web のファイル（index.html、app.js、style.css）の中
+      api: API のファイル api/handler.py の中
     status:
       added: 追加
       removed: 削除
