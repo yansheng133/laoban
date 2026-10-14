@@ -160,6 +160,20 @@ laoban:
       applying: 全部確認，AI 開始修改程式
       done: 已部署新版本
       cancelled: 取消這一輪
+  expand:
+    open: 放大
+    close: 關閉放大
+    fullscreen: 全螢幕
+    exitFullscreen: 離開全螢幕
+    versions: 版本
+    changes: 變更
+    noComparison: 點左邊的版本，或在等待確認時看收斂後的計畫，這裡會列出和目前版本相比新增、刪除、修改的部分。
+    noChanges: 和目前版本相比，架構沒有變動（可能只改了程式內容）。
+    connection: 連線
+    status:
+      added: 新增
+      removed: 刪除
+      changed: 修改
   editor:
     hint: 直接修改這四個檔案。儲存後會成為新的一版（標記「手動修改」）並由 Fleet 部署，不呼叫 AI；儲存前會做和 AI 產生的程式一樣的檢查。
     hintReadOnly: 目前只能看。

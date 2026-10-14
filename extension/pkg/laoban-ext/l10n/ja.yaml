@@ -162,6 +162,20 @@ laoban:
       applying: 全員確認済み。AI がコードの変更を開始
       done: 新しい版をデプロイ済み
       cancelled: このラウンドを取り消し
+  expand:
+    open: 拡大
+    close: 拡大を閉じる
+    fullscreen: 全画面
+    exitFullscreen: 全画面を終了
+    versions: 版
+    changes: 変更
+    noComparison: 左の版を選ぶか、確認待ちの計画を表示すると、現在の版と比べて追加・削除・変更された部分がここに一覧表示されます。
+    noChanges: 現在の版と比べてアーキテクチャの変更はありません（コードだけ変わっている可能性があります）。
+    connection: 接続
+    status:
+      added: 追加
+      removed: 削除
+      changed: 変更
   editor:
     hint: 4 つのファイルを直接編集します。保存すると新しいバージョン（「手動修正」）になり Fleet がデプロイします。AI は呼び出しません。AI が生成したコードと同じチェックを行います。
     hintReadOnly: 閲覧のみです。

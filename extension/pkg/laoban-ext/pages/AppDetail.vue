@@ -33,7 +33,7 @@ import {
   AppDetail, VersionEntry, VersionDetail, AppFiles, Position, RoundAction
 } from '../utils/backend';
 import { appendLine } from '../utils/structure';
-import { mergeForDiff } from '../utils/graphDiff';
+import { mergeForDiff, diffEntries } from '../utils/graphDiff';
 import { APPS_ROUTE_NAME, PRODUCT_NAME, BLANK_CLUSTER } from '../config/laoban';
 import { formatDateTime } from '../utils/time';
 
@@ -128,6 +128,64 @@ export default defineComponent({
         versionsError.value = flow.messageFor(e);
         selectedCommit.value = null;
       }
+    }
+
+    // The 3D view enlarged to the whole window (and optionally full
+    // screen), with the versions and the list of changes beside it. It is
+    // the same element, so selection, comparison and unsaved positions
+    // carry over.
+    const expanded = ref(false);
+    const archPanel = ref<HTMLElement | null>(null);
+    const isFullscreen = ref(false);
+    const fullscreenSupported = typeof document !== 'undefined' && !!document.fullscreenEnabled;
+    let bodyOverflow = '';
+
+    function onExpandedKey(ev: KeyboardEvent) {
+      // In full screen the browser's Esc leaves full screen first.
+      if (ev.key === 'Escape' && !document.fullscreenElement) {
+        closeExpanded();
+      }
+    }
+
+    function onFullscreenChange() {
+      isFullscreen.value = !!document.fullscreenElement;
+    }
+
+    function openExpanded() {
+      if (expanded.value) {
+        return;
+      }
+      tab.value = 'arch';
+      expanded.value = true;
+      bodyOverflow = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      window.addEventListener('keydown', onExpandedKey);
+    }
+
+    function closeExpanded() {
+      if (!expanded.value) {
+        return;
+      }
+      if (document.fullscreenElement) {
+        document.exitFullscreen?.().catch(() => undefined);
+      }
+      expanded.value = false;
+      document.body.style.overflow = bodyOverflow;
+      window.removeEventListener('keydown', onExpandedKey);
+    }
+
+    function toggleFullscreen() {
+      if (document.fullscreenElement) {
+        document.exitFullscreen?.().catch(() => undefined);
+      } else {
+        archPanel.value?.requestFullscreen?.().catch(() => undefined);
+      }
+    }
+
+    const changes = computed(() => diffEntries(view.value.diff));
+
+    function versionKind(kind: string): string {
+      return ['create', 'edit', 'restore', 'manual', 'layout'].includes(kind) ? t(`laoban.versions.kind.${ kind }`) : t('laoban.versions.kind.commit');
     }
 
     // Shown while the page loads a version someone else published.
@@ -352,10 +410,13 @@ export default defineComponent({
         round.start(name.value);
       }
       window.addEventListener('beforeunload', beforeUnload);
+      document.addEventListener('fullscreenchange', onFullscreenChange);
       versionTimer = setInterval(checkVersions, VERSION_POLL_MS);
     });
 
     onBeforeUnmount(() => {
+      closeExpanded();
+      document.removeEventListener('fullscreenchange', onFullscreenChange);
       window.removeEventListener('beforeunload', beforeUnload);
       if (versionTimer) {
         clearInterval(versionTimer);
@@ -396,6 +457,15 @@ export default defineComponent({
       showingPlan,
       roundNotice,
       detailStatus,
+      expanded,
+      archPanel,
+      isFullscreen,
+      fullscreenSupported,
+      openExpanded,
+      closeExpanded,
+      toggleFullscreen,
+      changes,
+      versionKind,
       roundState: round.round,
       roundActive: round.active,
       roundPending: round.pending,
@@ -591,9 +661,12 @@ export default defineComponent({
         </div>
         <div
           v-show="tab === 'arch'"
+          ref="archPanel"
           role="tabpanel"
           class="laoban-arch-panel"
+          :class="{ 'laoban-arch-expanded': expanded }"
         >
+        <div class="laoban-arch-main">
         <div class="laoban-view-head">
           <p class="text-muted laoban-hint">
             {{ view.hint }}
@@ -624,6 +697,25 @@ export default defineComponent({
           >
             {{ showPlan ? t('laoban.round.showCurrent') : t('laoban.round.showPlan') }}
           </button>
+          <span class="laoban-expand-actions">
+            <button
+              v-if="expanded && fullscreenSupported"
+              type="button"
+              class="btn btn-sm role-secondary"
+              @click="toggleFullscreen"
+            >
+              {{ isFullscreen ? t('laoban.expand.exitFullscreen') : t('laoban.expand.fullscreen') }}
+            </button>
+            <button
+              type="button"
+              class="btn btn-sm"
+              :class="expanded ? 'role-primary' : 'role-secondary'"
+              :aria-pressed="expanded ? 'true' : 'false'"
+              @click="expanded ? closeExpanded() : openExpanded()"
+            >
+              {{ expanded ? t('laoban.expand.close') : t('laoban.expand.open') }}
+            </button>
+          </span>
         </div>
         <p
           v-if="selectedVersion"
@@ -669,6 +761,84 @@ export default defineComponent({
           @add="addStructure"
           @select="selectedNode = $event"
         />
+        </div>
+        <aside
+          v-if="expanded"
+          class="laoban-arch-side"
+        >
+          <section>
+            <h3>{{ t('laoban.expand.versions') }}</h3>
+            <label class="laoban-compare">
+              <input
+                v-model="compare"
+                type="checkbox"
+                :disabled="!selectedCommit"
+              >
+              {{ t('laoban.versions.compare') }}
+            </label>
+            <ol class="laoban-timeline">
+              <li
+                v-for="v in versions"
+                :key="v.commit"
+              >
+                <button
+                  type="button"
+                  class="laoban-timeline-item"
+                  :class="{ selected: selectedCommit === v.commit || (!selectedCommit && v.current) }"
+                  :aria-current="(selectedCommit === v.commit || (!selectedCommit && v.current)) ? 'true' : undefined"
+                  :disabled="busy"
+                  @click="selectVersion(v.current ? null : v.commit)"
+                >
+                  <strong>{{ t('laoban.versions.number', { n: v.version }) }}</strong>
+                  <span
+                    v-if="v.current"
+                    class="badge-state bg-success"
+                  >{{ t('laoban.versions.current') }}</span>
+                  <span class="text-muted">{{ versionKind(v.kind) }} · {{ formatTime(v.at) }}</span>
+                  <span
+                    v-if="v.request"
+                    class="laoban-timeline-request laoban-text"
+                  >{{ v.request }}</span>
+                </button>
+              </li>
+            </ol>
+          </section>
+          <section>
+            <h3>{{ t('laoban.expand.changes') }}</h3>
+            <p
+              v-if="!view.diff"
+              class="text-muted laoban-hint"
+            >
+              {{ t('laoban.expand.noComparison') }}
+            </p>
+            <p
+              v-else-if="!changes.length"
+              class="text-muted laoban-hint"
+            >
+              {{ t('laoban.expand.noChanges') }}
+            </p>
+            <ul
+              v-else
+              class="laoban-changes"
+            >
+              <li
+                v-for="c in changes"
+                :key="c.type + c.id"
+              >
+                <button
+                  type="button"
+                  class="laoban-change"
+                  :class="[`laoban-change-${ c.status }`, { selected: selectedNode === c.nodeId }]"
+                  @click="selectedNode = c.nodeId"
+                >
+                  <span class="laoban-change-status">{{ t(`laoban.expand.status.${ c.status }`) }}</span>
+                  <span class="laoban-text">{{ c.label }}</span>
+                  <span class="text-muted">{{ c.type === 'edge' ? t('laoban.expand.connection') : c.kind }}</span>
+                </button>
+              </li>
+            </ul>
+          </section>
+        </aside>
         </div>
       </section>
     </div>
@@ -788,6 +958,119 @@ export default defineComponent({
 // The right column keeps its own height instead of the left one's.
 .laoban-view {
   align-self: start;
+}
+
+.laoban-arch-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.laoban-expand-actions {
+  display: inline-flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+// Enlarged: the panel covers the window (the same element, so the 3D view
+// keeps its state); versions and changes on the right.
+.laoban-arch-panel.laoban-arch-expanded {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 16px;
+  padding: 16px;
+  background: var(--body-bg);
+  overflow: hidden;
+
+  .laoban-arch-main {
+    overflow-y: auto;
+  }
+
+  :deep(.laoban-arch-stage) {
+    height: calc(100vh - 200px);
+    min-height: 360px;
+  }
+
+  @media (max-width: 900px) {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) 40vh;
+  }
+}
+
+.laoban-arch-side {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-left: 16px;
+  border-left: 1px solid var(--border);
+
+  h3 {
+    margin: 0 0 8px;
+  }
+}
+
+.laoban-timeline,
+.laoban-changes {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0;
+}
+
+.laoban-timeline-item,
+.laoban-change {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  align-items: baseline;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-left: 3px solid transparent;
+  background: none;
+  color: var(--body-text);
+  text-align: left;
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    background: var(--sortable-table-hover-bg, var(--box-bg));
+  }
+
+  &.selected {
+    border-left-color: var(--primary);
+    background: var(--sortable-table-hover-bg, var(--box-bg));
+  }
+}
+
+.laoban-timeline-request {
+  flex-basis: 100%;
+  font-size: 12px;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.laoban-change-status {
+  font-weight: bold;
+  min-width: 3em;
+}
+
+.laoban-change-added .laoban-change-status {
+  color: var(--laoban-diff-added, var(--success));
+}
+
+.laoban-change-removed .laoban-change-status {
+  color: var(--laoban-diff-removed, var(--error));
+}
+
+.laoban-change-changed .laoban-change-status {
+  color: var(--laoban-diff-changed, var(--warning));
 }
 
 .laoban-layout-bar {
