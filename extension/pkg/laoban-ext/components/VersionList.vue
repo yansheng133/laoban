@@ -4,12 +4,16 @@
 // asks for confirmation inline (no browser dialog) and then emits
 // 'restore'. Requests come from users and summaries from AI: rendered with
 // {{ }} only, never v-html.
-import { defineComponent, ref, PropType } from 'vue';
+import {
+  defineComponent, ref, computed, PropType
+} from 'vue';
 import { useStore } from 'vuex';
 import { useText } from '../composables/useText';
 import { safeHttpsUrl, VersionEntry } from '../utils/backend';
 import { userLabel } from '../utils/users';
 import { formatDateTime } from '../utils/time';
+
+const COLLAPSED = 5;
 
 export default defineComponent({
   name: 'LaobanVersionList',
@@ -27,10 +31,14 @@ export default defineComponent({
 
   emits: ['select', 'restore'],
 
-  setup(_props, { emit }) {
+  setup(props, { emit }) {
     const store = useStore();
     const { t } = useText(store);
     const confirming = ref<string | null>(null);
+    // The latest few, plus the selected one; the rest behind "show more".
+    const showAll = ref(false);
+    const shown = computed(() => (showAll.value ? props.versions : props.versions.filter((v, i) => i < COLLAPSED || v.commit === props.selected)));
+    const hidden = computed(() => props.versions.length - shown.value.length);
 
     function formatTime(at: string): string {
       const d = new Date(at);
@@ -53,7 +61,7 @@ export default defineComponent({
     }
 
     return {
-      t, confirming, formatTime, kindLabel, confirm, safeHttpsUrl, byLabel
+      t, confirming, formatTime, kindLabel, confirm, safeHttpsUrl, byLabel, showAll, shown, hidden
     };
   },
 });
@@ -78,7 +86,7 @@ export default defineComponent({
     </p>
     <ol class="laoban-version-list">
       <li
-        v-for="v in versions"
+        v-for="v in shown"
         :key="v.commit"
         :class="{ selected: selected === v.commit || (!selected && v.current) }"
       >
@@ -148,6 +156,14 @@ export default defineComponent({
         </div>
       </li>
     </ol>
+    <button
+      v-if="hidden > 0 || showAll"
+      type="button"
+      class="btn btn-sm role-link laoban-version-more"
+      @click="showAll = !showAll"
+    >
+      {{ showAll ? t('laoban.versions.showLess') : t('laoban.versions.showMore', { count: hidden }) }}
+    </button>
     <p
       v-if="truncated"
       class="text-muted laoban-hint"

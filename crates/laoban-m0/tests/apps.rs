@@ -153,6 +153,8 @@ fn edit_plan_then_apply() {
     assert!(user.contains("kind=current_plan") && user.contains("kind=change_request"));
     assert!(user.contains("加上飲料") && user.contains("早餐店點餐頁面"));
     assert!(sent[0].system.contains("existing application"));
+    // The last change's notes are not given back to the AI.
+    assert!(!user.contains("資料只放記憶體"), "{user}");
 
     let id = plan["planId"].as_str().unwrap().to_string();
     let applied = h

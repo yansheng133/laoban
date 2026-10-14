@@ -130,13 +130,24 @@ export default defineComponent({
       }
     }
 
-    function reloadAll() {
+    // Shown while the page loads a version someone else published.
+    const reloading = ref(false);
+
+    async function reloadAll() {
       staleNotice.value = '';
       selectVersion(null);
       pending.value = {};
       editorReload.value++;
-      load();
-      loadVersions();
+      await Promise.all([load(), loadVersions()]);
+    }
+
+    async function reloadNewer() {
+      reloading.value = true;
+      try {
+        await reloadAll();
+      } finally {
+        reloading.value = false;
+      }
     }
 
     const flow = useDeployFlow(store, t, { onReady: reloadAll });
@@ -224,7 +235,7 @@ export default defineComponent({
     function discardLayout() {
       pending.value = {};
       if (staleNotice.value && !editorDirty.value) {
-        reloadAll();
+        reloadNewer();
       }
     }
 
@@ -254,7 +265,7 @@ export default defineComponent({
       }
       // Changes discarded while a newer version waits: load it now.
       if (staleNotice.value && !pendingCount.value) {
-        reloadAll();
+        reloadNewer();
       }
     }
 
@@ -276,7 +287,7 @@ export default defineComponent({
 
     // The deploy's progress, shown under the round as well.
     const deployNotice = computed(() => (flow.phase.value === 'deploying' ? flow.statusText.value : ''));
-    const roundNotice = computed(() => round.notice.value || deployNotice.value || staleNotice.value);
+    const roundNotice = computed(() => round.notice.value || deployNotice.value || (reloading.value ? t('laoban.detail.reloading') : staleNotice.value));
     const detailStatus = computed(() => (flow.phase.value === 'idle' ? t('laoban.detail.idle') : flow.statusText.value));
 
     // Every 15 s: has someone else published a version? Reload when nothing
@@ -300,7 +311,7 @@ export default defineComponent({
         if (editorDirty.value || pendingCount.value) {
           staleNotice.value = t('laoban.detail.stale');
         } else {
-          reloadAll();
+          reloadNewer();
         }
       } catch {
         // Next time.
@@ -764,6 +775,19 @@ export default defineComponent({
   flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
+
+  // A fixed height: the left column (versions, steps) must not stretch the
+  // 3D view, or its components end up out of sight.
+  :deep(.laoban-arch-stage) {
+    flex: none;
+    height: min(520px, 70vh);
+    min-height: 320px;
+  }
+}
+
+// The right column keeps its own height instead of the left one's.
+.laoban-view {
+  align-self: start;
 }
 
 .laoban-layout-bar {

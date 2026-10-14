@@ -128,6 +128,12 @@ export default defineComponent({
     let scene: THREE.Scene | null = null;
     let camera: THREE.PerspectiveCamera | null = null;
     let controls: OrbitControls | null = null;
+
+    function onWheel(ev: WheelEvent) {
+      if (controls) {
+        controls.enableZoom = ev.ctrlKey || ev.metaKey;
+      }
+    }
     let world: THREE.Group | null = null;
     let resizeObserver: ResizeObserver | null = null;
     let themeObserver: MutationObserver | null = null;
@@ -416,6 +422,10 @@ export default defineComponent({
       // Before OrbitControls' own listeners, so a drag on a component can
       // turn the camera off for that gesture.
       renderer.domElement.addEventListener('pointerdown', onPointerDown);
+      // The wheel scrolls the page; Ctrl/⌘ + wheel (and trackpad pinch,
+      // which the browser sends as Ctrl + wheel) zooms. Registered before
+      // OrbitControls' own wheel listener.
+      renderer.domElement.addEventListener('wheel', onWheel, { passive: true });
       renderer.domElement.addEventListener('pointermove', onPointerMove);
       renderer.domElement.addEventListener('pointerup', onPointerUp);
       renderer.domElement.addEventListener('pointercancel', onPointerUp);
@@ -475,6 +485,7 @@ export default defineComponent({
       controls?.removeEventListener('change', requestRender);
       if (renderer) {
         renderer.domElement.removeEventListener('pointerdown', onPointerDown);
+        renderer.domElement.removeEventListener('wheel', onWheel);
         renderer.domElement.removeEventListener('pointermove', onPointerMove);
         renderer.domElement.removeEventListener('pointerup', onPointerUp);
         renderer.domElement.removeEventListener('pointercancel', onPointerUp);

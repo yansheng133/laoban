@@ -45,6 +45,7 @@ laoban:
     changeTitle: 修改這個應用（意見收斂）
     idle: 用左邊的「意見收斂」修改這個應用；程式碼與 3D 版面也可以直接修改。
     stale: 別人剛發布了新版本。存檔或放棄目前的修改後，頁面會載入新版本。
+    reloading: 別人發布了新版本，正在載入…
     currentSteps: 目前的建置步驟
     tabs:
       arch: 架構圖
@@ -79,6 +80,8 @@ laoban:
     confirmYes: 確定還原
     confirmNo: 取消
     truncated: 只列出最近 50 版。
+    showMore: "顯示較早的 {count} 個版本"
+    showLess: 只顯示最近的版本
     restoring: "正在還原並寫進 GitHub（已 {seconds} 秒）…"
     compare: 與目前版本比較
     backToCurrent: 回到目前版本
@@ -144,6 +147,7 @@ laoban:
     lost: 進行中的一輪已經不在了，可能是後端重新啟動（一輪只存在後端記憶體裡）。需要的話請重新開一輪。
     showCurrent: 看目前的架構
     showPlan: 看收斂後的計畫
+    logLine: "{who}：{event}"
     events:
       opened: "開始一輪（{minutes} 分鐘後收斂）"
       opinion: 提出意見
@@ -172,7 +176,7 @@ laoban:
     save: 儲存成新版本
     saving: "正在檢查並寫進 GitHub（不呼叫 AI，已 {seconds} 秒）…"
   layout:
-    dragHint: 拖曳元件可以移動位置，拖曳空白處旋轉，滾輪縮放；點元件可以選取。
+    dragHint: 拖曳元件可以移動位置，拖曳空白處旋轉，按住 Ctrl（Mac 是 ⌘）加滾輪或雙指縮放；點元件可以選取。
     moved: "已移動 {count} 個元件（尚未儲存）"
     discard: 還原位置
     save: 儲存版面
@@ -262,7 +266,7 @@ laoban:
     arch:
       title: 架構圖
       empty: 產生計畫後，這裡會顯示應用的 3D 架構圖。
-      hint: 拖曳旋轉，滾輪或雙指縮放。
+      hint: 拖曳旋轉；按住 Ctrl（Mac 是 ⌘）加滾輪或雙指縮放。
       noWebgl: 這個瀏覽器無法使用 WebGL，無法顯示 3D 架構圖。元件清單請見下方。
       ariaLabel: "3D 架構圖，共 {count} 個元件"
       listTitle: "元件清單（{count}）"
