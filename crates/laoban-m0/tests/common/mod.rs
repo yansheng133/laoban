@@ -57,13 +57,56 @@ pub fn github_mock(update: RefUpdate) -> MockServer {
 /// `(name, Some(laoban.json content))`, or `None` for a directory without
 /// one (an app made before laoban.json existed).
 pub fn github_mock_with(update: RefUpdate, apps: Vec<(String, Option<String>)>) -> MockServer {
+    github_mock_versions(update, apps, Vec::new())
+}
+
+/// One past version: (app, commit SHA, laoban.json at that commit, date).
+/// Listed newest first, in the order given.
+pub type Version = (String, String, String, String);
+
+/// Like [`github_mock_with`], plus the commits API and contents at a SHA.
+pub fn github_mock_versions(
+    update: RefUpdate,
+    apps: Vec<(String, Option<String>)>,
+    versions: Vec<Version>,
+) -> MockServer {
     let blobs = Arc::new(AtomicUsize::new(0));
     MockServer::start(move |r: &Recorded| {
         let p = r.path.as_str();
+        let repo = "/repos/example-owner/laoban-apps/";
+        if let Some(q) = p.strip_prefix(&format!("{repo}commits?path=")) {
+            let Some((path, rest)) = q.split_once('&') else {
+                return Reply::json(400, r#"{"message":"bad query"}"#);
+            };
+            if !rest.starts_with("sha=main&per_page=") {
+                return Reply::json(400, r#"{"message":"bad query"}"#);
+            }
+            let list: Vec<serde_json::Value> = versions
+                .iter()
+                .filter(|(app, _, _, _)| path == format!("apps/{app}/laoban.json"))
+                .map(|(app, sha, _, date)| {
+                    json!({"sha": sha, "commit": {"message": format!("laoban: {app} — x\n\nGenerated-by: laoban\n"), "committer": {"date": date}}})
+                })
+                .collect();
+            return Reply::json(200, serde_json::Value::Array(list).to_string());
+        }
         let contents = "/repos/example-owner/laoban-apps/contents/";
         if let Some(rest) = p.strip_prefix(contents) {
             if r.method != "GET" {
                 return Reply::json(405, r#"{"message":"no"}"#);
+            }
+            if let Some((path, git_ref)) = rest.split_once("?ref=") {
+                if git_ref != "main" {
+                    if r.header("accept") != Some("application/vnd.github.raw+json") {
+                        return Reply::json(415, r#"{"message":"want raw"}"#);
+                    }
+                    return match versions.iter().find(|(app, sha, _, _)| {
+                        sha == git_ref && path == format!("apps/{app}/laoban.json")
+                    }) {
+                        Some((_, _, meta, _)) => Reply::json(200, meta.clone()),
+                        None => Reply::json(404, r#"{"message":"Not Found"}"#),
+                    };
+                }
             }
             let Some(path) = rest.strip_suffix("?ref=main") else {
                 return Reply::json(400, r#"{"message":"missing ref"}"#);
@@ -193,8 +236,18 @@ pub fn harness_with(
     token_cap: u64,
     apps: Vec<(String, Option<String>)>,
 ) -> Harness {
+    harness_versions(provider, update, token_cap, apps, Vec::new())
+}
+
+pub fn harness_versions(
+    provider: MockProvider,
+    update: RefUpdate,
+    token_cap: u64,
+    apps: Vec<(String, Option<String>)>,
+    versions: Vec<Version>,
+) -> Harness {
     let provider = Arc::new(provider);
-    let github = github_mock_with(update, apps);
+    let github = github_mock_versions(update, apps, versions);
     let service = M0Service::new(
         settings(token_cap),
         Box::new(Arc::clone(&provider)),

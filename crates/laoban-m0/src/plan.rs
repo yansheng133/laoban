@@ -299,14 +299,44 @@ fn module_pos(parent_x: f64, index: usize, total: usize) -> (f64, f64) {
     (x, z)
 }
 
+/// Module node id from its name, so the same module keeps its id across
+/// versions (the version diff matches nodes by id). Lowercase ASCII
+/// letters and digits, other characters as `-`; the index when the name
+/// has none of those or the id is already taken.
+fn module_id(prefix: &str, name: &str, index: usize, taken: &mut Vec<String>) -> String {
+    let mut slug = String::new();
+    for c in name.chars().flat_map(char::to_lowercase) {
+        if c.is_ascii_alphanumeric() {
+            slug.push(c);
+        } else if !slug.ends_with('-') {
+            slug.push('-');
+        }
+        if slug.len() >= 40 {
+            break;
+        }
+    }
+    let slug = slug.trim_matches('-');
+    let mut id = if slug.is_empty() {
+        format!("{prefix}-{}", index + 1)
+    } else {
+        format!("{prefix}-{slug}")
+    };
+    if taken.contains(&id) {
+        id = format!("{id}-{}", index + 1);
+    }
+    taken.push(id.clone());
+    id
+}
+
 fn module_nodes(prefix: &str, parent: &str, parent_x: f64, modules: &[Module]) -> Vec<Value> {
+    let mut taken = Vec::new();
     modules
         .iter()
         .enumerate()
         .map(|(i, m)| {
             let (x, z) = module_pos(parent_x, i, modules.len());
             let mut node = json!({
-                "id": format!("{prefix}-{}", i + 1),
+                "id": module_id(prefix, &m.name, i, &mut taken),
                 "layer": "code",
                 "kind": "module",
                 "name": m.name,
@@ -320,6 +350,18 @@ fn module_nodes(prefix: &str, parent: &str, parent_x: f64, modules: &[Module]) -
             node
         })
         .collect()
+}
+
+/// The API's endpoints as one sorted line (`GET /menu, POST /orders`), so a
+/// version diff shows when they change.
+fn routes(plan: &AppPlan) -> String {
+    let mut r: Vec<String> = plan
+        .endpoints
+        .iter()
+        .map(|e| format!("{} {}", e.method, e.path))
+        .collect();
+    r.sort();
+    r.join(", ")
 }
 
 /// The architecture graph in the viewer model. Deterministic: same plan
@@ -336,7 +378,8 @@ pub fn architecture(plan: &AppPlan, app: &str) -> Value {
                "detail": 1, "props": {"lang": "HTML/JavaScript", "replicas": 1},
                "pos": {"x": WEB_X, "z": 0.0}}),
         json!({"id": "app-api", "layer": "code", "kind": "app", "name": format!("{app}-api"),
-               "detail": 1, "props": {"lang": "Python", "replicas": 1, "endpoints": plan.endpoints.len()},
+               "detail": 1, "props": {"lang": "Python", "replicas": 1, "endpoints": plan.endpoints.len(),
+                                      "routes": routes(plan)},
                "pos": {"x": API_X, "z": 0.0}}),
     ];
     nodes.extend(module_nodes("mod-web", "app-web", WEB_X, &plan.web_modules));
@@ -376,6 +419,24 @@ mod tests {
         ] {
             assert!(!valid_app_name(bad), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn module_ids_follow_names() {
+        let mut taken = Vec::new();
+        assert_eq!(
+            module_id("mod-web", "Menu View", 0, &mut taken),
+            "mod-web-menu-view"
+        );
+        assert_eq!(
+            module_id("mod-web", "menu_view", 1, &mut taken),
+            "mod-web-menu-view-2"
+        );
+        assert_eq!(module_id("mod-web", "訂單", 2, &mut taken), "mod-web-3");
+        assert_eq!(
+            module_id("mod-api", "orders", 0, &mut Vec::new()),
+            "mod-api-orders"
+        );
     }
 
     #[test]

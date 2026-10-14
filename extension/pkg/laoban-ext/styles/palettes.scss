@@ -31,13 +31,23 @@
   --laoban-edge: #{$edge};
 }
 
-// Rancher's own colours; 3D layers in neutral blue/grey/teal.
+// Rancher's own colours; 3D layers in neutral blue/grey/teal. Version
+// comparison marks (added / removed / changed) are the same in every
+// palette, so they always mean the same thing.
 .laoban-m0 {
   @include layers(#4a78c2, #6b7686, #2c8a87, #8a96a5);
+
+  --laoban-diff-added: #1e8e4e;
+  --laoban-diff-removed: #c43d32;
+  --laoban-diff-changed: #c27c00;
 }
 
 .theme-dark .laoban-m0 {
   @include layers(#6f98dc, #9aa5b4, #4fb3ae, #6d7a8a);
+
+  --laoban-diff-added: #5fd38d;
+  --laoban-diff-removed: #ff7b6b;
+  --laoban-diff-changed: #f5b942;
 }
 
 // 海洋：blue.

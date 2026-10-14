@@ -226,6 +226,21 @@ fn apps_endpoints() {
     }
     let (status, _) = post(r.addr, "/api/apps", "{}");
     assert_eq!(status, 405);
+
+    // Versions and restore.
+    let (status, body) = get(r.addr, "/api/apps/breakfast/versions");
+    assert_eq!(status, 404);
+    assert_error(&serde_json::from_str(&body).unwrap(), "app_not_found");
+    let (status, body) = get(r.addr, "/api/apps/breakfast/versions/nothex");
+    assert_eq!(status, 400);
+    assert_error(&serde_json::from_str(&body).unwrap(), "bad_request");
+    let (status, _) = get(r.addr, "/api/apps/breakfast/restore");
+    assert_eq!(status, 405);
+    let (status, v) = post(r.addr, "/api/apps/breakfast/restore", r#"{"sha":"x"}"#);
+    assert_eq!(status, 400);
+    assert_error(&v, "bad_request");
+    let (status, _) = get(r.addr, "/api/apps/breakfast/other");
+    assert_eq!(status, 404);
 }
 
 #[test]

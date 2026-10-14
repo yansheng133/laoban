@@ -3,7 +3,7 @@ import {
 } from '@jest/globals';
 import {
   parseBackendError, resolveAppUrl, safeHttpsUrl, backendUrl, aiRequestTimeoutMs, ConfigResponse,
-  createPlan, getApp, listApps
+  createPlan, getApp, listApps, listVersions, getVersion, restoreVersion
 } from '../backend';
 import { AI_REQUEST_TIMEOUT_MS } from '../../config/backend';
 
@@ -119,5 +119,23 @@ describe('apps and plan requests', () => {
   it('surfaces the backend message for app errors', async() => {
     mockFetch(409, { error: { code: 'not_editable', message: '無法編輯。' } });
     await expect(getApp(store, 'old')).rejects.toMatchObject({ code: 'not_editable', userMessage: '無法編輯。', status: 409 });
+  });
+
+  it('reads versions and restores with a POST', async() => {
+    mockFetch(200, { appName: 'todo', versions: [] });
+    await listVersions(store, 'todo');
+    expect(calls[0].url).toBe(backendUrl('/api/apps/todo/versions'));
+
+    const sha = 'a'.repeat(40);
+
+    mockFetch(200, { appName: 'todo', commit: sha });
+    await getVersion(store, 'todo', sha);
+    expect(calls[0].url).toBe(backendUrl(`/api/apps/todo/versions/${ sha }`));
+
+    mockFetch(200, { mode: 'restore', commit: 'b'.repeat(40) });
+    await restoreVersion(store, 'todo', sha, 1000);
+    expect(calls[0].url).toBe(backendUrl('/api/apps/todo/restore'));
+    expect(calls[0].init.method).toBe('POST');
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ commit: sha });
   });
 });

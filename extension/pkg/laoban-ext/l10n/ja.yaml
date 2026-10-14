@@ -46,8 +46,6 @@ laoban:
     loading: 読み込み中…
     changeTitle: このアプリを変更
     currentSteps: 現在の構築手順
-    history: "変更履歴（{count}）"
-    archPlanned: 変更計画の構成です。デプロイ後に現在の構成になります。
   appearance:
     theme: 外観
     themes:
@@ -60,6 +58,32 @@ laoban:
       ocean: オーシャン
       sunset: サンセット
       grape: グレープ
+  versions:
+    title: "バージョン（{count}）"
+    number: "第 {n} 版"
+    current: 現在
+    kind:
+      create: 作成
+      edit: 変更
+      restore: 復元
+      commit: その他の変更
+    view: 表示
+    viewCurrent: 現在の版
+    restore: この版に戻す
+    confirm: "第 {n} 版の計画とコードを再デプロイし、新しい第 {next} 版になります（AI は呼び出さず、過去の版はすべて残ります）。よろしいですか？"
+    confirmYes: 戻す
+    confirmNo: キャンセル
+    truncated: 最新の 50 版のみ表示しています。
+    restoring: "復元して GitHub に書き込み中（{seconds} 秒）…"
+    compare: 現在の版と比較
+    backToCurrent: 現在の版に戻る
+    hintPlan: 変更計画と現在の版の差分：デプロイ後に追加・削除・変更される部分を示します。
+    hintCompare: "第 {n} 版と現在の版の差分：第 {n} 版に戻すと追加・削除・変更される部分を示します。"
+    hintVersion: "第 {n} 版の構成です。"
+  diff:
+    added: "追加 {count}"
+    removed: "削除 {count}"
+    changed: "変更 {count}"
   dashboard:
     title: laoban
     description: Describe what you need in one sentence. laoban proposes a plan and an architecture view first; only after you confirm does it generate code, commit it to GitHub and let Fleet deploy it. This is the M0 preview.

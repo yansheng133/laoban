@@ -30,7 +30,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use laoban_m0::{ApplyRequest, M0Error, M0Service, PlanRequestBody};
+use laoban_m0::{ApplyRequest, M0Error, M0Service, PlanRequestBody, RestoreRequest};
 use serde_json::json;
 
 /// Package name, baked in at compile time.
@@ -458,17 +458,55 @@ fn valid_plan_id(id: &str) -> bool {
 }
 
 /// Handle `/api/*`. `body` is empty for requests without one.
+/// The `/api/*` endpoints.
+enum Route<'a> {
+    Config,
+    Apps,
+    App(&'a str),
+    Versions(&'a str),
+    Version(&'a str, &'a str),
+    Restore(&'a str),
+    Plan,
+    Apply,
+}
+
+impl<'a> Route<'a> {
+    fn parse(path: &'a str) -> Option<Self> {
+        match path {
+            "/api/config" => return Some(Route::Config),
+            "/api/apps" => return Some(Route::Apps),
+            "/api/plan" => return Some(Route::Plan),
+            "/api/apply" => return Some(Route::Apply),
+            _ => {}
+        }
+        let rest = path.strip_prefix("/api/apps/")?;
+        let parts: Vec<&str> = rest.split('/').collect();
+        if parts.iter().any(|p| p.is_empty()) {
+            return None;
+        }
+        match parts.as_slice() {
+            [name] => Some(Route::App(name)),
+            [name, "versions"] => Some(Route::Versions(name)),
+            [name, "versions", commit] => Some(Route::Version(name, commit)),
+            [name, "restore"] => Some(Route::Restore(name)),
+            _ => None,
+        }
+    }
+
+    fn method(&self) -> &'static str {
+        match self {
+            Route::Plan | Route::Apply | Route::Restore(_) => "POST",
+            _ => "GET",
+        }
+    }
+}
+
+/// Handle `/api/*`. `body` is empty for requests without one.
 fn route_api(api: &ApiState, head: &RequestHead, body: &[u8]) -> Response {
-    let path = head.path.as_str();
-    let app = path
-        .strip_prefix("/api/apps/")
-        .filter(|rest| !rest.is_empty() && !rest.contains('/'));
-    let (allowed, is_post) = match path {
-        "/api/config" | "/api/apps" => ("GET", false),
-        "/api/plan" | "/api/apply" => ("POST", true),
-        _ if app.is_some() => ("GET", false),
-        _ => return Response::api_error(404, "bad_request", "找不到這個 API。"),
+    let Some(route) = Route::parse(head.path.as_str()) else {
+        return Response::api_error(404, "bad_request", "找不到這個 API。");
     };
+    let allowed = route.method();
     if head.method != allowed {
         return Response {
             allow: Some(allowed),
@@ -479,47 +517,56 @@ fn route_api(api: &ApiState, head: &RequestHead, body: &[u8]) -> Response {
         ApiState::Ready(s) => s,
         ApiState::Unconfigured(message) => return Response::api_error(500, "internal", message),
     };
-    if !is_post {
-        let result = match (path, app) {
-            ("/api/config", _) => Ok(service.config_json()),
-            ("/api/apps", _) => service.list_apps(),
-            (_, Some(name)) => service.get_app(name),
+    let reply = |result: Result<serde_json::Value, M0Error>| match result {
+        Ok(v) => Response::json(200, v.to_string()),
+        Err(e) => m0_error(&e),
+    };
+    if allowed == "GET" {
+        return reply(match route {
+            Route::Config => Ok(service.config_json()),
+            Route::Apps => service.list_apps(),
+            Route::App(name) => service.get_app(name),
+            Route::Versions(name) => service.versions(name),
+            Route::Version(name, commit) => service.version(name, commit),
             _ => return Response::api_error(404, "bad_request", "找不到這個 API。"),
-        };
-        return match result {
-            Ok(v) => Response::json(200, v.to_string()),
-            Err(e) => m0_error(&e),
-        };
+        });
     }
     // Requiring a JSON content type also keeps plain cross-site form
     // posts (which cannot set it without a CORS preflight) out.
     if !head.json_content_type {
         return bad_request("請以 JSON 送出（Content-Type: application/json）。");
     }
-    if head.path == "/api/plan" {
-        let Ok(req) = serde_json::from_slice::<PlanRequestBody>(body) else {
-            return bad_request(
-                "請求格式不正確：需要 {\"prompt\": \"…\"}，可加 \"appName\" 或 \"baseApp\"。",
-            );
-        };
-        match service.plan(&req) {
-            Ok(v) => Response {
-                plan_id: v["planId"].as_str().map(str::to_string),
-                ..Response::json(200, v.to_string())
-            },
-            Err(e) => m0_error(&e),
+    match route {
+        Route::Plan => {
+            let Ok(req) = serde_json::from_slice::<PlanRequestBody>(body) else {
+                return bad_request(
+                    "請求格式不正確：需要 {\"prompt\": \"…\"}，可加 \"appName\" 或 \"baseApp\"。",
+                );
+            };
+            match service.plan(&req) {
+                Ok(v) => Response {
+                    plan_id: v["planId"].as_str().map(str::to_string),
+                    ..Response::json(200, v.to_string())
+                },
+                Err(e) => m0_error(&e),
+            }
         }
-    } else {
-        let Ok(req) = serde_json::from_slice::<ApplyRequest>(body) else {
-            return bad_request("請求格式不正確：需要 {\"planId\": \"…\"}。");
-        };
-        let mut resp = match service.apply(&req) {
-            Ok(v) => Response::json(200, v.to_string()),
-            Err(e) => m0_error(&e),
-        };
-        // Only log IDs that look like ours; the field is client input.
-        resp.plan_id = Some(req.plan_id).filter(|id| valid_plan_id(id));
-        resp
+        Route::Apply => {
+            let Ok(req) = serde_json::from_slice::<ApplyRequest>(body) else {
+                return bad_request("請求格式不正確：需要 {\"planId\": \"…\"}。");
+            };
+            let mut resp = reply(service.apply(&req));
+            // Only log IDs that look like ours; the field is client input.
+            resp.plan_id = Some(req.plan_id).filter(|id| valid_plan_id(id));
+            resp
+        }
+        Route::Restore(name) => {
+            let Ok(req) = serde_json::from_slice::<RestoreRequest>(body) else {
+                return bad_request("請求格式不正確：需要 {\"commit\": \"…\"}。");
+            };
+            reply(service.restore(name, &req))
+        }
+        _ => Response::api_error(404, "bad_request", "找不到這個 API。"),
     }
 }
 

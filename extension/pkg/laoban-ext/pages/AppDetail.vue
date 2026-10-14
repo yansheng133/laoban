@@ -1,8 +1,10 @@
 <script lang="ts">
-// One app (GET /api/apps/<name>): what it does, its change history and its
-// current 3D architecture, plus "要怎麼修改" which runs the shared plan/deploy
-// flow with baseApp. After the change runs, the app is reloaded so the
-// history and architecture show the new version.
+// One app (GET /api/apps/<name>): what it does, its versions and its 3D
+// architecture, plus "要怎麼修改" which runs the shared plan/deploy flow with
+// baseApp. A version can be viewed (optionally compared with the current
+// one in the 3D view) and restored, which publishes it again as a new
+// version. A change plan is always shown compared with the current version.
+// After a change or restore runs, the app and its versions are reloaded.
 //
 // Text from the backend or AI is rendered with {{ }} only, never v-html.
 import {
@@ -16,17 +18,19 @@ import { useAppearance } from '../composables/useAppearance';
 import ArchitectureView from '../components/ArchitectureView.vue';
 import PlanResult from '../components/PlanResult.vue';
 import StatusBar from '../components/StatusBar.vue';
+import VersionList from '../components/VersionList.vue';
 import { useDeployFlow } from '../composables/useDeployFlow';
 import {
-  getApp, resolveAppUrl, safeHttpsUrl, AppDetail
+  getApp, listVersions, getVersion, resolveAppUrl, safeHttpsUrl, AppDetail, VersionEntry, VersionDetail
 } from '../utils/backend';
+import { mergeForDiff } from '../utils/graphDiff';
 import { APPS_ROUTE_NAME, PRODUCT_NAME, BLANK_CLUSTER } from '../config/laoban';
 
 export default defineComponent({
   name: 'LaobanAppDetail',
 
   components: {
-    ArchitectureView, PlanResult, StatusBar, AppearanceMenu
+    ArchitectureView, PlanResult, StatusBar, AppearanceMenu, VersionList
   },
 
   setup() {
@@ -39,6 +43,14 @@ export default defineComponent({
     const loading = ref(false);
     const loadError = ref('');
     const prompt = ref('');
+    const versions = ref<VersionEntry[]>([]);
+    const versionsTruncated = ref(false);
+    const versionsLoading = ref(false);
+    const versionsError = ref('');
+    // Commit of the version being viewed; null means the current one.
+    const selectedCommit = ref<string | null>(null);
+    const selectedVersion = ref<VersionDetail | null>(null);
+    const compare = ref(true);
 
     const name = computed(() => String(route.params.name || ''));
 
@@ -58,7 +70,50 @@ export default defineComponent({
       }
     }
 
-    const flow = useDeployFlow(store, t, { onReady: () => load() });
+    async function loadVersions() {
+      if (!name.value) {
+        return;
+      }
+      versionsLoading.value = true;
+      try {
+        const res = await listVersions(store, name.value);
+
+        versions.value = Array.isArray(res.versions) ? res.versions : [];
+        versionsTruncated.value = !!res.truncated;
+        versionsError.value = '';
+      } catch (e) {
+        versions.value = [];
+        versionsError.value = flow.messageFor(e);
+      } finally {
+        versionsLoading.value = false;
+      }
+    }
+
+    async function selectVersion(commit: string | null) {
+      selectedCommit.value = commit;
+      selectedVersion.value = null;
+      if (!commit) {
+        return;
+      }
+      try {
+        const v = await getVersion(store, name.value, commit);
+
+        if (selectedCommit.value === commit) {
+          selectedVersion.value = v;
+        }
+      } catch (e) {
+        versionsError.value = flow.messageFor(e);
+        selectedCommit.value = null;
+      }
+    }
+
+    function reloadAll() {
+      selectVersion(null);
+      load();
+      loadVersions();
+    }
+
+    const flow = useDeployFlow(store, t, { onReady: reloadAll });
 
     const busy = computed(() => flow.busy.value || loading.value);
     const canPlan = computed(() => !busy.value && !!detail.value && !!prompt.value.trim());
@@ -70,8 +125,39 @@ export default defineComponent({
 
       return repo && path ? safeHttpsUrl(`https://github.com/${ repo }/tree/main/${ path }`) : null;
     });
-    // The new plan's architecture once there is one, otherwise the current one.
-    const shownArchitecture = computed(() => flow.plan.value?.architecture || detail.value?.architecture || null);
+    const selectedNumber = computed(() => versions.value.find((v) => v.commit === selectedCommit.value)?.version ?? 0);
+
+    // What the 3D view shows:
+    // - a change plan: the change compared with the current version;
+    // - a selected earlier version: that version, compared with the current
+    //   one when "compare" is on (marks = what restoring it would change);
+    // - otherwise the current version.
+    const view = computed(() => {
+      const current = detail.value?.architecture || null;
+
+      if (flow.plan.value) {
+        const d = mergeForDiff(current, flow.plan.value.architecture);
+
+        return { architecture: d.architecture, diff: d, hint: t('laoban.versions.hintPlan') };
+      }
+      if (selectedVersion.value) {
+        if (compare.value) {
+          const d = mergeForDiff(current, selectedVersion.value.architecture);
+
+          return { architecture: d.architecture, diff: d, hint: t('laoban.versions.hintCompare', { n: selectedNumber.value }) };
+        }
+
+        return { architecture: selectedVersion.value.architecture, diff: null, hint: t('laoban.versions.hintVersion', { n: selectedNumber.value }) };
+      }
+
+      return { architecture: current, diff: null, hint: t('laoban.edit.currentArch') };
+    });
+
+    function restore(commit: string) {
+      if (!busy.value && detail.value) {
+        flow.restore(detail.value.appName, commit);
+      }
+    }
     const currentSteps = computed(() => (Array.isArray(detail.value?.steps) ? detail.value!.steps.map(String) : []));
 
     function generatePlan() {
@@ -89,12 +175,13 @@ export default defineComponent({
     watch(name, () => {
       flow.reset();
       prompt.value = '';
-      load();
+      reloadAll();
     });
 
     onMounted(() => {
       flow.loadConfig();
       load();
+      loadVersions();
     });
 
     return {
@@ -111,7 +198,17 @@ export default defineComponent({
       appsRoute,
       openLink,
       sourceLink,
-      shownArchitecture,
+      view,
+      versions,
+      versionsTruncated,
+      versionsLoading,
+      versionsError,
+      selectedCommit,
+      selectedVersion,
+      selectedNumber,
+      compare,
+      selectVersion,
+      restore,
       currentSteps,
       generatePlan,
       formatTime,
@@ -256,16 +353,17 @@ export default defineComponent({
         </details>
 
         <div class="laoban-detail-section">
-          <h3>{{ t('laoban.detail.history', { count: detail.history.length }) }}</h3>
-          <ul class="laoban-history">
-            <li
-              v-for="(h, i) in detail.history"
-              :key="i"
-            >
-              <span class="text-muted">{{ formatTime(h.at) }} · {{ h.kind === 'edit' ? t('laoban.edit.kindEdit') : t('laoban.edit.kindCreate') }} · {{ h.model }}</span>
-              <span class="laoban-text">{{ h.request }}</span>
-            </li>
-          </ul>
+          <h3>{{ t('laoban.versions.title', { count: versions.length }) }}</h3>
+          <VersionList
+            :versions="versions"
+            :selected="selectedCommit"
+            :busy="busy"
+            :loading="versionsLoading"
+            :error="versionsError"
+            :truncated="versionsTruncated"
+            @select="selectVersion"
+            @restore="restore"
+          />
         </div>
       </section>
 
@@ -274,12 +372,39 @@ export default defineComponent({
         :aria-label="t('laoban.dashboard.arch.title')"
       >
         <h2>{{ t('laoban.dashboard.arch.title') }}</h2>
-        <p class="text-muted laoban-hint">
-          {{ plan ? t('laoban.detail.archPlanned') : t('laoban.edit.currentArch') }}
+        <div class="laoban-view-head">
+          <p class="text-muted laoban-hint">
+            {{ view.hint }}
+          </p>
+          <label
+            v-if="selectedVersion && !plan"
+            class="laoban-compare"
+          >
+            <input
+              v-model="compare"
+              type="checkbox"
+            >
+            {{ t('laoban.versions.compare') }}
+          </label>
+          <button
+            v-if="selectedVersion && !plan"
+            type="button"
+            class="btn btn-sm role-secondary"
+            @click="selectVersion(null)"
+          >
+            {{ t('laoban.versions.backToCurrent') }}
+          </button>
+        </div>
+        <p
+          v-if="selectedVersion && !plan"
+          class="laoban-text laoban-hint"
+        >
+          {{ selectedVersion.summary }}
         </p>
         <ArchitectureView
-          v-if="shownArchitecture"
-          :architecture="shownArchitecture"
+          v-if="view.architecture"
+          :architecture="view.architecture"
+          :diff="view.diff"
         />
       </section>
     </div>
@@ -330,6 +455,21 @@ export default defineComponent({
   h3 {
     margin: 0 0 8px;
   }
+}
+
+.laoban-view-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.laoban-compare {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  font-size: 12px;
 }
 
 .laoban-history {

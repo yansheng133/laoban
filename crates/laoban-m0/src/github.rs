@@ -67,6 +67,16 @@ impl GithubConfig {
     }
 }
 
+/// A commit from [`GithubCommitter::list_commits`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitInfo {
+    pub sha: String,
+    /// Committer date, RFC 3339.
+    pub date: String,
+    /// First line of the message.
+    pub message: String,
+}
+
 /// One file to write, path relative to the repository root.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommitFile {
@@ -207,8 +217,8 @@ impl GithubCommitter {
         }
     }
 
-    fn contents_url(&self, path: &str) -> String {
-        self.url(&format!("contents/{path}?ref={}", self.config.branch))
+    fn contents_url(&self, path: &str, git_ref: &str) -> String {
+        self.url(&format!("contents/{path}?ref={git_ref}"))
     }
 
     /// Names of the subdirectories of `path` on the branch. A missing
@@ -217,7 +227,8 @@ impl GithubCommitter {
         if !safe_path(path) {
             return Err(GithubError::BadPath);
         }
-        let v = match self.call("list directory", "GET", &self.contents_url(path), None) {
+        let url = self.contents_url(path, &self.config.branch);
+        let v = match self.call("list directory", "GET", &url, None) {
             Ok(v) => v,
             Err(GithubError::Status { status: 404, .. }) => return Ok(Vec::new()),
             Err(e) => return Err(e),
@@ -236,13 +247,20 @@ impl GithubCommitter {
 
     /// A file's content on the branch, or `None` if it does not exist.
     pub fn read_file(&self, path: &str) -> Result<Option<String>, GithubError> {
-        if !safe_path(path) {
+        let branch = self.config.branch.clone();
+        self.read_file_at(path, &branch)
+    }
+
+    /// A file's content at a commit SHA (or branch), or `None` if it does
+    /// not exist there.
+    pub fn read_file_at(&self, path: &str, git_ref: &str) -> Result<Option<String>, GithubError> {
+        if !safe_path(path) || !safe_ref(git_ref) {
             return Err(GithubError::BadPath);
         }
         match self.call_text(
             "read file",
             "GET",
-            &self.contents_url(path),
+            &self.contents_url(path, git_ref),
             None,
             "application/vnd.github.raw+json",
         ) {
@@ -250,6 +268,50 @@ impl GithubCommitter {
             Err(GithubError::Status { status: 404, .. }) => Ok(None),
             Err(e) => Err(e),
         }
+    }
+
+    /// Commits on the branch that touched `path`, newest first, at most
+    /// `max` (up to 100). A path that never existed is an empty list.
+    pub fn list_commits(&self, path: &str, max: usize) -> Result<Vec<CommitInfo>, GithubError> {
+        if !safe_path(path) {
+            return Err(GithubError::BadPath);
+        }
+        let per_page = max.clamp(1, 100);
+        let url = self.url(&format!(
+            "commits?path={path}&sha={}&per_page={per_page}",
+            self.config.branch
+        ));
+        let v = match self.call("list commits", "GET", &url, None) {
+            Ok(v) => v,
+            Err(GithubError::Status { status: 404, .. }) => return Ok(Vec::new()),
+            Err(e) => return Err(e),
+        };
+        let items = v.as_array().ok_or(GithubError::InvalidResponse {
+            stage: "list commits",
+        })?;
+        let mut out = Vec::new();
+        for item in items.iter().take(per_page) {
+            let sha = sha_at(&item["sha"], "list commits")?;
+            out.push(CommitInfo {
+                sha,
+                date: item["commit"]["committer"]["date"]
+                    .as_str()
+                    .unwrap_or("")
+                    .chars()
+                    .take(40)
+                    .collect(),
+                message: item["commit"]["message"]
+                    .as_str()
+                    .unwrap_or("")
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .chars()
+                    .take(200)
+                    .collect(),
+            });
+        }
+        Ok(out)
     }
 
     /// Commit `files` on top of the branch head and move the branch.
@@ -327,6 +389,14 @@ fn sha_at(v: &Value, stage: &'static str) -> Result<String, GithubError> {
         }
         _ => Err(GithubError::InvalidResponse { stage }),
     }
+}
+
+/// A branch name or commit SHA usable in a query string.
+fn safe_ref(r: &str) -> bool {
+    !r.is_empty()
+        && r.len() <= 100
+        && r.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.')
 }
 
 fn safe_path(p: &str) -> bool {

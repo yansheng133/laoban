@@ -9,7 +9,7 @@ import {
   ref, computed, onBeforeUnmount, Ref, ComputedRef
 } from 'vue';
 import {
-  getConfig, createPlan, applyPlan, listBundles, getDeployment, resolveAppUrl, safeHttpsUrl,
+  getConfig, createPlan, applyPlan, restoreVersion, listBundles, getDeployment, resolveAppUrl, safeHttpsUrl,
   aiRequestTimeoutMs, RequestError, ConfigResponse, PlanResponse, ApplyResponse, StoreLike
 } from '../utils/backend';
 import { bundleReadiness, Readiness } from '../utils/bundle';
@@ -49,6 +49,9 @@ export interface DeployFlow {
   loadConfig: () => Promise<void>;
   generatePlan: (prompt: string, opts?: { appName?: string; baseApp?: string }) => Promise<void>;
   confirmAndDeploy: () => Promise<void>;
+  restore: (app: string, commit: string) => Promise<void>;
+  // True while the current deploy is a restore (no AI involved).
+  restoring: Ref<boolean>;
   reset: () => void;
   messageFor: (e: unknown) => string;
 }
@@ -64,6 +67,7 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
   const pollError = ref(false);
   const rollingOut = ref(false);
   const elapsed = ref(0);
+  const restoring = ref(false);
 
   let elapsedTimer: ReturnType<typeof setInterval> | null = null;
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
@@ -212,6 +216,7 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
   }
 
   function reset() {
+    restoring.value = false;
     stopPolling();
     stopElapsed();
     errorText.value = '';
@@ -264,6 +269,29 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
     startPolling();
   }
 
+  // An earlier version published again: same deploy and wait as an apply.
+  async function restore(app: string, commit: string) {
+    if (busy.value) {
+      return;
+    }
+    reset();
+    restoring.value = true;
+    phase.value = 'applying';
+    startElapsed();
+    try {
+      applied.value = await restoreVersion(store, app, commit, aiRequestTimeoutMs(config.value));
+    } catch (e) {
+      errorText.value = messageFor(e);
+      phase.value = 'idle';
+      restoring.value = false;
+      stopElapsed();
+
+      return;
+    }
+    hooks.onApplied?.(applied.value);
+    startPolling();
+  }
+
   const statusText = computed(() => {
     switch (phase.value) {
     case 'planning':
@@ -271,7 +299,7 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
     case 'planned':
       return t('laoban.dashboard.status.planned');
     case 'applying':
-      return t('laoban.dashboard.status.applying', { seconds: elapsed.value });
+      return restoring.value ? t('laoban.versions.restoring', { seconds: elapsed.value }) : t('laoban.dashboard.status.applying', { seconds: elapsed.value });
     case 'deploying': {
       const r = readiness.value;
 
@@ -329,6 +357,8 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
     loadConfig,
     generatePlan,
     confirmAndDeploy,
+    restore,
+    restoring,
     reset,
     messageFor,
   };

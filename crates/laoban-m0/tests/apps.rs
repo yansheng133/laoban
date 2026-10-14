@@ -255,3 +255,193 @@ fn unused_names() {
         .collect();
     assert_eq!(unused_name("x1", &all), None);
 }
+
+const V1: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const V2: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+/// todo with two versions: v1 (create) and v2 (edit, the current one, with
+/// an extra module and endpoint).
+fn todo_versions() -> (Vec<(String, Option<String>)>, Vec<common::Version>) {
+    let plan1 = parse_app_plan(&plan_json()).unwrap();
+    let mut v2: Value = serde_json::from_str(&plan_json()).unwrap();
+    v2["summary"] = json!("早餐店點餐頁面，加上飲料。");
+    v2["components"]["web"]["modules"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"name": "drinks", "purpose": "飲料"}));
+    v2["components"]["api"]["endpoints"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"method": "GET", "path": "/drinks", "purpose": "飲料"}));
+    let plan2 = parse_app_plan(&v2.to_string()).unwrap();
+    let files1 = parse_generated(&files_json()).unwrap();
+    let mut files2 = files1.clone();
+    files2.handler_py.push_str("\nDRINKS = [\"紅茶\"]\n");
+    let h1 = entry("2026-10-13T01:00:00Z", "create", "做一個早餐店");
+    let h2 = entry("2026-10-13T02:00:00Z", "edit", "加上飲料");
+    let m1 = meta::to_json("todo", &plan1, &files1, std::slice::from_ref(&h1));
+    let m2 = meta::to_json("todo", &plan2, &files2, &[h1, h2]);
+    (
+        vec![("todo".into(), Some(m2.clone()))],
+        vec![
+            ("todo".into(), V2.into(), m2, "2026-10-13T02:00:05Z".into()),
+            ("todo".into(), V1.into(), m1, "2026-10-13T01:00:05Z".into()),
+        ],
+    )
+}
+
+#[test]
+fn versions_newest_first_with_history() {
+    let (apps, versions) = todo_versions();
+    let h = harness_versions(
+        MockProvider::new(),
+        RefUpdate::Ok,
+        1_000_000,
+        apps,
+        versions,
+    );
+    let v = h.service.versions("todo").unwrap();
+    let list = v["versions"].as_array().unwrap();
+    assert_eq!(list.len(), 2);
+    assert_eq!(list[0]["version"], 2);
+    assert_eq!(list[0]["commit"], V2);
+    assert_eq!(list[0]["kind"], "edit");
+    assert_eq!(list[0]["request"], "加上飲料");
+    assert_eq!(list[0]["current"], true);
+    assert_eq!(list[1]["version"], 1);
+    assert_eq!(list[1]["kind"], "create");
+    assert_eq!(list[1]["current"], false);
+    assert_eq!(
+        list[1]["commitUrl"],
+        format!("https://github.com/example-owner/laoban-apps/commit/{V1}")
+    );
+    assert_eq!(v["truncated"], false);
+    assert_eq!(writes(&h.github), 0);
+}
+
+#[test]
+fn one_version_has_its_own_architecture() {
+    let (apps, versions) = todo_versions();
+    let h = harness_versions(
+        MockProvider::new(),
+        RefUpdate::Ok,
+        1_000_000,
+        apps,
+        versions,
+    );
+    let old = h.service.version("todo", V1).unwrap();
+    let new = h.service.version("todo", V2).unwrap();
+    let ids = |v: &Value| -> Vec<String> {
+        v["architecture"]["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|n| n["id"].as_str().unwrap().to_string())
+            .collect()
+    };
+    assert!(!ids(&old).contains(&"mod-web-drinks".to_string()));
+    assert!(ids(&new).contains(&"mod-web-drinks".to_string()));
+    // Module ids follow names, so unchanged modules keep their ids.
+    assert!(ids(&old).contains(&"mod-web-menu-view".to_string()));
+    assert!(ids(&new).contains(&"mod-web-menu-view".to_string()));
+    let routes = |v: &Value| v["architecture"]["nodes"][3]["props"]["routes"].clone();
+    assert_eq!(routes(&old), "GET /menu, POST /orders");
+    assert_eq!(routes(&new), "GET /drinks, GET /menu, POST /orders");
+    assert!(old.get("files").is_none());
+
+    for (bad, code) in [
+        ("zzzz", "bad_request"),
+        (
+            "cccccccccccccccccccccccccccccccccccccccc",
+            "version_not_found",
+        ),
+    ] {
+        assert_eq!(
+            h.service.version("todo", bad).unwrap_err().code(),
+            code,
+            "{bad}"
+        );
+    }
+}
+
+#[test]
+fn restore_publishes_an_old_version_without_ai() {
+    let (apps, versions) = todo_versions();
+    let h = harness_versions(
+        MockProvider::new(),
+        RefUpdate::Ok,
+        1_000_000,
+        apps,
+        versions,
+    );
+    let out = h
+        .service
+        .restore("todo", &laoban_m0::RestoreRequest { commit: V1.into() })
+        .unwrap();
+    assert_eq!(out["mode"], "restore");
+    assert_eq!(out["appName"], "todo");
+    assert_eq!(out["rollout"].as_array().unwrap().len(), 2);
+    assert_eq!(h.provider.call_count(), 0, "no AI call");
+
+    let blobs = blob_contents(&h.github);
+    let m = meta::parse("todo", &blobs[6]).unwrap();
+    assert!(!m.files.handler_py.contains("DRINKS"), "old code is back");
+    assert!(!m.plan.web_modules.iter().any(|x| x.name == "drinks"));
+    let kinds: Vec<&str> = m.history.iter().map(|e| e.kind.as_str()).collect();
+    assert_eq!(
+        kinds,
+        ["create", "edit", "restore"],
+        "history kept, restore added"
+    );
+    assert!(m.history[2].request.contains("aaaaaaa"));
+
+    let commit = h
+        .github
+        .requests()
+        .into_iter()
+        .find(|r| r.method == "POST" && r.path.ends_with("/git/commits"))
+        .unwrap();
+    let body: Value = serde_json::from_str(&commit.body_str()).unwrap();
+    assert!(body["message"]
+        .as_str()
+        .unwrap()
+        .starts_with("laoban: todo — 還原："));
+}
+
+#[test]
+fn restore_refuses_the_current_content_and_bad_input() {
+    let (apps, versions) = todo_versions();
+    let h = harness_versions(
+        MockProvider::new(),
+        RefUpdate::Ok,
+        1_000_000,
+        apps,
+        versions,
+    );
+    let err = h
+        .service
+        .restore("todo", &laoban_m0::RestoreRequest { commit: V2.into() })
+        .unwrap_err();
+    assert_eq!(err.code(), "bad_request");
+    for (app, commit, code) in [
+        ("todo", "short", "bad_request"),
+        ("Bad", V1, "bad_request"),
+        (
+            "todo",
+            "dddddddddddddddddddddddddddddddddddddddd",
+            "version_not_found",
+        ),
+    ] {
+        let err = h
+            .service
+            .restore(
+                app,
+                &laoban_m0::RestoreRequest {
+                    commit: commit.into(),
+                },
+            )
+            .unwrap_err();
+        assert_eq!(err.code(), code, "{app} {commit}");
+    }
+    assert_eq!(writes(&h.github), 0);
+}

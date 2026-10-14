@@ -44,8 +44,6 @@ laoban:
     loading: Loading…
     changeTitle: Change this app
     currentSteps: Current build steps
-    history: "History ({count})"
-    archPlanned: Architecture of the change plan. It becomes the current one once deployed.
   appearance:
     theme: Theme
     themes:
@@ -58,6 +56,32 @@ laoban:
       ocean: Ocean
       sunset: Sunset
       grape: Grape
+  versions:
+    title: "Versions ({count})"
+    number: "Version {n}"
+    current: Current
+    kind:
+      create: Created
+      edit: Changed
+      restore: Restored
+      commit: Other change
+    view: View
+    viewCurrent: Current version
+    restore: Restore this version
+    confirm: "Version {n}'s plan and code are deployed again as new version {next} (no AI call; all versions are kept). Continue?"
+    confirmYes: Restore
+    confirmNo: Cancel
+    truncated: Only the latest 50 versions are listed.
+    restoring: "Restoring and writing to GitHub ({seconds} s)…"
+    compare: Compare with current
+    backToCurrent: Back to current version
+    hintPlan: "Change plan compared with the current version: marked parts are added, removed or changed once deployed."
+    hintCompare: "Version {n} compared with the current version: marked parts are added, removed or changed by restoring version {n}."
+    hintVersion: "Architecture of version {n}."
+  diff:
+    added: "Added {count}"
+    removed: "Removed {count}"
+    changed: "Changed {count}"
   dashboard:
     title: laoban
     description: Describe what you need in one sentence. laoban proposes a plan and an architecture view first; only after you confirm does it generate code, commit it to GitHub and let Fleet deploy it. This is the M0 preview.

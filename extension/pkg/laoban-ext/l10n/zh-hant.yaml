@@ -44,8 +44,6 @@ laoban:
     loading: 讀取中…
     changeTitle: 修改這個應用
     currentSteps: 目前的建置步驟
-    history: "修改紀錄（{count}）"
-    archPlanned: 修改計畫的架構。部署完成後會成為目前的架構。
   appearance:
     theme: 外觀
     themes:
@@ -58,6 +56,32 @@ laoban:
       ocean: 海洋
       sunset: 夕陽
       grape: 葡萄
+  versions:
+    title: "版本（{count}）"
+    number: "第 {n} 版"
+    current: 目前
+    kind:
+      create: 建立
+      edit: 修改
+      restore: 還原
+      commit: 其他變更
+    view: 查看
+    viewCurrent: 目前版本
+    restore: 還原到這一版
+    confirm: "第 {n} 版的計畫和程式會重新部署，成為新的第 {next} 版（不呼叫 AI，舊版本都保留）。確定嗎？"
+    confirmYes: 確定還原
+    confirmNo: 取消
+    truncated: 只列出最近 50 版。
+    restoring: "正在還原並寫進 GitHub（已 {seconds} 秒）…"
+    compare: 與目前版本比較
+    backToCurrent: 回到目前版本
+    hintPlan: 修改計畫與目前版本的差異：標示的是部署後會新增、刪除、修改的部分。
+    hintCompare: "第 {n} 版與目前版本的差異：標示的是還原到第 {n} 版後會新增、刪除、修改的部分。"
+    hintVersion: "第 {n} 版的架構。"
+  diff:
+    added: "新增 {count}"
+    removed: "刪除 {count}"
+    changed: "修改 {count}"
   dashboard:
     title: laoban
     description: 用一句話描述需求，laoban 會先提出計畫與架構圖；確認後才產生程式、寫進 GitHub，再由 Fleet 部署。這是試吃版（M0）。

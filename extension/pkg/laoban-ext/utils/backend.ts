@@ -28,7 +28,7 @@ export interface PlanResponse {
 }
 
 export interface ApplyResponse {
-  mode?: 'create' | 'edit';
+  mode?: 'create' | 'edit' | 'restore';
   appName?: string;
   // Deployments to check after Fleet is ready (see utils/rollout.ts).
   rollout?: unknown;
@@ -73,6 +73,29 @@ export interface AppDetail {
   appUrl: string;
   path: string;
   fleet: FleetRef;
+}
+
+// One entry of GET /api/apps/<name>/versions (newest first).
+export interface VersionEntry {
+  version: number;
+  commit: string;
+  commitUrl: string;
+  at: string;
+  kind: 'create' | 'edit' | 'restore' | 'commit' | string;
+  request: string;
+  summary: string;
+  model: string;
+  current: boolean;
+}
+
+// GET /api/apps/<name>/versions/<commit>
+export interface VersionDetail {
+  appName: string;
+  commit: string;
+  summary: string;
+  steps: string[];
+  architecture: Architecture;
+  updatedAt: string;
 }
 
 export interface ConfigResponse {
@@ -221,6 +244,21 @@ export function listApps(store: StoreLike): Promise<{ apps: AppSummary[] }> {
 
 export function getApp(store: StoreLike, name: string): Promise<AppDetail> {
   return requestJson<AppDetail>(store, backendUrl(`/api/apps/${ encodeURIComponent(name) }`));
+}
+
+export function listVersions(store: StoreLike, name: string): Promise<{ appName: string; versions: VersionEntry[]; truncated?: boolean }> {
+  return requestJson(store, backendUrl(`/api/apps/${ encodeURIComponent(name) }/versions`));
+}
+
+export function getVersion(store: StoreLike, name: string, commit: string): Promise<VersionDetail> {
+  return requestJson<VersionDetail>(store, backendUrl(`/api/apps/${ encodeURIComponent(name) }/versions/${ encodeURIComponent(commit) }`));
+}
+
+/** Publish an earlier version again as a new version (no AI call). */
+export function restoreVersion(store: StoreLike, name: string, commit: string, timeoutMs: number): Promise<ApplyResponse> {
+  return requestJson<ApplyResponse>(store, backendUrl(`/api/apps/${ encodeURIComponent(name) }/restore`), {
+    method: 'POST', body: { commit }, timeoutMs
+  });
 }
 
 /**

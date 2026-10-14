@@ -71,9 +71,9 @@ fn happy_path_plan_then_apply() {
             "svc-api",
             "app-web",
             "app-api",
-            "mod-web-1",
-            "mod-web-2",
-            "mod-api-1",
+            "mod-web-menu-view",
+            "mod-web-order-form",
+            "mod-api-orders",
             "tbl-data"
         ]
     );
