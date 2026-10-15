@@ -128,7 +128,8 @@ laoban:
     deadline: "{time} 收斂（還有 {minutes} 分鐘）"
     addLabel: 一般意見（針對整個應用）
     add: 提意見
-    convergingCount: "AI 正在收斂 {count} 則意見…"
+    convergingCount: "AI 正在收斂 {count} 則意見（已 {seconds} 秒）…"
+    slowContinues: 這個動作在後端繼續進行，頁面會自動更新進度。
     planTitle: 收斂後的修改計畫
     planHint: 右邊的 3D 圖標出這份計畫會新增、刪除、修改的部分。提過意見的人都確認後，AI 才會修改程式並部署。
     answers:
@@ -176,6 +177,9 @@ laoban:
     changes: 變更
     noComparison: 在「版本」分頁點一個版本，或在等待確認時看收斂後的計畫，這裡會列出新增、刪除、修改的部分。
     noChanges: 和比較對象相比，架構沒有變動（可能只改了程式內容）。
+    filesChanged: "程式檔案有修改（{count} 個）"
+    noArchChanges: 架構沒有變動，只改了上面的程式檔案。
+    noChangesAtAll: 架構和程式都沒有變動（可能只調整了 3D 圖的位置）。
     connection: 連線
     tabs:
       versions: 版本
@@ -190,6 +194,11 @@ laoban:
       removed: 刪除
       changed: 修改
   opinions:
+    pick: 元件
+    pickNone: （選一個元件）
+    draftSaved: "已加入草稿（共 {count} 則）"
+    removed: "已移除對「{name}」的草稿。"
+    undo: 復原
     general: 整個應用
     showInView: 在 3D 圖上選取這個元件
     supportedBy: "{names} 附議"

@@ -11,7 +11,7 @@ import {
 import { useStore } from 'vuex';
 import { useText } from '../composables/useText';
 import { RoundView } from '../utils/backend';
-import { OpinionDraft, MAX_BATCH } from '../utils/opinions';
+import { OpinionDraft, RemovedDraft, MAX_BATCH } from '../utils/opinions';
 import OpinionList from './OpinionList.vue';
 import { userLabel } from '../utils/users';
 import { formatDateTime, formatClock } from '../utils/time';
@@ -55,6 +55,11 @@ export default defineComponent({
       type:    Array as PropType<OpinionDraft[]>,
       default: () => [],
     },
+    // The last removed draft: "undo" brings it back.
+    removedDraft: {
+      type:    Object as PropType<RemovedDraft | null>,
+      default: null,
+    },
     // Node selected in the 3D view.
     selectedTarget: {
       type:    String as PropType<string | null>,
@@ -67,7 +72,7 @@ export default defineComponent({
     },
   },
 
-  emits: ['update:draft', 'open', 'act', 'add', 'remove-draft', 'support', 'reply', 'select-target'],
+  emits: ['update:draft', 'open', 'act', 'add', 'remove-draft', 'undo-draft', 'support', 'reply', 'select-target'],
 
   setup(props, { emit }) {
     const store = useStore();
@@ -76,17 +81,18 @@ export default defineComponent({
     const scope = ref('all');
     const objecting = ref(false);
     const objection = ref('');
-    // Re-render the countdown every 30 s.
+    // Re-render the countdown, and the seconds the AI has been working.
     const now = ref(Date.now());
 
     const clock = setInterval(() => {
       now.value = Date.now();
-    }, 30 * 1000);
+    }, 1000);
 
     onBeforeUnmount(() => clearInterval(clock));
 
     // This page's confirm or skip is the last answer: the AI is now
-    // changing the code (the request returns when it is published).
+    // changing the code. The backend answers at once and works in the
+    // background; the page reads the round until it is done.
     const willApply = computed(() => {
       const r = props.round;
 
@@ -97,6 +103,16 @@ export default defineComponent({
       return r.confirmers.filter((c) => c.answer === 'pending').length <= 1;
     });
     const state = computed(() => (willApply.value ? 'applying' : props.round?.state || 'none'));
+    // Seconds since the round entered its current state (converging or
+    // applying), from its log: the AI works in the background, so this is
+    // the same for everyone looking at the page.
+    const stateSeconds = computed(() => {
+      const r = props.round;
+      const entry = r ? [...r.log].reverse().find((e) => e.event === r.state) : null;
+      const t0 = entry ? Date.parse(entry.at) : NaN;
+
+      return Number.isNaN(t0) ? 0 : Math.max(0, Math.floor((now.value - t0) / 1000));
+    });
     const active = computed(() => ['collecting', 'converging', 'confirming', 'applying', 'failed'].includes(state.value));
     const busy = computed(() => props.disabled || !!props.pending);
     const you = computed(() => props.round?.you);
@@ -128,6 +144,10 @@ export default defineComponent({
       }
       const args = { ...(l.args || {}) };
 
+      // Opinions are numbered on the page as in the AI's notes: o3 is #3.
+      if (args.opinion) {
+        args.opinion = `#${ String(args.opinion).replace(/^o/, '') }`;
+      }
       if (args.user) {
         args.user = who(args.user);
       }
@@ -170,6 +190,7 @@ export default defineComponent({
       objection,
       state,
       willApply,
+      stateSeconds,
       active,
       busy,
       you,
@@ -251,6 +272,21 @@ export default defineComponent({
         </ul>
       </div>
       <p
+        v-if="removedDraft"
+        class="laoban-hint laoban-undo"
+        role="status"
+      >
+        {{ t('laoban.opinions.removed', { name: removedDraft.draft.targetName }) }}
+        <button
+          type="button"
+          class="btn btn-sm role-link"
+          :disabled="busy"
+          @click="$emit('undo-draft')"
+        >
+          {{ t('laoban.opinions.undo') }}
+        </button>
+      </p>
+      <p
         v-if="tooMany"
         class="text-error laoban-hint"
       >
@@ -263,21 +299,6 @@ export default defineComponent({
         {{ t('laoban.opinions.howTo') }}
       </p>
 
-      <details
-        v-if="round && round.log.length"
-        class="laoban-round-log"
-      >
-        <summary>{{ t('laoban.round.lastLog', { count: round.log.length }) }}</summary>
-        <ul>
-          <li
-            v-for="(l, i) in round.log"
-            :key="i"
-          >
-            <span class="text-muted">{{ formatTime(l.at) }}</span>
-            {{ t('laoban.round.logLine', { who: l.by === 'laoban' ? 'laoban' : who(l.by), event: logText(l) }) }}
-          </li>
-        </ul>
-      </details>
       <label
         for="laoban-opinion"
         class="laoban-label"
@@ -346,6 +367,21 @@ export default defineComponent({
       >
         {{ t('laoban.round.converging', { seconds: elapsed }) }}
       </p>
+      <details
+        v-if="round && round.log.length"
+        class="laoban-round-log"
+      >
+        <summary>{{ t('laoban.round.lastLog', { count: round.log.length }) }}</summary>
+        <ul>
+          <li
+            v-for="(l, i) in round.log"
+            :key="i"
+          >
+            <span class="text-muted">{{ formatTime(l.at) }}</span>
+            {{ t('laoban.round.logLine', { who: l.by === 'laoban' ? 'laoban' : who(l.by), event: logText(l) }) }}
+          </li>
+        </ul>
+      </details>
     </form>
 
     <!-- A round is running. -->
@@ -410,6 +446,21 @@ export default defineComponent({
           </ul>
         </div>
         <p
+          v-if="removedDraft"
+          class="laoban-hint laoban-undo"
+          role="status"
+        >
+          {{ t('laoban.opinions.removed', { name: removedDraft.draft.targetName }) }}
+          <button
+            type="button"
+            class="btn btn-sm role-link"
+            :disabled="busy"
+            @click="$emit('undo-draft')"
+          >
+            {{ t('laoban.opinions.undo') }}
+          </button>
+        </p>
+        <p
           v-if="tooMany"
           class="text-error laoban-hint"
         >
@@ -450,7 +501,7 @@ export default defineComponent({
           class="icon icon-spinner icon-spin"
           aria-hidden="true"
         />
-        {{ t('laoban.round.convergingCount', { count: round.opinions.length }) }}
+        {{ t('laoban.round.convergingCount', { count: round.opinions.length, seconds: pending === 'converge' ? elapsed : stateSeconds }) }}
       </p>
 
       <!-- Confirming: the plan and who still has to answer. -->
@@ -555,7 +606,7 @@ export default defineComponent({
           class="icon icon-spinner icon-spin"
           aria-hidden="true"
         />
-        {{ willApply ? t('laoban.round.applying', { seconds: elapsed }) : t('laoban.round.states.applying') }}
+        {{ t('laoban.round.applying', { seconds: willApply ? elapsed : stateSeconds }) }}
       </p>
 
       <div

@@ -1,6 +1,6 @@
 import { describe, it, expect } from '@jest/globals';
 import {
-  groupOpinions, opinionCounts, opinionItems, putDraft
+  groupOpinions, opinionCounts, opinionItems, putDraft, removeDraftAt, restoreDraft
 } from '../opinions';
 import type { RoundOpinion } from '../backend';
 
@@ -28,9 +28,29 @@ describe('opinions on components', () => {
 
     d = putDraft(d, { target: 'b', targetName: 'B', text: 'y' });
     d = putDraft(d, { target: 'a', targetName: 'A', text: 'x2' });
-    expect(d.map((x) => [x.target, x.text])).toEqual([['b', 'y'], ['a', 'x2']]);
+    // A changed draft keeps its place.
+    expect(d.map((x) => [x.target, x.text])).toEqual([['a', 'x2'], ['b', 'y']]);
     expect(putDraft(d, { target: 'b', targetName: 'B', text: ' ' }).map((x) => x.target)).toEqual(['a']);
-    expect(opinionItems(' 一般 ', d)).toEqual([{ text: '一般' }, { text: 'y', target: 'b' }, { text: 'x2', target: 'a' }]);
+    expect(opinionItems(' 一般 ', d)).toEqual([{ text: '一般' }, { text: 'x2', target: 'a' }, { text: 'y', target: 'b' }]);
     expect(opinionItems('', [])).toEqual([]);
+  });
+});
+
+describe('removing a draft can be undone', () => {
+  const d = (t: string) => ({ target: t, targetName: t.toUpperCase(), text: t });
+
+  it('puts it back where it was', () => {
+    const { drafts, removed } = removeDraftAt([d('a'), d('b'), d('c')], 'b');
+
+    expect(drafts.map((x) => x.target)).toEqual(['a', 'c']);
+    expect(restoreDraft(drafts, removed!).map((x) => x.target)).toEqual(['a', 'b', 'c']);
+    expect(removeDraftAt(drafts, 'zz').removed).toBeNull();
+  });
+
+  it('does not overwrite a newer draft on the same component', () => {
+    const { drafts, removed } = removeDraftAt([d('a'), d('b')], 'a');
+    const again = putDraft(drafts, { target: 'a', targetName: 'A', text: 'new' });
+
+    expect(restoreDraft(again, removed!).find((x) => x.target === 'a')?.text).toBe('new');
   });
 });

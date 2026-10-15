@@ -73,8 +73,44 @@ export function opinionItems(general: string, drafts: OpinionDraft[]): OpinionIt
 }
 
 // Add or replace the draft for one component (one draft per component).
+// A changed draft keeps its place in the list (report 18: moving it to the
+// end made it hard to find); an empty text removes it.
 export function putDraft(drafts: OpinionDraft[], d: OpinionDraft): OpinionDraft[] {
-  const rest = drafts.filter((x) => x.target !== d.target);
+  const i = drafts.findIndex((x) => x.target === d.target);
 
-  return d.text.trim() ? [...rest, { ...d, text: d.text.trim() }] : rest;
+  if (!d.text.trim()) {
+    return i < 0 ? drafts : drafts.filter((_, k) => k !== i);
+  }
+  const next = { ...d, text: d.text.trim() };
+
+  return i < 0 ? [...drafts, next] : drafts.map((x, k) => (k === i ? next : x));
+}
+
+// A removed draft and where it was, so it can be put back.
+export interface RemovedDraft {
+  draft: OpinionDraft;
+  index: number;
+}
+
+export function removeDraftAt(drafts: OpinionDraft[], target: string): { drafts: OpinionDraft[]; removed: RemovedDraft | null } {
+  const index = drafts.findIndex((x) => x.target === target);
+
+  if (index < 0) {
+    return { drafts, removed: null };
+  }
+
+  return { drafts: drafts.filter((_, k) => k !== index), removed: { draft: drafts[index], index } };
+}
+
+// Put a removed draft back where it was, unless that component has a new
+// draft by now.
+export function restoreDraft(drafts: OpinionDraft[], r: RemovedDraft): OpinionDraft[] {
+  if (drafts.some((x) => x.target === r.draft.target)) {
+    return drafts;
+  }
+  const out = [...drafts];
+
+  out.splice(Math.min(r.index, out.length), 0, r.draft);
+
+  return out;
 }

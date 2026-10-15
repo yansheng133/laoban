@@ -167,7 +167,12 @@ fn assert_error(v: &Value, code: &str) {
         msg.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)),
         "{msg}"
     );
-    assert_eq!(v.as_object().unwrap().len(), 1);
+    // Also a Kubernetes Status, so kubectl prints the message.
+    assert_eq!(v["kind"], "Status", "{v}");
+    assert_eq!(v["status"], "Failure");
+    assert_eq!(v["message"], msg);
+    assert!(v["reason"].as_str().is_some_and(|r| !r.is_empty()));
+    assert!(v["code"].as_u64().is_some_and(|c| c >= 400));
 }
 
 #[test]
@@ -511,4 +516,105 @@ fn binary_without_config_names_missing_variables_and_logs_requests() {
     assert!(rest.contains("laoban-server: GET /healthz 200 "), "{rest}");
     assert!(!rest.contains(secret) && !line.contains(secret));
     assert!(!rest.contains("x=1"), "query strings are not logged");
+}
+
+fn get_as(addr: SocketAddr, path: &str, user: &str) -> (u16, Value) {
+    let (status, _, body) = raw(
+        addr,
+        format!("GET {path} HTTP/1.1\r\nHost: x\r\nX-Remote-User: {user}\r\n\r\n").as_bytes(),
+    );
+    (status, serde_json::from_str(&body).unwrap())
+}
+
+/// Read a job until it is no longer running (up to 20 s).
+fn wait_job(addr: SocketAddr, id: &str, user: &str) -> Value {
+    for _ in 0..400 {
+        let (status, v) = get_as(addr, &format!("/api/plans/{id}"), user);
+        assert_eq!(status, 200, "{v}");
+        if v["state"] != "running" {
+            return v;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    panic!("job {id} never finished");
+}
+
+#[test]
+fn background_plan_and_apply_are_jobs() {
+    // Report 18, B8: the API server ends requests after about 60 s, so the
+    // page asks for a job and reads it until it is done.
+    let provider = MockProvider::new()
+        .then(ok(&plan_json()))
+        .then(ok(&files_json()))
+        .then(Err(ProviderError::Other {
+            status: Some(500),
+            error_type: "api_error".into(),
+            message: "boom".into(),
+        }));
+    let github = github_mock();
+    let mut cfg = GithubConfig::new("example-owner", "laoban-apps");
+    cfg.api_base = github.url();
+    let committer = GithubCommitter::new(cfg, GithubToken::new("github_pat_test_0001").unwrap());
+    let service =
+        Arc::new(M0Service::new(settings(1_000_000), Box::new(provider), committer).unwrap());
+    service.attach();
+    let r = start_with(ApiState::Ready(service), Some(github));
+
+    let (status, job) = post_as(
+        r.addr,
+        "/api/plan",
+        r#"{"prompt":"做一個早餐店點餐頁面","background":true}"#,
+        "u-a",
+    );
+    assert_eq!(status, 200, "{job}");
+    let id = job["jobId"].as_str().unwrap().to_string();
+    assert!(id.starts_with("j-") && id.len() == 18, "{id}");
+    assert_eq!(job["kind"], "plan");
+
+    // Only the user who started it can read it.
+    let (status, err) = get_as(r.addr, &format!("/api/plans/{id}"), "u-b");
+    assert_eq!(status, 404);
+    assert_eq!(err["error"]["code"], "job_not_found");
+
+    let done = wait_job(r.addr, &id, "u-a");
+    assert_eq!(done["state"], "done", "{done}");
+    let plan_id = done["result"]["planId"].as_str().unwrap().to_string();
+    assert_eq!(done["result"]["appName"], "breakfast");
+
+    // Apply through the aggregated-style path, with the optional body.
+    let (status, job) = post_as(
+        r.addr,
+        &format!("/api/plans/{plan_id}/apply"),
+        r#"{"background":true}"#,
+        "u-a",
+    );
+    assert_eq!(status, 200, "{job}");
+    let done = wait_job(r.addr, job["jobId"].as_str().unwrap(), "u-a");
+    assert_eq!(done["state"], "done", "{done}");
+    assert_eq!(done["result"]["commit"], COMMIT);
+
+    // A failure is kept with the error the request would have returned.
+    let (_, job) = post_as(
+        r.addr,
+        "/api/plan",
+        r#"{"prompt":"再一個","background":true}"#,
+        "u-a",
+    );
+    let failed = wait_job(r.addr, job["jobId"].as_str().unwrap(), "u-a");
+    assert_eq!(failed["state"], "failed", "{failed}");
+    assert!(failed["error"]["code"].is_string());
+    assert!(failed["error"]["message"]
+        .as_str()
+        .is_some_and(|m| !m.is_empty()));
+
+    // Unknown fields are still refused; malformed job IDs are not routes.
+    let (status, _) = post_as(
+        r.addr,
+        &format!("/api/plans/{plan_id}/apply"),
+        r#"{"x":1}"#,
+        "u-a",
+    );
+    assert_eq!(status, 400);
+    let (status, _) = get_as(r.addr, "/api/plans/j-nothex", "u-a");
+    assert_eq!(status, 404);
 }

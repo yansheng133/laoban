@@ -143,7 +143,7 @@ pub fn discovery_json() -> String {
             r("apps/layout", &["create"]),
             r("apps/restore", &["create"]),
             r("apps/round", &["get", "create"]),
-            r("plans", &["create"]),
+            r("plans", &["get", "create"]),
             r("plans/apply", &["create"]),
         ],
     })

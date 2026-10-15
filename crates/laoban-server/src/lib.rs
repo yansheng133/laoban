@@ -31,8 +31,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use laoban_m0::{
-    AddOpinionsRequest, ApplyRequest, M0Error, M0Service, OpenRoundRequest, OpinionRequest,
-    PlanRequestBody, RestoreRequest, SaveFilesRequest, SaveLayoutRequest, SkipRequest,
+    AddOpinionsRequest, ApplyOptions, ApplyRequest, M0Error, M0Service, OpenRoundRequest,
+    OpinionRequest, PlanRequestBody, RestoreRequest, SaveFilesRequest, SaveLayoutRequest,
+    SkipRequest,
 };
 use serde_json::json;
 
@@ -381,15 +382,45 @@ impl Response {
     }
 
     /// The design's error format.
+    /// An error body the page reads (`error`) that is also a Kubernetes
+    /// `Status`, so `kubectl create --raw` prints the message instead of
+    /// a bare "the server reported a conflict" (report 18).
     fn api_error(status: u16, code: &'static str, message: &str) -> Self {
         Self {
             error_code: Some(code),
             error_detail: None,
             ..Self::json(
                 status,
-                json!({ "error": { "code": code, "message": message } }).to_string(),
+                json!({
+                    "kind": "Status",
+                    "apiVersion": "v1",
+                    "metadata": {},
+                    "status": "Failure",
+                    "message": message,
+                    "reason": status_reason(status),
+                    "code": status,
+                    "error": { "code": code, "message": message },
+                })
+                .to_string(),
             )
         }
+    }
+}
+
+/// The Kubernetes `StatusReason` for an HTTP status, as kubectl shows it.
+fn status_reason(status: u16) -> &'static str {
+    match status {
+        400 => "BadRequest",
+        401 => "Unauthorized",
+        402 | 403 => "Forbidden",
+        404 => "NotFound",
+        405 => "MethodNotAllowed",
+        409 => "Conflict",
+        413 => "RequestEntityTooLarge",
+        429 => "TooManyRequests",
+        503 => "ServiceUnavailable",
+        504 => "Timeout",
+        _ => "InternalError",
     }
 }
 
@@ -709,6 +740,15 @@ fn valid_opinion_id(id: &str) -> bool {
             .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
 }
 
+/// Job IDs as the backend gives them out: "j-" and 16 hex digits.
+fn valid_job_id(id: &str) -> bool {
+    id.len() == 18
+        && id.strip_prefix("j-").is_some_and(|h| {
+            h.bytes()
+                .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+        })
+}
+
 fn valid_plan_id(id: &str) -> bool {
     let b = id.as_bytes();
     b.len() == 17
@@ -747,6 +787,8 @@ enum Route<'a> {
     Apply,
     /// `POST .../plans/<id>/apply` (aggregated API path).
     ApplyPlan(&'a str),
+    /// `GET .../plans/<jobId>`: a background plan or apply.
+    Job(&'a str),
 }
 
 impl<'a> Route<'a> {
@@ -761,6 +803,7 @@ impl<'a> Route<'a> {
         if let Some(rest) = path.strip_prefix("/api/plans/") {
             return match rest.split('/').collect::<Vec<_>>().as_slice() {
                 [id, "apply"] if !id.is_empty() => Some(Route::ApplyPlan(id)),
+                [id] if valid_job_id(id) => Some(Route::Job(id)),
                 _ => None,
             };
         }
@@ -803,7 +846,8 @@ impl<'a> Route<'a> {
             | Route::Versions(_)
             | Route::Version(..)
             | Route::Files(_)
-            | Route::Round(_) => "GET",
+            | Route::Round(_)
+            | Route::Job(_) => "GET",
             _ => "POST",
         }
     }
@@ -869,6 +913,7 @@ fn route_api(api: &ApiState, head: &RequestHead, body: &[u8], caller: Option<&Ca
             Route::Versions(name) => service.versions(name),
             Route::Version(name, commit) => service.version(name, commit),
             Route::Files(name) => service.files(name),
+            Route::Job(id) => service.job(id, caller.map(|c| c.user.as_str())),
             _ => return Response::api_error(404, "bad_request", "找不到這個 API。"),
         });
     }
@@ -880,12 +925,28 @@ fn route_api(api: &ApiState, head: &RequestHead, body: &[u8], caller: Option<&Ca
         Route::RoundCancel(name) => return reply(service.cancel_round(name, lock)),
         Route::RoundConverge(name) => return reply(service.retry_round(name, lock)),
         Route::ApplyPlan(id) => {
-            let mut resp = reply(service.apply(
-                &ApplyRequest {
-                    plan_id: id.to_string(),
-                },
-                lock,
-            ));
+            // An optional body: {"background": true}.
+            let opts = if body.iter().all(u8::is_ascii_whitespace) {
+                ApplyOptions::default()
+            } else {
+                match serde_json::from_slice::<ApplyOptions>(body) {
+                    Ok(o) => o,
+                    Err(_) => {
+                        return bad_request(
+                            "請求格式不正確：可以不帶內容，或 {\"background\": true}。",
+                        )
+                    }
+                }
+            };
+            let req = ApplyRequest {
+                plan_id: id.to_string(),
+                background: opts.background,
+            };
+            let mut resp = reply(if req.background {
+                service.apply_job(&req, lock)
+            } else {
+                service.apply(&req, lock)
+            });
             resp.plan_id = Some(id.to_string()).filter(|id| valid_plan_id(id));
             return resp;
         }
@@ -907,6 +968,9 @@ fn route_api(api: &ApiState, head: &RequestHead, body: &[u8], caller: Option<&Ca
                     "請求格式不正確：需要 {\"prompt\": \"…\"}，可加 \"appName\" 或 \"baseApp\"。",
                 );
             };
+            if req.background {
+                return reply(service.plan_job(&req, lock));
+            }
             match service.plan(&req, lock) {
                 Ok(v) => Response {
                     plan_id: v["planId"].as_str().map(str::to_string),
@@ -919,7 +983,11 @@ fn route_api(api: &ApiState, head: &RequestHead, body: &[u8], caller: Option<&Ca
             let Ok(req) = serde_json::from_slice::<ApplyRequest>(body) else {
                 return bad_request("請求格式不正確：需要 {\"planId\": \"…\"}。");
             };
-            let mut resp = reply(service.apply(&req, lock));
+            let mut resp = reply(if req.background {
+                service.apply_job(&req, lock)
+            } else {
+                service.apply(&req, lock)
+            });
             // Only log IDs that look like ours; the field is client input.
             resp.plan_id = Some(req.plan_id).filter(|id| valid_plan_id(id));
             resp

@@ -24,6 +24,9 @@ export interface RoundHooks {
   aiTimeoutMs: () => number;
   // Shown when a running round is gone (the backend restarted).
   lostMessage: () => string;
+  // Shown when a request that runs the AI got no answer but the round
+  // shows the work going on (see run()).
+  slowMessage: () => string;
 }
 
 export interface RoundFlow {
@@ -49,6 +52,24 @@ const ACTIVE = ['collecting', 'converging', 'confirming', 'applying', 'failed'];
 // Actions that may run the AI.
 const SLOW: RoundAction[] = ['confirm', 'skip', 'converge'];
 
+// The backend now answers these at once and runs the AI in the background
+// (report 18, B8). An older backend, or a slow network, may still cut the
+// request off (the Kubernetes API server ends requests after about 60 s).
+// Then the round itself tells whether the action happened: these are the
+// states it can be in after each one.
+const AFTER: Record<string, string[]> = {
+  confirm:  ['applying', 'done'],
+  skip:     ['applying', 'done'],
+  converge: ['converging', 'confirming'],
+  open:     ['collecting', 'converging', 'confirming'],
+};
+
+// No answer from the backend itself: a timeout, a network error, or a
+// proxy / API server error without the backend's own message.
+function noAnswer(e: unknown): boolean {
+  return !(e instanceof RequestError) || !e.userMessage || ['timeout', 'network'].includes(e.code);
+}
+
 export function useRound(store: StoreLike, hooks: RoundHooks): RoundFlow {
   const round = ref<RoundView | null>(null);
   const error = ref('');
@@ -62,6 +83,8 @@ export function useRound(store: StoreLike, hooks: RoundHooks): RoundFlow {
   const seenApplied = new Set<string>();
   // Set after the first read: a round already finished then is only shown.
   let started = false;
+  // The slow-request notice is up; it goes once the work is over.
+  let slowShown = false;
 
   const active = computed(() => !!round.value && ACTIVE.includes(round.value.state));
 
@@ -79,6 +102,10 @@ export function useRound(store: StoreLike, hooks: RoundHooks): RoundFlow {
       notice.value = '';
     }
     round.value = r;
+    if (slowShown && (!r || !['converging', 'applying'].includes(r.state))) {
+      slowShown = false;
+      notice.value = '';
+    }
     const applied = res.applied || (r?.state === 'done' ? r.result : null);
 
     if (r && applied && !seenApplied.has(r.id)) {
@@ -133,11 +160,30 @@ export function useRound(store: StoreLike, hooks: RoundHooks): RoundFlow {
     pending.value = kind;
     error.value = '';
     startElapsed();
+    const before = round.value?.id || null;
+
     try {
       take(await call(), name);
 
       return true;
     } catch (e) {
+      if (AFTER[kind] && noAnswer(e)) {
+        await refresh();
+        const r = round.value;
+        // "open" made a round only if it is a new one.
+        const happened = !!r && AFTER[kind].includes(r.state) && (kind !== 'open' || r.id !== before);
+
+        if (happened) {
+          // Still working: say so until it ends. Already over: nothing to
+          // add, the round shows the result.
+          slowShown = ['converging', 'applying'].includes(r!.state);
+          if (slowShown) {
+            notice.value = hooks.slowMessage();
+          }
+
+          return true;
+        }
+      }
       error.value = hooks.messageFor(e);
       refresh();
 

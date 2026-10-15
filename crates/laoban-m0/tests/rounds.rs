@@ -210,6 +210,7 @@ fn a_running_round_blocks_other_changes_in_its_scope() {
                 prompt: "x".into(),
                 app_name: None,
                 base_app: Some("todo".into()),
+                background: false,
             },
             Some("u-b"),
         )
@@ -482,4 +483,81 @@ fn opinions_on_several_components_with_support_and_replies() {
         .map(|c| c["user"].as_str().unwrap())
         .collect();
     assert_eq!(users, ["u-a"]);
+}
+
+/// Wait (up to 20 s) until the round reaches `want`.
+fn wait_for(service: &laoban_m0::M0Service, user: &str, want: &str) -> Value {
+    for _ in 0..400 {
+        let v = service.round("todo", Some(user)).unwrap();
+        if state(&v) == want {
+            return v;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    panic!("round never reached {want}");
+}
+
+#[test]
+fn attached_service_answers_at_once_and_works_in_the_background() {
+    // Report 18, B8: requests through the Kubernetes API server end after
+    // about 60 s; publishing took 114 s. In the server the AI work runs in
+    // the background and each request returns right away.
+    let provider = MockProvider::new()
+        .then(ok(&changed_plan()))
+        .then(ok(&changed_files()));
+    let (service, gate, github) = gated_service(provider, todo_app());
+
+    // Deadline 0: the response says "converging" while the AI is held.
+    let v = service
+        .open_round("todo", &open(0, "web"), Some("u-a"))
+        .unwrap();
+    assert_eq!(state(&v), "converging");
+    gate.open();
+    let v = wait_for(&service, "u-a", "confirming");
+    assert_eq!(v["round"]["plan"]["summary"], "早餐店點餐頁面，可以排序。");
+
+    // The last confirmation: "applying" at once, no `applied` yet.
+    let before = writes(&github);
+    let v = service.confirm_round("todo", Some("u-a")).unwrap();
+    assert_eq!(state(&v), "applying");
+    assert!(v.get("applied").is_none());
+    assert_eq!(
+        writes(&github),
+        before,
+        "nothing published before the AI answers"
+    );
+
+    // A second confirm while it works is refused, not run twice.
+    assert!(service.confirm_round("todo", Some("u-a")).is_err());
+
+    gate.open();
+    let v = wait_for(&service, "u-a", "done");
+    assert!(v["round"]["result"]["commit"].is_string(), "{v}");
+    assert!(writes(&github) > before);
+    assert_eq!(gate.calls(), 2);
+}
+
+#[test]
+fn background_failure_is_recorded_on_the_round() {
+    let provider = MockProvider::new()
+        .then(ok(&changed_plan()))
+        .then(ok("not json"));
+    let (service, gate, _github) = gated_service(provider, todo_app());
+
+    service
+        .open_round("todo", &open(0, "web"), Some("u-a"))
+        .unwrap();
+    gate.open();
+    wait_for(&service, "u-a", "confirming");
+    let v = service.confirm_round("todo", Some("u-a")).unwrap();
+    assert_eq!(state(&v), "applying");
+    // Let any retries through too; the script then runs out.
+    for _ in 0..5 {
+        gate.open();
+    }
+    let v = wait_for(&service, "u-a", "failed");
+    assert!(v["round"]["message"]
+        .as_str()
+        .is_some_and(|m| !m.is_empty()));
+    assert!(v.get("applied").is_none());
 }

@@ -12,11 +12,15 @@ fn plan_req(prompt: &str) -> PlanRequestBody {
         prompt: prompt.into(),
         app_name: None,
         base_app: None,
+        background: false,
     }
 }
 
 fn apply_req(id: &str) -> ApplyRequest {
-    ApplyRequest { plan_id: id.into() }
+    ApplyRequest {
+        plan_id: id.into(),
+        background: false,
+    }
 }
 
 fn plan_id(v: &Value) -> String {
@@ -382,6 +386,7 @@ fn bad_requests() {
             prompt: "ok".into(),
             app_name: Some("Bad_Name".into()),
             base_app: None,
+            background: false,
         },
     ] {
         let err = h.service.plan(&body, None).unwrap_err();
@@ -401,6 +406,7 @@ fn user_app_name_wins_and_invalid_ai_name_is_502() {
                 prompt: "x 需求".into(),
                 app_name: Some("my-shop".into()),
                 base_app: None,
+                background: false,
             },
             None,
         )

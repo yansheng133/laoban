@@ -59,6 +59,19 @@ pub fn plan_id(t: SystemTime) -> String {
     format!("p-{}-{:06x}", ymd(t), h.finish() & 0xff_ffff)
 }
 
+/// `j-xxxxxxxxxxxxxxxx`: a background job (64 random bits). Not a
+/// secret either: a job is only shown to the user who started it.
+pub fn job_id(t: SystemTime) -> String {
+    let mut h = RandomState::new().build_hasher();
+    h.write_u64(COUNTER.fetch_add(1, Ordering::Relaxed));
+    h.write_u128(
+        t.duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0),
+    );
+    format!("j-{:016x}", h.finish())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
