@@ -76,17 +76,18 @@ export default defineComponent({
     const scope = ref('all');
     const objecting = ref(false);
     const objection = ref('');
-    // Re-render the countdown every 30 s.
+    // Re-render the countdown, and the seconds the AI has been working.
     const now = ref(Date.now());
 
     const clock = setInterval(() => {
       now.value = Date.now();
-    }, 30 * 1000);
+    }, 1000);
 
     onBeforeUnmount(() => clearInterval(clock));
 
     // This page's confirm or skip is the last answer: the AI is now
-    // changing the code (the request returns when it is published).
+    // changing the code. The backend answers at once and works in the
+    // background; the page reads the round until it is done.
     const willApply = computed(() => {
       const r = props.round;
 
@@ -97,6 +98,16 @@ export default defineComponent({
       return r.confirmers.filter((c) => c.answer === 'pending').length <= 1;
     });
     const state = computed(() => (willApply.value ? 'applying' : props.round?.state || 'none'));
+    // Seconds since the round entered its current state (converging or
+    // applying), from its log: the AI works in the background, so this is
+    // the same for everyone looking at the page.
+    const stateSeconds = computed(() => {
+      const r = props.round;
+      const entry = r ? [...r.log].reverse().find((e) => e.event === r.state) : null;
+      const t0 = entry ? Date.parse(entry.at) : NaN;
+
+      return Number.isNaN(t0) ? 0 : Math.max(0, Math.floor((now.value - t0) / 1000));
+    });
     const active = computed(() => ['collecting', 'converging', 'confirming', 'applying', 'failed'].includes(state.value));
     const busy = computed(() => props.disabled || !!props.pending);
     const you = computed(() => props.round?.you);
@@ -170,6 +181,7 @@ export default defineComponent({
       objection,
       state,
       willApply,
+      stateSeconds,
       active,
       busy,
       you,
@@ -450,7 +462,7 @@ export default defineComponent({
           class="icon icon-spinner icon-spin"
           aria-hidden="true"
         />
-        {{ t('laoban.round.convergingCount', { count: round.opinions.length }) }}
+        {{ t('laoban.round.convergingCount', { count: round.opinions.length, seconds: pending === 'converge' ? elapsed : stateSeconds }) }}
       </p>
 
       <!-- Confirming: the plan and who still has to answer. -->
@@ -555,7 +567,7 @@ export default defineComponent({
           class="icon icon-spinner icon-spin"
           aria-hidden="true"
         />
-        {{ willApply ? t('laoban.round.applying', { seconds: elapsed }) : t('laoban.round.states.applying') }}
+        {{ t('laoban.round.applying', { seconds: willApply ? elapsed : stateSeconds }) }}
       </p>
 
       <div

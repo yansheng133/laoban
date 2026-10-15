@@ -404,6 +404,13 @@ pub struct M0Service {
     rounds: Mutex<HashMap<String, Round>>,
     /// Per app: (round ID, the files when that round started).
     round_starts: Mutex<HashMap<String, (String, GeneratedFiles)>>,
+    /// Set by [`M0Service::attach`] in the server: the AI work of a round
+    /// (converging, writing the code and publishing) then runs on its own
+    /// thread and the request returns at once. Requests through the
+    /// Kubernetes API server are cut off after about 60 seconds (report 18,
+    /// B8), and publishing can take longer. Without it (tests) the work
+    /// runs in the request.
+    me: std::sync::OnceLock<std::sync::Weak<M0Service>>,
 }
 
 impl M0Service {
@@ -441,7 +448,43 @@ impl M0Service {
             store: Mutex::new(PlanStore::default()),
             rounds: Mutex::new(HashMap::new()),
             round_starts: Mutex::new(HashMap::new()),
+            me: std::sync::OnceLock::new(),
         })
+    }
+
+    /// Run a round's AI work in the background from now on (see `me`).
+    pub fn attach(self: &Arc<Self>) {
+        let _ = self.me.set(Arc::downgrade(self));
+    }
+
+    /// `job` on its own thread when attached, else right here. Returns what
+    /// `job` returned when it ran here.
+    fn in_background<T, F>(&self, name: &str, job: F) -> Option<T>
+    where
+        F: FnOnce(&M0Service) -> T + Send + 'static,
+        T: Send + 'static,
+    {
+        if let Some(me) = self.me.get().and_then(std::sync::Weak::upgrade) {
+            // The job stays reachable here, so it is not lost if no thread
+            // can be started: then it runs in this request after all,
+            // rather than leaving the round stuck.
+            let slot = Arc::new(Mutex::new(Some(job)));
+            let theirs = Arc::clone(&slot);
+            let spawned = std::thread::Builder::new()
+                .name(name.into())
+                .spawn(move || {
+                    let job = theirs.lock().unwrap_or_else(|e| e.into_inner()).take();
+                    if let Some(job) = job {
+                        job(&me);
+                    }
+                });
+            if spawned.is_ok() {
+                return None;
+            }
+            let job = slot.lock().unwrap_or_else(|e| e.into_inner()).take();
+            return job.map(|job| job(self));
+        }
+        Some(job(self))
     }
 
     pub fn settings(&self) -> &M0Settings {
@@ -1092,7 +1135,7 @@ impl M0Service {
             rs.insert(app.to_string(), r);
         }
         if body.deadline_minutes == 0 {
-            self.converge_if_due(app, unix(now));
+            self.converge_if_due_soon(app, unix(now));
         }
         self.round(app, Some(user))
     }
@@ -1260,7 +1303,8 @@ impl M0Service {
             r.start_converging(&time::rfc3339(SystemTime::now()));
             r.id.clone()
         };
-        self.converge(app, &id);
+        let app_owned = app.to_string();
+        self.in_background("laoban-converge", move |s| s.converge(&app_owned, &id));
         self.round(app, Some(user))
     }
 
@@ -1292,6 +1336,7 @@ impl M0Service {
 
     /// Check for due rounds every 10 seconds, one at a time.
     pub fn start_round_timer(self: &Arc<Self>) {
+        self.attach();
         let service = Arc::downgrade(self);
         let _ = std::thread::Builder::new()
             .name("laoban-rounds".into())
@@ -1302,6 +1347,24 @@ impl M0Service {
                     None => return,
                 }
             });
+    }
+
+    /// Like [`Self::converge_if_due`], for a request: the round is marked
+    /// converging now (so the response says so) and the AI runs in the
+    /// background.
+    fn converge_if_due_soon(&self, app: &str, now_unix: u64) {
+        let id = {
+            let mut rs = self.rounds();
+            match rs.get_mut(app) {
+                Some(r) if r.due(now_unix) => {
+                    r.start_converging(&time::rfc3339(SystemTime::now()));
+                    r.id.clone()
+                }
+                _ => return,
+            }
+        };
+        let app_owned = app.to_string();
+        self.in_background("laoban-converge", move |s| s.converge(&app_owned, &id));
     }
 
     fn converge_if_due(&self, app: &str, now_unix: u64) {
@@ -1392,7 +1455,9 @@ impl M0Service {
         }
     }
 
-    /// When everyone answered: the AI writes the code and it is published.
+    /// When everyone answered: the AI writes the code and it is published,
+    /// in the background when attached (the response then says
+    /// "applying"; the page reads the round until it is done).
     fn finish_if_answered(&self, app: &str, user: &str) -> Result<Value, M0Error> {
         let (plan_id, initiator, round_id) = {
             let mut rs = self.rounds();
@@ -1411,26 +1476,42 @@ impl M0Service {
                 .unwrap_or_default();
             (plan_id, r.initiator.clone(), r.id.clone())
         };
-        let result = self.apply_plan(&plan_id, Some(&initiator), true);
-        let at = time::rfc3339(SystemTime::now());
-        {
-            let mut rs = self.rounds();
-            if let Some(r) = rs.get_mut(app).filter(|r| r.id == round_id) {
-                match &result {
-                    Ok(v) => r.done(v.clone(), &at),
-                    Err(M0Error::PlanNotFound) => r.fail(
-                        "修改計畫已超過 1 小時沒有部署而失效，請發起人重新收斂。",
-                        &at,
-                    ),
-                    Err(e) => r.fail(&e.user_message(), &at),
-                }
-            }
-        }
+        let app_owned = app.to_string();
+        let applied = self
+            .in_background("laoban-publish", move |s| {
+                s.publish_round(&app_owned, &round_id, &plan_id, &initiator)
+            })
+            .flatten();
         let mut v = self.round(app, Some(user))?;
-        if let Ok(applied) = result {
+        if let Some(applied) = applied {
             v["applied"] = applied;
         }
         Ok(v)
+    }
+
+    /// Write the code for a round's plan, publish it, and record the
+    /// result on the round. Returns the apply response when it worked.
+    fn publish_round(
+        &self,
+        app: &str,
+        round_id: &str,
+        plan_id: &str,
+        initiator: &str,
+    ) -> Option<Value> {
+        let result = self.apply_plan(plan_id, Some(initiator), true);
+        let at = time::rfc3339(SystemTime::now());
+        let mut rs = self.rounds();
+        if let Some(r) = rs.get_mut(app).filter(|r| r.id == round_id) {
+            match &result {
+                Ok(v) => r.done(v.clone(), &at),
+                Err(M0Error::PlanNotFound) => r.fail(
+                    "修改計畫已超過 1 小時沒有部署而失效，請發起人重新收斂。",
+                    &at,
+                ),
+                Err(e) => r.fail(&e.user_message(), &at),
+            }
+        }
+        result.ok()
     }
 
     /// Namespace the apps are deployed to; the API is served under it.

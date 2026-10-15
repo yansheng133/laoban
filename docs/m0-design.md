@@ -135,15 +135,17 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 | 請求 | 誰 | 做什麼 |
 |---|---|---|
 | `GET .../round` | 任何人 | `{round}`：最近一輪（含已完成或取消的）或 `null` |
-| `POST .../round` `{opinion, items, deadlineMinutes, scope}` | 任何人 | 開一輪。`deadlineMinutes` 0～1440；0 表示在這個請求裡馬上收斂。`scope` 是 `web`、`api` 或 `all`（預設）。已有進行中的一輪回 `409 round_active` |
+| `POST .../round` `{opinion, items, deadlineMinutes, scope}` | 任何人 | 開一輪。`deadlineMinutes` 0～1440；0 表示馬上開始收斂（回應的狀態是 `converging`，AI 在背景收斂）。`scope` 是 `web`、`api` 或 `all`（預設）。已有進行中的一輪回 `409 round_active` |
 | `POST .../round/opinions` `{text, target}` 或 `{items: [{text, target}]}` | 任何人 | 收集中提意見。一則最多 1000 字；一輪最多 30 則、合計 8000 字 |
 | `POST .../round/opinions/<id>/support` | 意見作者以外的人 | 附議（+1）或取消附議。收集意見與等待確認時都可以 |
 | `POST .../round/opinions/<id>/replies` `{text}` | 任何人 | 在這則意見底下回覆。收集意見與等待確認時都可以 |
-| `POST .../round/confirm` | 這一輪提過意見的人 | 確認。最後一個回覆的人的請求裡，AI 寫程式並發布，回應多一個 `applied`（格式同 `/api/apply`） |
+| `POST .../round/confirm` | 這一輪提過意見的人 | 確認。最後一個回覆時，狀態變成 `applying`，AI 在背景寫程式並發布；完成後狀態是 `done`，`result` 是發布結果（格式同 `/api/apply`） |
 | `POST .../round/object` `{text}` | 同上 | 有意見：這段話加進意見，回到收集，10 分鐘後重新收斂 |
 | `POST .../round/skip` `{user}` | 發起人 | 略過還沒回覆的人（記錄誰、何時略過）；略過後如果全部都回覆了，同樣開始發布 |
 | `POST .../round/cancel` | 發起人 | 取消（收集中、等待確認或失敗時） |
 | `POST .../round/converge` | 發起人 | 收斂或發布失敗後重新收斂 |
+
+**AI 在背景執行**（v0.1.14，18 報告 B8）：後端是 aggregated API，經過 Kubernetes API server 的請求約 60 秒就會被切斷，而 AI 寫程式加發布可能超過（實測 114 秒）。所以收斂（開一輪時 0 分鐘、`converge`）和發布（最後一個確認或略過）都在後端自己的執行緒做，請求馬上回應目前的狀態（`converging` 或 `applying`）；頁面每 5 秒讀一次這一輪，看到 `done` 就跟一般部署一樣等新版跑起來。頁面上顯示的秒數依這一輪的紀錄計算，所有人看到的一樣。萬一請求還是沒有回應（逾時、網路中斷、API server 的錯誤），頁面先讀一次這一輪：狀態已經往前走，就顯示「後端繼續進行」而不是錯誤。
 
 **針對元件的意見**（v0.1.11）：
 - 每則意見有 `id`（`o1`、`o2`…），可以帶 `target`。`target` 是目前架構裡的節點 id（3D 圖用的那個），後端會補上元件名稱；不在架構裡的節點回 400。

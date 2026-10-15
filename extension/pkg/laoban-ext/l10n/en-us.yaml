@@ -128,7 +128,8 @@ laoban:
     deadline: "converges at {time} ({minutes} min left)"
     addLabel: General opinion (the whole app)
     add: Add opinion
-    convergingCount: "The AI is converging {count} opinion(s)…"
+    convergingCount: "The AI is converging {count} opinion(s) ({seconds}s)…"
+    slowContinues: The backend is still working on this; the page updates on its own.
     planTitle: Converged change plan
     planHint: The 3D view marks what this plan adds, removes and changes. The AI changes the code and deploys once everyone who gave an opinion has confirmed.
     answers:

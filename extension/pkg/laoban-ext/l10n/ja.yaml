@@ -130,7 +130,8 @@ laoban:
     deadline: "{time} に収束（残り {minutes} 分）"
     addLabel: 全体への意見（アプリ全体）
     add: 意見を出す
-    convergingCount: "AI が {count} 件の意見を収束しています…"
+    convergingCount: "AI が {count} 件の意見を収束しています（{seconds} 秒）…"
+    slowContinues: バックエンドで処理を続けています。ページは自動で更新されます。
     planTitle: 収束した変更計画
     planHint: 3D 図にこの計画で追加・削除・変更される部分を示しています。意見を出した全員が確認すると、AI がコードを変更してデプロイします。
     answers:

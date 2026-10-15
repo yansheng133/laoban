@@ -128,7 +128,8 @@ laoban:
     deadline: "{time} 收斂（還有 {minutes} 分鐘）"
     addLabel: 一般意見（針對整個應用）
     add: 提意見
-    convergingCount: "AI 正在收斂 {count} 則意見…"
+    convergingCount: "AI 正在收斂 {count} 則意見（已 {seconds} 秒）…"
+    slowContinues: 這個動作在後端繼續進行，頁面會自動更新進度。
     planTitle: 收斂後的修改計畫
     planHint: 右邊的 3D 圖標出這份計畫會新增、刪除、修改的部分。提過意見的人都確認後，AI 才會修改程式並部署。
     answers:

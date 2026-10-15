@@ -256,6 +256,7 @@ export default defineComponent({
       messageFor:   flow.messageFor,
       aiTimeoutMs:  () => aiRequestTimeoutMs(flow.config.value),
       lostMessage:  () => t('laoban.round.lost'),
+      slowMessage:  () => t('laoban.round.slowContinues'),
     });
 
     // Permissions are checked by the Kubernetes API server; the page lets
