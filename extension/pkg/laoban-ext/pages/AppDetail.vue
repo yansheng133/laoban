@@ -217,13 +217,6 @@ export default defineComponent({
     // The enlarged view's side column: one tab at a time, so the list of
     // changes is never below a long timeline.
     const sideTab = ref<'versions' | 'changes' | 'opinions'>('versions');
-    const showOpinionsTab = computed(() => (!!round.round.value && round.active.value) || drafts.value.length > 0);
-
-    watch(showOpinionsTab, (on) => {
-      if (!on && sideTab.value === 'opinions') {
-        sideTab.value = 'versions';
-      }
-    });
 
     // Picking a version in the timeline shows what it changed.
     function pickTimeline(v: { commit: string; current: boolean }) {
@@ -446,6 +439,14 @@ export default defineComponent({
     });
     const selectedDraft = computed(() => drafts.value.find((d) => d.target === selectedNode.value) || null);
     const badges = computed(() => (round.active.value ? opinionCounts(round.round.value?.opinions) : null));
+    // The enlarged view's Opinions tab: while a round runs or drafts wait.
+    const showOpinionsTab = computed(() => (!!round.round.value && round.active.value) || drafts.value.length > 0);
+
+    watch(showOpinionsTab, (on) => {
+      if (!on && sideTab.value === 'opinions') {
+        sideTab.value = 'versions';
+      }
+    });
 
     watch(selectedNode, () => {
       componentText.value = selectedDraft.value?.text || '';
