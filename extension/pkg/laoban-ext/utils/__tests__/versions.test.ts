@@ -1,5 +1,7 @@
 import { describe, it, expect } from '@jest/globals';
-import { versionKindKey, previousOf, isCompareMode } from '../versions';
+import {
+  versionKindKey, previousOf, isCompareMode, changedFiles
+} from '../versions';
 import type { VersionEntry } from '../backend';
 
 const v = (version: number, current = false): VersionEntry => ({
@@ -31,5 +33,22 @@ describe('versions', () => {
     expect(isCompareMode('previous')).toBe(true);
     expect(isCompareMode('none')).toBe(true);
     expect(isCompareMode('all')).toBe(false);
+  });
+});
+
+describe('changedFiles', () => {
+  const d = (index: string) => ({
+    'web/index.html': index, 'web/app.js': 'a', 'web/style.css': 's', 'api/handler.py': 'h'
+  });
+
+  it('lists the files whose digests differ', () => {
+    // Report 16b: version 9 only changed index.html by hand.
+    expect(changedFiles(d('1'), d('2'))).toEqual(['web/index.html']);
+    expect(changedFiles(d('1'), d('1'))).toEqual([]);
+  });
+
+  it('does not know without digests on both sides', () => {
+    expect(changedFiles(null, d('1'))).toBeNull();
+    expect(changedFiles(d('1'), undefined)).toBeNull();
   });
 });

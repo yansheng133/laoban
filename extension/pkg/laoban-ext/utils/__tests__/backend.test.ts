@@ -4,7 +4,7 @@ import {
 import {
   parseBackendError, resolveAppUrl, safeHttpsUrl, backendUrl, aiRequestTimeoutMs, ConfigResponse,
   createPlan, getApp, listApps, listVersions, getVersion, restoreVersion, applyPlan,
-  getRound, openRound, roundAction, addOpinions, supportOpinion, replyToOpinion, getFiles, saveFiles, saveLayout, parseKubeStatus
+  runJob, getRound, openRound, roundAction, addOpinions, supportOpinion, replyToOpinion, getFiles, saveFiles, saveLayout, parseKubeStatus
 } from '../backend';
 import { AI_REQUEST_TIMEOUT_MS } from '../../config/backend';
 
@@ -96,14 +96,14 @@ describe('apps and plan requests', () => {
   it('sends baseApp, not appName, when changing an app', async() => {
     mockFetch(200, { planId: 'p-1', appName: 'todo' });
     await createPlan(store, '加上刪除', 'ignored', 1000, 'todo');
-    expect(JSON.parse(String(calls[0].init.body))).toEqual({ prompt: '加上刪除', baseApp: 'todo' });
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ prompt: '加上刪除', baseApp: 'todo', background: true });
     expect(calls[0].url).toBe(backendUrl('/plans'));
   });
 
   it('sends appName for a new app', async() => {
     mockFetch(200, { planId: 'p-1', appName: 'shop' });
     await createPlan(store, 'x', 'shop', 1000);
-    expect(JSON.parse(String(calls[0].init.body))).toEqual({ prompt: 'x', appName: 'shop' });
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ prompt: 'x', appName: 'shop', background: true });
   });
 
   it('reads the app list and one app', async() => {
@@ -175,11 +175,77 @@ describe('apps and plan requests', () => {
     expect(res.applied?.commit).toBe('c');
   });
 
+  // Answers in order; the last one repeats.
+  function mockFetchSeq(replies: [number, unknown][]) {
+    calls = [];
+    globalThis.fetch = jest.fn(async(url: unknown, init: unknown) => {
+      calls.push({ url: String(url), init: init as RequestInit });
+      const [status, body] = replies[Math.min(calls.length - 1, replies.length - 1)];
+
+      return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+    }) as unknown as typeof fetch;
+  }
+
+  it('runs a plan as a background job and reads it until done (report 18, B8)', async() => {
+    const id = 'j-0123456789abcdef';
+
+    mockFetchSeq([
+      [200, { jobId: id, kind: 'plan', state: 'running' }],
+      [200, { jobId: id, kind: 'plan', state: 'running' }],
+      [200, { jobId: id, kind: 'plan', state: 'done', result: { planId: 'p-1', appName: 'shop' } }],
+    ]);
+    const plan = await runJob(store, backendUrl('/plans'), { prompt: 'x' }, 5000, 1);
+
+    expect(plan).toEqual({ planId: 'p-1', appName: 'shop' });
+    expect(calls.map((c) => c.init.method || 'GET')).toEqual(['POST', 'GET', 'GET']);
+    expect(calls[1].url).toBe(backendUrl(`/plans/${ id }`));
+  });
+
+  it('a failed job throws the error the request would have thrown', async() => {
+    mockFetchSeq([
+      [200, { jobId: 'j-0123456789abcdef', state: 'running' }],
+      [200, {
+        jobId: 'j-0123456789abcdef', state: 'failed', error: { status: 429, code: 'budget_exceeded', message: '已達上限。' }
+      }],
+    ]);
+    await expect(runJob(store, backendUrl('/plans'), {}, 5000, 1)).rejects.toMatchObject({ code: 'budget_exceeded', userMessage: '已達上限。', status: 429 });
+  });
+
+  it('keeps reading through a dropped poll, but not past the timeout', async() => {
+    mockFetchSeq([
+      [200, { jobId: 'j-0123456789abcdef', state: 'running' }],
+      [502, 'proxy error'],
+      [200, { jobId: 'j-0123456789abcdef', state: 'done', result: { commit: 'c' } }],
+    ]);
+    expect(await runJob(store, backendUrl('/plans/p-1/apply'), {}, 5000, 1)).toEqual({ commit: 'c' });
+
+    mockFetchSeq([[200, { jobId: 'j-0123456789abcdef', state: 'running' }]]);
+    await expect(runJob(store, backendUrl('/plans'), {}, 30, 5)).rejects.toMatchObject({ code: 'timeout' });
+  });
+
+  it('takes a direct answer from a backend without jobs', async() => {
+    mockFetch(200, { commit: 'c' });
+    expect(await applyPlan(store, 'p-20261013-abcdef', 1000)).toEqual({ commit: 'c' });
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ background: true });
+  });
+
   it('applies a plan by its ID in the path', async() => {
     mockFetch(200, { commit: 'c' });
     await applyPlan(store, 'p-20261013-abcdef', 1000);
     expect(calls[0].url).toBe(backendUrl('/plans/p-20261013-abcdef/apply'));
     expect(calls[0].init.method).toBe('POST');
+  });
+
+  it("a backend error that is also a Kubernetes Status keeps the backend's message", async() => {
+    // The backend's errors carry kind: Status so kubectl prints them; the
+    // page must not take a 404 or 403 from the backend for the API
+    // server's "not reachable" or "no permission".
+    for (const [status, code] of [[404, 'job_not_found'], [403, 'not_initiator'], [409, 'round_state']] as [number, string][]) {
+      mockFetch(status, {
+        kind: 'Status', apiVersion: 'v1', status: 'Failure', message: '後端的訊息。', reason: 'NotFound', code: status, error: { code, message: '後端的訊息。' }
+      });
+      await expect(getApp(store, 'todo')).rejects.toMatchObject({ code, userMessage: '後端的訊息。', status });
+    }
   });
 
   it('turns API server errors into messages', async() => {

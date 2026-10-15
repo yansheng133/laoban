@@ -290,6 +290,74 @@ pub fn harness_versions(
     }
 }
 
+/// The service with an AI that waits at a gate before each answer, so a
+/// test can see the round while the AI is still working. `open()` lets one
+/// call through.
+pub struct Gate {
+    inner: Arc<MockProvider>,
+    passes: Arc<(Mutex<usize>, std::sync::Condvar)>,
+}
+
+impl Gate {
+    pub fn open(&self) {
+        let (n, cv) = &*self.passes;
+        *n.lock().unwrap() += 1;
+        cv.notify_all();
+    }
+}
+
+struct GatedProvider {
+    inner: Arc<MockProvider>,
+    passes: Arc<(Mutex<usize>, std::sync::Condvar)>,
+}
+
+impl laoban_ai::Provider for GatedProvider {
+    fn send(
+        &self,
+        req: &laoban_ai::ProviderRequest,
+    ) -> Result<ProviderResponse, laoban_ai::ProviderError> {
+        let (n, cv) = &*self.passes;
+        let mut left = n.lock().unwrap();
+        while *left == 0 {
+            let (l, timeout) = cv
+                .wait_timeout(left, std::time::Duration::from_secs(20))
+                .unwrap();
+            left = l;
+            assert!(!timeout.timed_out() || *left > 0, "gate never opened");
+        }
+        *left -= 1;
+        drop(left);
+        self.inner.send(req)
+    }
+}
+
+pub fn gated_service(
+    provider: MockProvider,
+    apps: Vec<(String, Option<String>)>,
+) -> (Arc<M0Service>, Gate, MockServer) {
+    let inner = Arc::new(provider);
+    let passes = Arc::new((Mutex::new(0), std::sync::Condvar::new()));
+    let github = github_mock_versions(RefUpdate::Ok, apps, Vec::new());
+    let service = M0Service::new(
+        settings(1_000_000),
+        Box::new(GatedProvider {
+            inner: Arc::clone(&inner),
+            passes: Arc::clone(&passes),
+        }),
+        committer(&github),
+    )
+    .unwrap();
+    let service = Arc::new(service);
+    service.attach();
+    (service, Gate { inner, passes }, github)
+}
+
+impl Gate {
+    pub fn calls(&self) -> usize {
+        self.inner.call_count()
+    }
+}
+
 /// Requests that would change the repository.
 pub fn writes(github: &MockServer) -> usize {
     github

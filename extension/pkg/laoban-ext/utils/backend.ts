@@ -72,6 +72,7 @@ export interface AppDetail {
   summary: string;
   steps: string[];
   architecture: Architecture;
+  fileDigests?: Record<string, string>;
   updatedAt: string;
   history: AppHistoryEntry[];
   appUrl: string;
@@ -165,6 +166,8 @@ export interface VersionDetail {
   summary: string;
   steps: string[];
   architecture: Architecture;
+  // Path → short hash of each code file (v0.1.14 and later).
+  fileDigests?: Record<string, string>;
   updatedAt: string;
 }
 
@@ -438,15 +441,73 @@ export function createPlan(store: StoreLike, prompt: string, appName: string | u
     body.appName = appName;
   }
 
-  return requestJson<PlanResponse>(store, backendUrl('/plans'), {
-    method: 'POST', body, timeoutMs
-  });
+  return runJob<PlanResponse>(store, backendUrl('/plans'), body, timeoutMs);
 }
 
 export function applyPlan(store: StoreLike, planId: string, timeoutMs: number): Promise<ApplyResponse> {
-  return requestJson<ApplyResponse>(store, backendUrl(`/plans/${ encodeURIComponent(planId) }/apply`), {
-    method: 'POST', body: {}, timeoutMs
-  });
+  return runJob<ApplyResponse>(store, backendUrl(`/plans/${ encodeURIComponent(planId) }/apply`), {}, timeoutMs);
+}
+
+// A background plan or apply (GET .../plans/<jobId>).
+export interface JobView {
+  jobId: string;
+  kind: string;
+  state: 'running' | 'done' | 'failed';
+  elapsedSeconds?: number;
+  result?: unknown;
+  error?: { status?: number; code?: string; message?: string };
+}
+
+export const JOB_POLL_MS = 2000;
+
+const JOB_ID = /^j-[0-9a-f]{16}$/;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * POST a request that runs the AI as a background job, then read the job
+ * until it is done (report 18, B8: the Kubernetes API server ends requests
+ * after about 60 s). Resolves with the result, or throws the error the
+ * request itself would have thrown. A backend that answers with the result
+ * directly (no job) is taken as is.
+ */
+export async function runJob<T>(store: StoreLike, url: string, body: Record<string, unknown>, timeoutMs: number, pollMs = JOB_POLL_MS): Promise<T> {
+  const started = Date.now();
+  const first = await requestJson<T | JobView>(store, url, { method: 'POST', body: { ...body, background: true } });
+  const job = first as JobView;
+
+  if (!job || typeof job !== 'object' || typeof job.jobId !== 'string') {
+    return first as T;
+  }
+  if (!JOB_ID.test(job.jobId)) {
+    throw new RequestError('bad_response', null);
+  }
+  let view: JobView = job;
+
+  while (view.state === 'running') {
+    if (Date.now() - started > timeoutMs) {
+      throw new RequestError('timeout', null);
+    }
+    await sleep(pollMs);
+    try {
+      view = await requestJson<JobView>(store, backendUrl(`/plans/${ job.jobId }`));
+    } catch (e) {
+      // A dropped poll is retried; the backend's own answer (the job is
+      // gone, no permission) is final.
+      if (e instanceof RequestError && e.userMessage) {
+        throw e;
+      }
+    }
+  }
+  if (view.state === 'failed') {
+    const err = view.error || {};
+
+    throw new RequestError(err.code || 'unknown', err.message || null, err.status || 0);
+  }
+
+  return view.result as T;
 }
 
 /**

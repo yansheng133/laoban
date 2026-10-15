@@ -121,6 +121,20 @@ fn fields(f: &GeneratedFiles) -> [(&'static str, &String); 4] {
     ]
 }
 
+/// Per file path, the first 16 hex digits of its sha256: enough for the
+/// page to tell which files two versions differ in, without the code.
+pub fn file_digests(f: &GeneratedFiles) -> serde_json::Map<String, serde_json::Value> {
+    use sha2::{Digest, Sha256};
+    fields(f)
+        .iter()
+        .map(|(path, text)| {
+            let d = Sha256::digest(text.as_bytes());
+            let hex: String = d.iter().take(8).map(|b| format!("{b:02x}")).collect();
+            (path.to_string(), serde_json::Value::String(hex))
+        })
+        .collect()
+}
+
 /// Paths of the files that differ between `a` and `b`.
 pub fn changed_files(a: &GeneratedFiles, b: &GeneratedFiles) -> Vec<&'static str> {
     fields(a)
@@ -358,5 +372,29 @@ mod tests {
         assert!(lost_edits(&edits, &now, &now).is_empty());
         // Nothing edited by hand: nothing to check.
         assert!(manual_edits(&now, &now).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod digest_tests {
+    use super::*;
+
+    #[test]
+    fn digests_change_only_for_the_changed_file() {
+        let a = GeneratedFiles {
+            index_html: "<p>a</p>".into(),
+            app_js: "x()".into(),
+            style_css: "p{}".into(),
+            handler_py: "def handle(m, p, b):\n    return 200, {}\n".into(),
+        };
+        let mut b = a.clone();
+        b.index_html.push_str("<!-- edit -->");
+        let (da, db) = (file_digests(&a), file_digests(&b));
+        assert_eq!(da.len(), 4);
+        assert_eq!(da["web/index.html"].as_str().unwrap().len(), 16);
+        assert_ne!(da["web/index.html"], db["web/index.html"]);
+        for p in ["web/app.js", "web/style.css", "api/handler.py"] {
+            assert_eq!(da[p], db[p], "{p}");
+        }
     }
 }

@@ -523,7 +523,14 @@ impl Round {
                 Some(t) => s.push_str(&format!("\n【元件：{}】\n", t.name)),
             }
             for o in list {
-                s.push_str(&format!("- {}（{}）{}", o.id, o.by, o.text));
+                // "#2" as the page numbers it (the ID without its "o"),
+                // so notes that cite an opinion can be found on the page.
+                s.push_str(&format!(
+                    "- #{}（{}）{}",
+                    o.id.trim_start_matches('o'),
+                    o.by,
+                    o.text
+                ));
                 if !o.supporters.is_empty() {
                     s.push_str(&format!(
                         "　〔{} 人附議：{}〕",
@@ -928,7 +935,7 @@ mod tests {
         let list = req.find("【元件：list】").unwrap();
         assert!(general < list, "{req}");
         assert!(
-            req.contains("o2（u-b）清單加上篩選　〔1 人附議：u-a〕"),
+            req.contains("#2（u-b）清單加上篩選　〔1 人附議：u-a〕"),
             "{req}"
         );
         assert!(req.contains("回覆（u-a）要含已完成的嗎？"), "{req}");
