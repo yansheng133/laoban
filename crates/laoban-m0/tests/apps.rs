@@ -61,6 +61,7 @@ fn edit_req(prompt: &str, base: &str) -> PlanRequestBody {
         prompt: prompt.into(),
         app_name: None,
         base_app: Some(base.into()),
+        background: false,
     }
 }
 
@@ -69,6 +70,7 @@ fn new_req(prompt: &str, name: Option<&str>) -> PlanRequestBody {
         prompt: prompt.into(),
         app_name: name.map(str::to_string),
         base_app: None,
+        background: false,
     }
 }
 
@@ -159,7 +161,13 @@ fn edit_plan_then_apply() {
     let id = plan["planId"].as_str().unwrap().to_string();
     let applied = h
         .service
-        .apply(&ApplyRequest { plan_id: id }, Some(&token))
+        .apply(
+            &ApplyRequest {
+                plan_id: id,
+                background: false,
+            },
+            Some(&token),
+        )
         .unwrap();
     assert_eq!(applied["mode"], "edit");
     assert_eq!(applied["appName"], "breakfast");
@@ -207,6 +215,7 @@ fn edit_errors() {
                 prompt: "x".into(),
                 app_name: Some("other".into()),
                 base_app: Some("breakfast".into()),
+                background: false,
             },
             None,
         )

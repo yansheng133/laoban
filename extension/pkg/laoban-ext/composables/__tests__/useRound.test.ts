@@ -46,6 +46,9 @@ function setup() {
 
 describe('useRound when a slow request gets no answer', () => {
   beforeEach(() => {
+    // Used outside a component here: Vue warns that onBeforeUnmount has no
+    // instance, which is expected.
+    jest.spyOn(console, 'warn').mockImplementation(() => undefined);
     mockGetRound.mockReset();
     mockRoundAction.mockReset();
   });

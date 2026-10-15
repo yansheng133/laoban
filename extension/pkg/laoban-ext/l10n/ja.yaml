@@ -166,7 +166,7 @@ laoban:
       converged: 変更計画ができ、確認待ち
       failed: "失敗：{message}"
       confirmed: 確認
-      skipped: "{user} の確認をスキップ"
+      skipped: "{user}の確認をスキップ"
       applying: 全員確認済み。AI がコードの変更を開始
       done: 新しい版をデプロイ済み
       cancelled: このラウンドを取り消し
@@ -179,6 +179,9 @@ laoban:
     changes: 変更
     noComparison: 「版」タブで版を選ぶか、確認待ちの計画を表示すると、追加・削除・変更された部分がここに一覧表示されます。
     noChanges: 比較対象と比べてアーキテクチャの変更はありません（コードだけ変わっている可能性があります）。
+    filesChanged: "変更されたコードファイル（{count} 個）"
+    noArchChanges: アーキテクチャの変更はなく、上のコードファイルだけが変わりました。
+    noChangesAtAll: アーキテクチャもコードも変わっていません（3D 図の配置だけかもしれません）。
     connection: 接続
     tabs:
       versions: 版
@@ -193,14 +196,19 @@ laoban:
       removed: 削除
       changed: 変更
   opinions:
+    pick: コンポーネント
+    pickNone: （コンポーネントを選択）
+    draftSaved: "下書きに追加しました（全 {count} 件）"
+    removed: "「{name}」への下書きを削除しました。"
+    undo: 元に戻す
     general: アプリ全体
     showInView: 3D 図でこのコンポーネントを選択
-    supportedBy: "{names} が賛成"
+    supportedBy: "{names}が賛成"
     replies: "返信（{count}）"
     replyPlaceholder: この意見に返信
     send: 送信
     drafts: "コンポーネントへの下書き（{count}）"
-    removeDraft: "{name} への下書きを削除"
+    removeDraft: "{name}への下書きを削除"
     removeDraftShort: 下書きを削除
     tooMany: "一度に送れる意見は {max} 件までです。いくつか削除してください。"
     howTo: 特定のコンポーネントに意見を書くには、右の 3D 図でそのコンポーネントをクリックして下書きに追加します。複数のコンポーネントにそれぞれ書けます。

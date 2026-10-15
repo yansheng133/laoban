@@ -210,6 +210,7 @@ fn a_running_round_blocks_other_changes_in_its_scope() {
                 prompt: "x".into(),
                 app_name: None,
                 base_app: Some("todo".into()),
+                background: false,
             },
             Some("u-b"),
         )

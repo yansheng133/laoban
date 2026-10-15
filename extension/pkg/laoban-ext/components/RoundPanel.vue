@@ -11,7 +11,7 @@ import {
 import { useStore } from 'vuex';
 import { useText } from '../composables/useText';
 import { RoundView } from '../utils/backend';
-import { OpinionDraft, MAX_BATCH } from '../utils/opinions';
+import { OpinionDraft, RemovedDraft, MAX_BATCH } from '../utils/opinions';
 import OpinionList from './OpinionList.vue';
 import { userLabel } from '../utils/users';
 import { formatDateTime, formatClock } from '../utils/time';
@@ -55,6 +55,11 @@ export default defineComponent({
       type:    Array as PropType<OpinionDraft[]>,
       default: () => [],
     },
+    // The last removed draft: "undo" brings it back.
+    removedDraft: {
+      type:    Object as PropType<RemovedDraft | null>,
+      default: null,
+    },
     // Node selected in the 3D view.
     selectedTarget: {
       type:    String as PropType<string | null>,
@@ -67,7 +72,7 @@ export default defineComponent({
     },
   },
 
-  emits: ['update:draft', 'open', 'act', 'add', 'remove-draft', 'support', 'reply', 'select-target'],
+  emits: ['update:draft', 'open', 'act', 'add', 'remove-draft', 'undo-draft', 'support', 'reply', 'select-target'],
 
   setup(props, { emit }) {
     const store = useStore();
@@ -139,6 +144,10 @@ export default defineComponent({
       }
       const args = { ...(l.args || {}) };
 
+      // Opinions are numbered on the page as in the AI's notes: o3 is #3.
+      if (args.opinion) {
+        args.opinion = `#${ String(args.opinion).replace(/^o/, '') }`;
+      }
       if (args.user) {
         args.user = who(args.user);
       }
@@ -263,6 +272,21 @@ export default defineComponent({
         </ul>
       </div>
       <p
+        v-if="removedDraft"
+        class="laoban-hint laoban-undo"
+        role="status"
+      >
+        {{ t('laoban.opinions.removed', { name: removedDraft.draft.targetName }) }}
+        <button
+          type="button"
+          class="btn btn-sm role-link"
+          :disabled="busy"
+          @click="$emit('undo-draft')"
+        >
+          {{ t('laoban.opinions.undo') }}
+        </button>
+      </p>
+      <p
         v-if="tooMany"
         class="text-error laoban-hint"
       >
@@ -275,21 +299,6 @@ export default defineComponent({
         {{ t('laoban.opinions.howTo') }}
       </p>
 
-      <details
-        v-if="round && round.log.length"
-        class="laoban-round-log"
-      >
-        <summary>{{ t('laoban.round.lastLog', { count: round.log.length }) }}</summary>
-        <ul>
-          <li
-            v-for="(l, i) in round.log"
-            :key="i"
-          >
-            <span class="text-muted">{{ formatTime(l.at) }}</span>
-            {{ t('laoban.round.logLine', { who: l.by === 'laoban' ? 'laoban' : who(l.by), event: logText(l) }) }}
-          </li>
-        </ul>
-      </details>
       <label
         for="laoban-opinion"
         class="laoban-label"
@@ -358,6 +367,21 @@ export default defineComponent({
       >
         {{ t('laoban.round.converging', { seconds: elapsed }) }}
       </p>
+      <details
+        v-if="round && round.log.length"
+        class="laoban-round-log"
+      >
+        <summary>{{ t('laoban.round.lastLog', { count: round.log.length }) }}</summary>
+        <ul>
+          <li
+            v-for="(l, i) in round.log"
+            :key="i"
+          >
+            <span class="text-muted">{{ formatTime(l.at) }}</span>
+            {{ t('laoban.round.logLine', { who: l.by === 'laoban' ? 'laoban' : who(l.by), event: logText(l) }) }}
+          </li>
+        </ul>
+      </details>
     </form>
 
     <!-- A round is running. -->
@@ -421,6 +445,21 @@ export default defineComponent({
             </li>
           </ul>
         </div>
+        <p
+          v-if="removedDraft"
+          class="laoban-hint laoban-undo"
+          role="status"
+        >
+          {{ t('laoban.opinions.removed', { name: removedDraft.draft.targetName }) }}
+          <button
+            type="button"
+            class="btn btn-sm role-link"
+            :disabled="busy"
+            @click="$emit('undo-draft')"
+          >
+            {{ t('laoban.opinions.undo') }}
+          </button>
+        </p>
         <p
           v-if="tooMany"
           class="text-error laoban-hint"

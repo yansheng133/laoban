@@ -40,3 +40,16 @@ export function previousOf(versions: VersionEntry[] | null | undefined, commit: 
 
   return truncated ? { kind: 'unknown' } : { kind: 'first' };
 }
+
+// The files two versions differ in, from the digests the backend sends
+// (fileDigests: path → hash). null when either side has none (an older
+// backend), so the page can say it does not know.
+export const CODE_FILES = ['web/index.html', 'web/app.js', 'web/style.css', 'api/handler.py'];
+
+export function changedFiles(base: Record<string, string> | null | undefined, target: Record<string, string> | null | undefined): string[] | null {
+  if (!base || !target || typeof base !== 'object' || typeof target !== 'object') {
+    return null;
+  }
+
+  return CODE_FILES.filter((f) => typeof base[f] === 'string' && typeof target[f] === 'string' && base[f] !== target[f]);
+}

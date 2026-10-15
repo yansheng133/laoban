@@ -177,6 +177,9 @@ laoban:
     changes: Changes
     noComparison: "Pick a version in the Versions tab, or view a round's converged plan, to list what is added, removed or changed."
     noChanges: "No architecture changes compared with the chosen version (the code may still differ)."
+    filesChanged: "Code files changed ({count})"
+    noArchChanges: No architecture changes; only the code files above changed.
+    noChangesAtAll: "Neither the architecture nor the code changed (perhaps only positions in the 3D view)."
     connection: connection
     tabs:
       versions: Versions
@@ -191,6 +194,11 @@ laoban:
       removed: Removed
       changed: Changed
   opinions:
+    pick: Component
+    pickNone: (choose a component)
+    draftSaved: "Added to drafts ({count} in all)"
+    removed: "Removed the draft on \"{name}\"."
+    undo: Undo
     general: The whole app
     showInView: Select this component in the 3D view
     supportedBy: "+1 from {names}"

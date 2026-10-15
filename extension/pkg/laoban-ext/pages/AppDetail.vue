@@ -34,12 +34,12 @@ import {
 import { appendLine } from '../utils/structure';
 import { mergeForDiff, diffEntries } from '../utils/graphDiff';
 import {
-  OpinionDraft, opinionItems, opinionCounts, putDraft
+  OpinionDraft, RemovedDraft, opinionItems, opinionCounts, putDraft, removeDraftAt, restoreDraft
 } from '../utils/opinions';
 import { APPS_ROUTE_NAME, PRODUCT_NAME, BLANK_CLUSTER } from '../config/laoban';
 import { formatDateTime } from '../utils/time';
 import {
-  versionKindKey, previousOf, CompareMode, COMPARE_MODES
+  versionKindKey, previousOf, changedFiles, CompareMode, COMPARE_MODES
 } from '../utils/versions';
 
 export default defineComponent({
@@ -70,8 +70,8 @@ export default defineComponent({
     // it changed), the current one (what restoring it would change), or
     // nothing.
     const compareMode = ref<CompareMode>('previous');
-    // Architectures of the versions used as the "previous" side, by commit.
-    const previousCache = ref<Record<string, VersionDetail['architecture'] | null>>({});
+    // The versions used as the "previous" side, by commit.
+    const previousCache = ref<Record<string, Pick<VersionDetail, 'architecture' | 'fileDigests'>>>({});
     const tab = ref<'arch' | 'code'>('arch');
     // Dragged but not yet saved positions, by node id.
     const pending = ref<Record<string, Position>>({});
@@ -316,7 +316,7 @@ export default defineComponent({
         const v = await getVersion(store, app, commit);
 
         if (app === name.value) {
-          previousCache.value = { ...previousCache.value, [commit]: v.architecture };
+          previousCache.value = { ...previousCache.value, [commit]: { architecture: v.architecture, fileDigests: v.fileDigests } };
         }
       } catch (e) {
         versionsError.value = flow.messageFor(e);
@@ -335,16 +335,21 @@ export default defineComponent({
       const prev = previous.value;
       // Against the previous version: the diff, or a hint while it loads or
       // when there is nothing before it.
-      const againstPrevious = (arch: unknown, n: number) => {
+      const againstPrevious = (arch: unknown, digests: Record<string, string> | undefined, n: number) => {
         if (prev?.kind === 'first') {
           const d = mergeForDiff(null, arch as VersionDetail['architecture']);
 
-          return { architecture: d.architecture, diff: d, hint: t('laoban.versions.hintFirst', { n }) };
+          return {
+            architecture: d.architecture, diff: d, files: null, hint: t('laoban.versions.hintFirst', { n })
+          };
         }
         if (prev?.kind === 'version' && prev.entry.commit in previousCache.value) {
-          const d = mergeForDiff(previousCache.value[prev.entry.commit], arch as VersionDetail['architecture']);
+          const before = previousCache.value[prev.entry.commit];
+          const d = mergeForDiff(before.architecture, arch as VersionDetail['architecture']);
 
-          return { architecture: d.architecture, diff: d, hint: t('laoban.versions.hintPrevious', { n, p: prev.entry.version }) };
+          return {
+            architecture: d.architecture, diff: d, files: changedFiles(before.fileDigests, digests), hint: t('laoban.versions.hintPrevious', { n, p: prev.entry.version })
+          };
         }
 
         return null;
@@ -354,21 +359,29 @@ export default defineComponent({
         const d = mergeForDiff(current, roundPlan.value.architecture);
         const same = !d.summary.added && !d.summary.removed && !d.summary.changed;
 
-        return { architecture: d.architecture, diff: d, hint: t(same ? 'laoban.round.hintPlanSame' : 'laoban.round.hintPlan') };
+        return {
+          architecture: d.architecture, diff: d, files: null, hint: t(same ? 'laoban.round.hintPlanSame' : 'laoban.round.hintPlan')
+        };
       }
       if (selectedVersion.value) {
         if (compareMode.value === 'current') {
           const d = mergeForDiff(current, selectedVersion.value.architecture);
 
-          return { architecture: d.architecture, diff: d, hint: t('laoban.versions.hintCompare', { n: selectedNumber.value }) };
+          return {
+            architecture: d.architecture, diff: d, files: changedFiles(detail.value?.fileDigests, selectedVersion.value.fileDigests), hint: t('laoban.versions.hintCompare', { n: selectedNumber.value })
+          };
         }
-        const p = compareMode.value === 'previous' ? againstPrevious(selectedVersion.value.architecture, selectedNumber.value) : null;
+        const p = compareMode.value === 'previous' ? againstPrevious(selectedVersion.value.architecture, selectedVersion.value.fileDigests, selectedNumber.value) : null;
 
-        return p || { architecture: selectedVersion.value.architecture, diff: null, hint: t('laoban.versions.hintVersion', { n: selectedNumber.value }) };
+        return p || {
+          architecture: selectedVersion.value.architecture, diff: null, files: null, hint: t('laoban.versions.hintVersion', { n: selectedNumber.value })
+        };
       }
-      const p = expanded.value && compareMode.value === 'previous' && current ? againstPrevious(current, currentNumber.value) : null;
+      const p = expanded.value && compareMode.value === 'previous' && current ? againstPrevious(current, detail.value?.fileDigests, currentNumber.value) : null;
 
-      return p || { architecture: current, diff: null, hint: t('laoban.edit.currentArch') };
+      return p || {
+        architecture: current, diff: null, files: null, hint: t('laoban.edit.currentArch')
+      };
     });
 
     function restore(commit: string) {
@@ -449,20 +462,72 @@ export default defineComponent({
       }
     });
 
+    // "Added" next to the button after a draft is saved (report 18: the
+    // draft list is far away, at the top of the page).
+    const draftSaved = ref(false);
+    // The last removed draft, for "undo".
+    const removedDraft = ref<RemovedDraft | null>(null);
+
     watch(selectedNode, () => {
       componentText.value = selectedDraft.value?.text || '';
+      draftSaved.value = false;
+    });
+    watch(componentText, () => {
+      draftSaved.value = false;
     });
 
+    // Every component of the view, for the picker above the 3D view (labels
+    // can sit on top of each other there).
+    const nodeOptions = computed(() => {
+      const nodes = (view.value.architecture as { nodes?: { id: string; name?: string; layer?: string }[] } | null)?.nodes || [];
+
+      return nodes
+        .filter((n) => n && typeof n.id === 'string')
+        .map((n) => ({ id: n.id, label: `${ n.layer ? `${ t(`laoban.dashboard.arch.layers.${ n.layer }`) } · ` : '' }${ n.name || n.id }` }))
+        .sort((a, b) => a.label.localeCompare(b.label));
+    });
+
+    // A component picked (in the 3D view or the picker): bring the opinion
+    // box into sight, so it is clear something happened.
+    const composer = ref<HTMLElement | null>(null);
+
+    function pickNode(id: string | null) {
+      selectedNode.value = id || null;
+      if (id && canComment.value) {
+        nextTick(() => composer.value?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' }));
+      }
+    }
+
     function saveDraft() {
-      if (selectedNode.value && selectedNodeName.value) {
+      if (selectedNode.value && selectedNodeName.value && componentText.value.trim()) {
         drafts.value = putDraft(drafts.value, { target: selectedNode.value, targetName: selectedNodeName.value, text: componentText.value });
+        removedDraft.value = null;
+        // Set after the text watcher has run.
+        nextTick(() => {
+          draftSaved.value = true;
+        });
       }
     }
 
     function removeDraft(target: string) {
-      drafts.value = drafts.value.filter((d) => d.target !== target);
+      const { drafts: rest, removed } = removeDraftAt(drafts.value, target);
+
+      drafts.value = rest;
+      removedDraft.value = removed;
       if (target === selectedNode.value) {
         componentText.value = '';
+      }
+    }
+
+    function undoRemoveDraft() {
+      const r = removedDraft.value;
+
+      if (r) {
+        drafts.value = restoreDraft(drafts.value, r);
+        removedDraft.value = null;
+        if (r.draft.target === selectedNode.value) {
+          componentText.value = r.draft.text;
+        }
       }
     }
 
@@ -477,6 +542,8 @@ export default defineComponent({
       opinionDraft.value = '';
       drafts.value = [];
       componentText.value = '';
+      removedDraft.value = null;
+      draftSaved.value = false;
     }
 
     async function openRound(opts: { minutes: number; scope: string }) {
@@ -647,6 +714,12 @@ export default defineComponent({
       badges,
       saveDraft,
       removeDraft,
+      undoRemoveDraft,
+      removedDraft,
+      draftSaved,
+      nodeOptions,
+      pickNode,
+      composer,
       selectTarget,
       addOpinions,
       roundSupport: round.support,
@@ -743,11 +816,13 @@ export default defineComponent({
           :disabled="deploying || phase === 'applying'"
           :notice="roundNotice"
           :drafts="drafts"
+          :removed-draft="removedDraft"
           :selected-target="selectedNode"
           @open="openRound"
           @act="roundAct"
           @add="addOpinions"
           @remove-draft="removeDraft"
+          @undo-draft="undoRemoveDraft"
           @support="roundSupport"
           @reply="roundReply"
           @select-target="selectTarget"
@@ -851,6 +926,24 @@ export default defineComponent({
             {{ view.hint }}
           </p>
           <label
+            v-if="nodeOptions.length"
+            class="laoban-compare"
+          >
+            {{ t('laoban.opinions.pick') }}
+            <select
+              class="laoban-compare-select laoban-node-picker"
+              :value="selectedNode || ''"
+              @change="pickNode($event.target.value)"
+            >
+              <option value="">{{ t('laoban.opinions.pickNone') }}</option>
+              <option
+                v-for="o in nodeOptions"
+                :key="o.id"
+                :value="o.id"
+              >{{ o.label }}</option>
+            </select>
+          </label>
+          <label
             v-if="selectedVersion"
             class="laoban-compare"
           >
@@ -918,7 +1011,7 @@ export default defineComponent({
           :selected="selectedNode"
           :badges="badges"
           @move="onMove"
-          @select="selectedNode = $event"
+          @select="pickNode($event)"
         >
           <template #tools>
             <button
@@ -942,6 +1035,7 @@ export default defineComponent({
         </ArchitectureView>
         <form
           v-if="canComment && selectedNode && selectedNodeName"
+          ref="composer"
           class="laoban-component-opinion"
           @submit.prevent="saveDraft"
         >
@@ -972,7 +1066,15 @@ export default defineComponent({
             >
               {{ t('laoban.opinions.removeDraftShort') }}
             </button>
-            <span class="text-muted laoban-hint">{{ t('laoban.opinions.draftHint', { count: drafts.length }) }}</span>
+            <span
+              v-if="draftSaved"
+              class="laoban-draft-saved"
+              role="status"
+            >✓ {{ t('laoban.opinions.draftSaved', { count: drafts.length }) }}</span>
+            <span
+              v-else
+              class="text-muted laoban-hint"
+            >{{ t('laoban.opinions.draftHint', { count: drafts.length }) }}</span>
           </div>
         </form>
         <StructureEdit
@@ -1003,7 +1105,7 @@ export default defineComponent({
               @click="sideTab = st"
             >
               {{ t(`laoban.expand.tabs.${ st }`) }}<template v-if="st === 'changes' && view.diff">
-                （{{ changes.length }}）
+                （{{ changes.length + (view.files ? view.files.length : 0) }}）
               </template><template v-if="st === 'opinions' && roundState && roundActive">
                 （{{ roundState.opinions.length }}）
               </template>
@@ -1071,14 +1173,30 @@ export default defineComponent({
             >
               {{ t(compareMode === 'none' ? 'laoban.expand.noComparisonOff' : 'laoban.expand.noComparison') }}
             </p>
-            <p
-              v-else-if="!changes.length"
-              class="text-muted laoban-hint"
-            >
-              {{ t('laoban.expand.noChanges') }}
-            </p>
+            <template v-else>
+              <div
+                v-if="view.files && view.files.length"
+                class="laoban-file-changes"
+              >
+                <span class="laoban-label">{{ t('laoban.expand.filesChanged', { count: view.files.length }) }}</span>
+                <ul>
+                  <li
+                    v-for="f in view.files"
+                    :key="f"
+                  >
+                    <code>{{ f }}</code>
+                  </li>
+                </ul>
+              </div>
+              <p
+                v-if="!changes.length"
+                class="text-muted laoban-hint"
+              >
+                {{ t(view.files ? (view.files.length ? 'laoban.expand.noArchChanges' : 'laoban.expand.noChangesAtAll') : 'laoban.expand.noChanges') }}
+              </p>
+            </template>
             <ul
-              v-else
+              v-if="view.diff && changes.length"
               class="laoban-changes"
             >
               <li
@@ -1288,6 +1406,15 @@ export default defineComponent({
   }
 }
 
+.laoban-draft-saved {
+  color: var(--success);
+  font-size: 12px;
+}
+
+.laoban-node-picker {
+  max-width: 260px;
+}
+
 .laoban-component-opinion-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1308,13 +1435,26 @@ export default defineComponent({
   background: var(--body-bg);
   overflow: hidden;
 
+  // The 3D view takes what the column has left, so the opinion box under
+  // it stays in sight (report 18: only its edge showed).
   .laoban-arch-main {
     overflow-y: auto;
+    height: 100%;
+  }
+
+  :deep(.laoban-arch) {
+    flex: 1 1 auto;
+    min-height: 0;
   }
 
   :deep(.laoban-arch-stage) {
-    height: calc(100vh - 200px);
-    min-height: 360px;
+    height: auto;
+    flex: 1 1 auto;
+    min-height: 300px;
+  }
+
+  .laoban-component-opinion {
+    flex: none;
   }
 
   @media (max-width: 900px) {
@@ -1413,8 +1553,25 @@ export default defineComponent({
 }
 
 .laoban-side-panel {
+  padding-right: 4px;
   min-height: 0;
   overflow-y: auto;
+}
+
+.laoban-file-changes {
+  margin-bottom: 8px;
+  font-size: 13px;
+
+  ul {
+    list-style: none;
+    padding: 0;
+    margin: 4px 0 0;
+  }
+
+  li {
+    padding: 2px 8px;
+    border-left: 3px solid var(--laoban-diff-changed, var(--warning));
+  }
 }
 
 .laoban-change-file {

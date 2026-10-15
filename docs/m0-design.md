@@ -147,6 +147,14 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 
 **AI 在背景執行**（v0.1.14，18 報告 B8）：後端是 aggregated API，經過 Kubernetes API server 的請求約 60 秒就會被切斷，而 AI 寫程式加發布可能超過（實測 114 秒）。所以收斂（開一輪時 0 分鐘、`converge`）和發布（最後一個確認或略過）都在後端自己的執行緒做，請求馬上回應目前的狀態（`converging` 或 `applying`）；頁面每 5 秒讀一次這一輪，看到 `done` 就跟一般部署一樣等新版跑起來。頁面上顯示的秒數依這一輪的紀錄計算，所有人看到的一樣。萬一請求還是沒有回應（逾時、網路中斷、API server 的錯誤），頁面先讀一次這一輪：狀態已經往前走，就顯示「後端繼續進行」而不是錯誤。
 
+新增應用與一般的計畫／部署也一樣：`POST /api/plan` 或 `.../plans/<planId>/apply` 帶 `"background": true` 時，回應是一項工作 `{jobId, kind, state: "running"}`，頁面每 2 秒讀 `GET .../plans/<jobId>`（`plans` 的 get，edit 角色本來就有），直到 `done`（`result` 就是原本的回應）或 `failed`（`error` 是原本會回的錯誤：status、code、message）。工作只有發起的人讀得到，保留 1 小時，重啟後消失（頁面會說找不到進度，請到應用清單確認）。不帶 `background` 時照舊在請求裡完成。
+
+**錯誤格式**（v0.1.14）：錯誤回應同時是 Kubernetes 的 `Status`（`kind`、`status: Failure`、`message`、`reason`、`code`），`kubectl create --raw` 會印出中文原因；頁面照舊讀 `error.code`／`error.message`，而且以它為準（不會把後端的 404、403 當成 API server 的「連不上」「沒權限」）。
+
+**版本的檔案指紋**（v0.1.14）：`GET .../apps/<name>` 與 `.../versions/<commit>` 多一個 `fileDigests`：四個程式檔各自 sha256 的前 16 個十六進位字。頁面比較兩個版本時，用它列出改了哪些程式檔，所以只改程式、沒改架構的版本也看得出改了什麼。
+
+**意見編號**（v0.1.14）：頁面上每則意見標 #1、#2…（意見 ID 去掉 o）；交給 AI 的意見也用這個編號，並請 AI 在說明裡引用「#2「幾個字」」，不用內部 ID。
+
 **針對元件的意見**（v0.1.11）：
 - 每則意見有 `id`（`o1`、`o2`…），可以帶 `target`。`target` 是目前架構裡的節點 id（3D 圖用的那個），後端會補上元件名稱；不在架構裡的節點回 400。
 - `items` 一次最多 10 則，全部檢查通過才一起加入。開一輪時，`opinion` 和 `items` 可以擇一或同時給。

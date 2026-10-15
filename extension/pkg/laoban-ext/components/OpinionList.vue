@@ -70,8 +70,11 @@ export default defineComponent({
       }
     }
 
+    // The number the AI's notes use for an opinion: its ID without the "o".
+    const number = (id: string) => id.replace(/^o/, '');
+
     return {
-      t, open, replyText, groups, who, supportedByMe, toggle, sendReply, formatTime: (at: string) => formatDateTime(store, at)
+      t, open, replyText, groups, who, supportedByMe, toggle, sendReply, number, formatTime: (at: string) => formatDateTime(store, at)
     };
   },
 });
@@ -105,7 +108,7 @@ export default defineComponent({
           class="laoban-opinion"
         >
           <div class="text-muted laoban-opinion-meta">
-            {{ who(o.by) }} · {{ formatTime(o.at) }}
+            <strong class="laoban-opinion-number">#{{ number(o.id) }}</strong> {{ who(o.by) }} · {{ formatTime(o.at) }}
           </div>
           <div class="laoban-text">
             {{ o.text }}
@@ -220,6 +223,10 @@ export default defineComponent({
   font-size: 12px;
 }
 
+.laoban-opinion-number {
+  color: var(--body-text);
+}
+
 .laoban-opinion-actions {
   display: flex;
   flex-wrap: wrap;
@@ -242,13 +249,20 @@ export default defineComponent({
   }
 }
 
+// Wraps in a narrow column (the enlarged view's side) rather than
+// pushing "Send" out of sight.
 .laoban-opinion-reply {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
 
   input {
-    flex: 1 1 auto;
+    flex: 1 1 120px;
     min-width: 0;
+  }
+
+  button {
+    flex: none;
   }
 }
 </style>

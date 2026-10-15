@@ -71,6 +71,10 @@ pub struct PlanRequestBody {
     /// Change this existing app instead of creating a new one.
     #[serde(default)]
     pub base_app: Option<String>,
+    /// Answer at once with a job to read (`GET /api/plans/<jobId>`); the
+    /// AI works in the background (see [`M0Service::start_job`]).
+    #[serde(default)]
+    pub background: bool,
 }
 
 /// `POST /api/apps/<name>/restore` body.
@@ -162,7 +166,43 @@ pub struct SaveLayoutRequest {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ApplyRequest {
     pub plan_id: String,
+    /// As for [`PlanRequestBody::background`].
+    #[serde(default)]
+    pub background: bool,
 }
+
+/// What `POST .../plans/<id>/apply` may carry.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ApplyOptions {
+    #[serde(default)]
+    pub background: bool,
+}
+
+/// A request that runs the AI, done in the background (report 18, B8):
+/// requests through the Kubernetes API server end after about 60 seconds.
+struct Job {
+    /// Only this user can read it ("" when there is no verified user).
+    user: String,
+    kind: &'static str,
+    started: std::time::Instant,
+    started_at: String,
+    state: JobState,
+}
+
+enum JobState {
+    Running,
+    Done(Value),
+    Failed {
+        status: u16,
+        code: &'static str,
+        message: String,
+    },
+}
+
+/// Jobs are kept this long after they start, then forgotten.
+const JOB_TTL: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+const MAX_JOBS: usize = 200;
 
 /// Errors with the codes and statuses of the design's error table.
 /// `user_message` is Traditional Chinese for the page; `Display` is for
@@ -223,6 +263,12 @@ pub enum M0Error {
     /// Hand-edited files failed the checks AI output must pass.
     #[error("invalid files: {0}")]
     InvalidFiles(String),
+    /// No such background job for this user (or it expired).
+    #[error("job not found")]
+    JobNotFound,
+    /// Too many background jobs at once.
+    #[error("busy")]
+    Busy,
 }
 
 impl M0Error {
@@ -253,6 +299,8 @@ impl M0Error {
             M0Error::Unauthenticated => "unauthenticated",
             M0Error::VersionConflict => "version_conflict",
             M0Error::InvalidFiles(_) => "invalid_files",
+            M0Error::JobNotFound => "job_not_found",
+            M0Error::Busy => "busy",
         }
     }
 
@@ -292,6 +340,8 @@ impl M0Error {
             M0Error::Round(RoundError::NoSuchOpinion) => 404,
             M0Error::Unauthenticated => 401,
             M0Error::InvalidFiles(_) => 400,
+            M0Error::JobNotFound => 404,
+            M0Error::Busy => 503,
         }
     }
 
@@ -360,6 +410,10 @@ impl M0Error {
                 "這個應用沒有 laoban 的編輯紀錄（可能是較早版本產生的），無法編輯；請用新名稱重新產生。"
                     .into()
             }
+            M0Error::JobNotFound => {
+                "找不到這項工作的進度，可能已超過 1 小時或後端已重新啟動。請到應用清單確認結果。".into()
+            }
+            M0Error::Busy => "後端目前有太多工作在進行，請稍後再試。".into(),
         }
     }
 }
@@ -411,6 +465,8 @@ pub struct M0Service {
     /// B8), and publishing can take longer. Without it (tests) the work
     /// runs in the request.
     me: std::sync::OnceLock<std::sync::Weak<M0Service>>,
+    /// Background plan / apply requests, by job ID.
+    jobs: Mutex<HashMap<String, Job>>,
 }
 
 impl M0Service {
@@ -449,7 +505,113 @@ impl M0Service {
             rounds: Mutex::new(HashMap::new()),
             round_starts: Mutex::new(HashMap::new()),
             me: std::sync::OnceLock::new(),
+            jobs: Mutex::new(HashMap::new()),
         })
+    }
+
+    /// Start `work` as a job and answer with it: still running when the
+    /// service is attached, already finished otherwise (tests).
+    pub fn start_job<F>(
+        &self,
+        kind: &'static str,
+        user: Option<&str>,
+        work: F,
+    ) -> Result<Value, M0Error>
+    where
+        F: FnOnce(&M0Service) -> Result<Value, M0Error> + Send + 'static,
+    {
+        let now = SystemTime::now();
+        let id = time::job_id(now);
+        let user = user.unwrap_or_default().to_string();
+        {
+            let mut jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
+            jobs.retain(|_, j| j.started.elapsed() < JOB_TTL);
+            if jobs
+                .values()
+                .filter(|j| matches!(j.state, JobState::Running))
+                .count()
+                >= MAX_JOBS
+                || jobs.len() >= MAX_JOBS * 5
+            {
+                return Err(M0Error::Busy);
+            }
+            jobs.insert(
+                id.clone(),
+                Job {
+                    user: user.clone(),
+                    kind,
+                    started: std::time::Instant::now(),
+                    started_at: time::rfc3339(now),
+                    state: JobState::Running,
+                },
+            );
+        }
+        let job_id = id.clone();
+        self.in_background("laoban-job", move |s| {
+            let result = work(s);
+            s.finish_job(&job_id, result);
+        });
+        self.job(&id, Some(&user))
+    }
+
+    fn finish_job(&self, id: &str, result: Result<Value, M0Error>) {
+        let mut jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(j) = jobs.get_mut(id) {
+            j.state = match result {
+                Ok(v) => JobState::Done(v),
+                Err(e) => JobState::Failed {
+                    status: e.status(),
+                    code: e.code(),
+                    message: e.user_message(),
+                },
+            };
+        }
+    }
+
+    /// `GET /api/plans/<jobId>`: a job's state, for the user who started
+    /// it. Others (and unknown or expired IDs) get "not found".
+    pub fn job(&self, id: &str, user: Option<&str>) -> Result<Value, M0Error> {
+        let jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
+        let j = jobs
+            .get(id)
+            .filter(|j| j.user == user.unwrap_or_default() && j.started.elapsed() < JOB_TTL)
+            .ok_or(M0Error::JobNotFound)?;
+        let mut v = json!({
+            "jobId": id,
+            "kind": j.kind,
+            "startedAt": j.started_at,
+            "elapsedSeconds": j.started.elapsed().as_secs(),
+        });
+        match &j.state {
+            JobState::Running => v["state"] = json!("running"),
+            JobState::Done(result) => {
+                v["state"] = json!("done");
+                v["result"] = result.clone();
+            }
+            JobState::Failed {
+                status,
+                code,
+                message,
+            } => {
+                v["state"] = json!("failed");
+                v["error"] = json!({ "status": status, "code": code, "message": message });
+            }
+        }
+        Ok(v)
+    }
+
+    /// `POST /api/plan` with `background`: the plan as a job.
+    pub fn plan_job(&self, body: &PlanRequestBody, user: Option<&str>) -> Result<Value, M0Error> {
+        let body = body.clone();
+        let owner = user.map(str::to_string);
+        self.start_job("plan", user, move |s| s.plan(&body, owner.as_deref()))
+    }
+
+    /// `POST /api/apply` (or `.../plans/<id>/apply`) with `background`.
+    pub fn apply_job(&self, body: &ApplyRequest, user: Option<&str>) -> Result<Value, M0Error> {
+        let body = body.clone();
+        let owner = user.map(str::to_string);
+        self.start_job("apply", user, move |s| s.apply(&body, owner.as_deref()))
     }
 
     /// Run a round's AI work in the background from now on (see `me`).
@@ -781,6 +943,7 @@ impl M0Service {
         v["summary"] = json!(m.plan.summary);
         v["steps"] = json!(m.plan.steps);
         v["architecture"] = architecture_with_layout(&m.plan, app, &m.layout);
+        v["fileDigests"] = json!(crate::codegen::file_digests(&m.files));
         v["round"] = self.round_json(app, user);
         v["updatedAt"] = json!(m.updated_at());
         v["history"] = json!(m.history.iter().rev().collect::<Vec<_>>());
@@ -1052,6 +1215,7 @@ impl M0Service {
             "summary": m.plan.summary,
             "steps": m.plan.steps,
             "architecture": architecture_with_layout(&m.plan, app, &m.layout),
+            "fileDigests": crate::codegen::file_digests(&m.files),
             "updatedAt": m.updated_at(),
         }))
     }
@@ -1403,6 +1567,7 @@ impl M0Service {
             prompt: request,
             app_name: None,
             base_app: Some(app.to_string()),
+            background: false,
         };
         let result = self.plan_with(
             &body,
