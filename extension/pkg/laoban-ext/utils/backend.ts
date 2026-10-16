@@ -448,8 +448,10 @@ export function canChangeApps(store: StoreLike): Promise<boolean> {
           });
 
         return res.status?.allowed !== false;
-      } catch {
-        return true;
+      } catch (e) {
+        // No backend to change apps on: no "New app" (report 22, N19).
+        // Anything else: assume yes and let the backend decide.
+        return !(e instanceof BackendNotFound || (e instanceof RequestError && e.code === 'backend_not_found'));
       }
     })();
   }

@@ -455,7 +455,7 @@ export default defineComponent({
     const componentText = ref('');
     // Opinions can be written when no round runs (they open one) or while
     // one collects; on the current version only (node ids must exist now).
-    const canComment = computed(() => !!detail.value && !selectedCommit.value &&
+    const canComment = computed(() => !!detail.value && mayChange.value && !selectedCommit.value &&
       (!round.active.value || round.round.value?.state === 'collecting'));
     const selectedNodeName = computed(() => {
       const nodes = (detail.value?.architecture as { nodes?: { id: string; name?: string }[] } | null)?.nodes || [];
@@ -700,7 +700,7 @@ export default defineComponent({
     // Someone else's new version: a notice fixed on screen, seen wherever
     // the page is scrolled.
     const toast = computed(() => (reloading.value ? t('laoban.detail.reloading') : staleNotice.value));
-    const detailStatus = computed(() => (flow.phase.value === 'idle' ? t('laoban.detail.idle') : flow.statusText.value));
+    const detailStatus = computed(() => (flow.phase.value === 'idle' ? t(mayChange.value ? 'laoban.detail.idle' : 'laoban.detail.idleViewOnly') : flow.statusText.value));
 
     // Every 15 s: has someone else published a version? Reload when nothing
     // unsaved would be lost; otherwise say so.
@@ -813,6 +813,7 @@ export default defineComponent({
       currentSteps,
       formatTime,
       canEdit,
+      mayChange,
       deploying,
       blockedFiles,
       roundPlan,
@@ -958,7 +959,7 @@ export default defineComponent({
         <div
           v-if="waitingReason"
           class="laoban-waiting banner"
-          :class="waitingReason === 'youConfirmed' ? 'info' : 'warning'"
+          :class="waitingReason === 'youConfirmed' ? 'laoban-banner-info' : 'warning'"
           role="status"
           data-testid="laoban-waiting"
         >
@@ -975,6 +976,7 @@ export default defineComponent({
           :notice="roundNotice"
           :limits="roundLimits"
           :available="roundsAvailable"
+          :view-only="!mayChange"
           :drafts="drafts"
           :removed-draft="removedDraft"
           :selected-target="selectedNode"

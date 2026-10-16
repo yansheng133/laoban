@@ -1,7 +1,9 @@
 // Rancher's side menu (Overview, Apps) can be hidden on laoban's pages, to
 // leave the room to the work (Sam, after report 21). Rancher lays its
-// page out as a grid whose menu column is `--nav-width`; a class on <body>
-// sets it to 0 and hides the menu (styles/global.scss). The class is only
+// page out as a grid whose menu column is `--nav-width`; a class on <html>
+// sets it to 0 and hides the menu (styles/global.scss). Not on <body>:
+// Rancher sets the body's classes again when the page loads, which took
+// ours away after a reload (report 22, B20). The class is only
 // there while a laoban page is shown, so the rest of Rancher keeps its
 // menu. The choice is kept in this browser.
 import { ref } from 'vue';
@@ -21,7 +23,7 @@ export const navCollapsed = ref(read());
 
 function apply(on: boolean) {
   try {
-    document.body.classList.toggle(CLASS, on);
+    document.documentElement.classList.toggle(CLASS, on);
   } catch {}
 }
 

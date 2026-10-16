@@ -369,15 +369,15 @@ describe('v0.1.16 pieces mount and act', () => {
   it('hides and shows Rancher\'s side menu, only while on laoban\'s pages', () => {
     const { b, app } = mount('../components/NavToggle.vue', {});
 
-    expect(document.body.classList.contains('laoban-nav-collapsed')).toBe(false);
+    expect(document.documentElement.classList.contains('laoban-nav-collapsed')).toBe(false);
     (b.toggle as () => void)();
-    expect(document.body.classList.contains('laoban-nav-collapsed')).toBe(true);
+    expect(document.documentElement.classList.contains('laoban-nav-collapsed')).toBe(true);
     app.unmount();
-    expect(document.body.classList.contains('laoban-nav-collapsed')).toBe(false);
+    expect(document.documentElement.classList.contains('laoban-nav-collapsed')).toBe(false);
     // The choice is kept for the next laoban page.
     const again = mount('../components/NavToggle.vue', {});
 
-    expect(document.body.classList.contains('laoban-nav-collapsed')).toBe(true);
+    expect(document.documentElement.classList.contains('laoban-nav-collapsed')).toBe(true);
     (again.b.toggle as () => void)();
     again.app.unmount();
   });

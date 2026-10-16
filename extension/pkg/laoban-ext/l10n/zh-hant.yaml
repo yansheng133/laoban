@@ -46,6 +46,7 @@ laoban:
     loading: 讀取中…
     changeTitle: 修改這個應用（意見收斂）
     idle: 用左邊的「意見收斂」修改這個應用；程式碼與 3D 版面也可以直接修改。
+    idleViewOnly: "你可以看這個應用的版本、程式碼和意見收斂；你的角色不能修改它。"
     stale: 別人剛發布了新版本。存檔或放棄目前的修改後，頁面會載入新版本。
     reloading: 別人發布了新版本，正在載入…
     currentSteps: 目前的建置步驟
@@ -264,6 +265,7 @@ laoban:
     sideTitle: 意見
     sideOpenHint: 關閉放大後，在左邊的意見收斂開一輪，草稿會一起送出。
   errors:
+    app_exists: "已經有同名的應用。要修改它，請在應用清單按「編輯」；要另外建立，請換一個名稱。"
     forbidden: "你沒有這個操作的權限：需要應用所在 namespace（Rancher Project）的「laoban user」角色或編輯權限，請洽管理者。"
     unauthenticated: "登入已失效，請重新登入 Rancher。"
     unavailable: "laoban 後端目前無法連線（APIService 尚未就緒），請稍後再試或請管理者查看。"
