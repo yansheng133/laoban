@@ -1431,12 +1431,12 @@ impl M0Service {
         let opinions = self.new_opinions(app, &current, &items)?;
         let now = SystemTime::now();
         let at = time::rfc3339(now);
-        let id = time::round_id(now);
         {
             let mut rs = self.rounds();
             if rs.get(app).is_some_and(|r| r.state.active()) {
                 return Err(M0Error::RoundActive);
             }
+            let id = time::round_id(now);
             let mut r = Round::open_with(
                 self.round_limits,
                 id,
