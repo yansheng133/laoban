@@ -2,14 +2,14 @@
 
 laoban 後端服務的 Helm chart。開發初期，尚未發行。
 
-試吃版（M0，見 `docs/m0-design.md`）的部署位置是**下游叢集 `rke2`**（Rancher 叢集 ID `c-m-26kbxk5f`）的 namespace `laoban-system`，不是 Rancher local 叢集。M0 的後端不呼叫任何 Kubernetes API、不寫入任何叢集，所以 chart 預設**不建立任何 RBAC**、Pod 也不掛 ServiceAccount token；產生的應用由 Fleet 部署（`deploy/m0/`）。身分模擬（impersonation）、CRD、稽核紀錄暫存卷都留到第一階段，chart 裡保留對應的範本，預設關閉。
+試吃版（M0，見 `docs/m0-design.md`）的部署位置是**下游叢集 `rke2`**（Rancher 叢集 ID `c-m-26kbxk5f`）的 namespace `laoban-system`，不是 Rancher local 叢集。M0 的後端以 aggregated API 提供服務（見下面的「Aggregated API」），自己的權限只有兩項：讀 `kube-system` 的 `extension-apiserver-authentication`，以及在 `laoban-system` 讀寫意見收斂的 `Round` 資源（v0.1.15 起，讓一輪在重啟後還在）。產生的應用由 Fleet 部署（`deploy/m0/`），後端不寫入其他任何東西。身分模擬（impersonation）、第一階段的 CRD、稽核紀錄暫存卷都留到第一階段，chart 裡保留對應的範本，預設關閉。
 
 ## 三個 chart 的分工
 
 | Chart | 位置 | 內容 | 誰產生 |
 |---|---|---|---|
 | `laoban` | `charts/laoban` | 後端 Deployment、Service、ServiceAccount；第一階段才開的 RBAC（`impersonation.enabled`）與 PVC（`persistence.enabled`） | 手寫（本目錄） |
-| `laoban-crd` | `charts/laoban-crd` | CRD：`ProjectPolicy`、`ChangeRequest`、`ArchitectureVersion`（M0 不使用） | 手寫 |
+| `laoban-crd` | `charts/laoban-crd` | CRD：`Round`（M0 的意見收斂）；`ProjectPolicy`、`ChangeRequest`、`ArchitectureVersion`（第一階段） | 手寫 |
 | `laoban-ext` | 不在 repo 內 | UI extension 本體 | **由 extension 建置工具產生，不手寫** |
 
 UI extension 的 Helm chart 由 `yarn publish-pkgs`（或官方可重用的 GitHub workflow `build-extension-charts.yml`）依 `pkg/<extension>/package.json` 產生，產出 `assets/`、`charts/`、`extensions/` 與 `index.yaml`［1］。所以 `laoban-ext` 不在這裡手寫，相容性 annotation 寫在 extension 的 `package.json` 的 `rancher.annotations`：
@@ -31,13 +31,16 @@ kubectl --context rke2 label namespace laoban-system pod-security.kubernetes.io/
 kubectl --context rke2 -n laoban-system create secret generic laoban-anthropic --from-file=api-key=./anthropic-api-key
 kubectl --context rke2 -n laoban-system create secret generic laoban-github --from-file=token=./github-token
 
-# 2. 後端（digest 從 image workflow 的 job summary 複製，見 build/README.md）
+# 2. CRD（意見收斂的 Round；升級時也要先升級它）
+helm --kube-context rke2 install laoban-crd charts/laoban-crd -n laoban-system
+
+# 3. 後端（digest 從 image workflow 的 job summary 複製，見 build/README.md）
 helm --kube-context rke2 install laoban charts/laoban -n laoban-system \
   -f charts/laoban/ci/m0-values.yaml \
   --set image.digest=sha256:<manifest list digest>
 ```
 
-- **不必先裝 `laoban-crd`**：`crds.required` 預設 `false`。`Chart.yaml` 也拿掉了 `catalog.cattle.io/auto-install: laoban-crd=match`，從 Rancher Apps 安裝時不會連帶裝 CRD chart；第一階段要用 CRD 時再加回來並設 `crds.required=true`。
+- **先裝或先升級 `laoban-crd`**（v0.1.15 起）：意見收斂存在 `Round` 資源裡。沒裝 CRD 時後端照常啟動、其他功能都能用，只有意見收斂顯示「請管理者先升級 laoban-crd chart」，裝好後 10 秒內恢復。`crds.required` 預設仍是 `false`，所以 render 不會因為沒裝 CRD 而失敗；`Chart.yaml` 也還沒有 `catalog.cattle.io/auto-install: laoban-crd=match`（兩個 chart 的版本號目前一起升，第一階段再加回這個 annotation）。
 - GHCR 套件若還是私有，要先依 `build/README.md` 改成公開，或在 `laoban-system` 建 `kubernetes.io/dockerconfigjson` Secret 並設 `imagePullSecrets`。
 - GitHub token：fine-grained personal access token，Repository access 只選 `laoban-apps` 那一個 repo，Repository permissions 只給 **Contents: Read and write**（Metadata: Read-only 會自動帶上）。後端用 Git Data API 建 blob、tree、commit 並更新 ref，這些都屬於 Contents 權限。
 
@@ -88,7 +91,8 @@ chart 建立的物件：
 |---|---|
 | `APIService` `v1alpha1.api.laoban.yansheng133.github.io` | 把這個 API group 交給 Service 的 `https` port（8443）；`caBundle` 是下面那張憑證的 CA |
 | Secret `<fullname>-apiserver-tls` | 後端的 TLS 憑證與 CA，由 Helm 在第一次安裝時產生（10 年），升級時沿用（`lookup`；離線 `helm template` 一律重新產生） |
-| RoleBinding（`kube-system`） | 讓後端 ServiceAccount 讀 `extension-apiserver-authentication`（內建 Role `extension-apiserver-authentication-reader`），後端唯一的權限 |
+| RoleBinding（`kube-system`） | 讓後端 ServiceAccount 讀 `extension-apiserver-authentication`（內建 Role `extension-apiserver-authentication-reader`） |
+| Role 與 RoleBinding `<fullname>-state`（release namespace） | 後端存意見收斂：只能對 `laoban.yansheng133.github.io` 的 `rounds` 做 get、list、create、update、delete，沒有 patch、watch，也碰不到其他資源（`templates/state-rbac.yaml`）。使用者沒有這個資源的權限 |
 | ClusterRole `laoban-api-edit`／`laoban-api-view` | 使用者權限，帶 `aggregate-to-edit`／`-admin`／`-view` 標籤（`aggregatedApi.aggregateToDefaultRoles`）：在目標 namespace 有內建 edit／admin 的人可以用，有 view 的人可以看 |
 
 - API server 先驗證使用者並用他的 RBAC 授權，才把請求轉給後端；轉送時用自己的 proxy client 憑證，使用者放在 `X-Remote-User`／`X-Remote-Group`。後端只接受這張憑證（docs/m0-design.md 的「身分」）。
@@ -172,6 +176,7 @@ M0 預設 `persistence.enabled: false`：M0 不外送稽核紀錄（只寫後端
 | `syslog.enabled`／`host`／`port` | `LAOBAN_SYSLOG_*` | 稽核紀錄送往的 syslog 伺服器，預設 port 6514（syslog over TLS）；M0 關閉 |
 | `syslog.tls.caConfigMap`／`caKey` | `LAOBAN_SYSLOG_CA_FILE` | 簽發 syslog 伺服器憑證的 CA（ConfigMap） |
 | `syslog.tls.clientCertSecret` | `LAOBAN_SYSLOG_CLIENT_*` | mTLS 用戶端憑證，`kubernetes.io/tls` 型別的既有 Secret；伺服器不要求就留空 |
+| `rounds.limits.opinionChars`／`replyChars`／`roundChars`／`opinions`／`replies` | `LAOBAN_ROUND_MAX_*` | 意見收斂的大小限制，空白＝內建值（1000、300、8000、30、20）；只能調低，超過內建值或不是 1 以上的整數時 render 失敗 |
 | `crds.required` | — | `true` 時沒裝 `laoban-crd` 就無法 render；M0 預設 `false` |
 | `impersonation.enabled` | — | 第一階段的身分模擬 RBAC；M0 預設 `false` |
 
@@ -181,9 +186,11 @@ M0 預設 `persistence.enabled: false`：M0 不外送稽核紀錄（只寫後端
 
 ### 為什麼獨立成一個 chart
 
-Rancher charts 的慣例：CRD chart 是「唯一目的就是在主 chart 之前把 CRD 裝進叢集」的 chart，用來處理 CRD 的自動升級，以及讓使用者能用另一個 release 乾淨地移除 CRD［12］。Helm 文件明寫目前不支援用 Helm 升級或刪除 `crds/` 目錄裡的 CRD，並把「CRD 與使用它的資源分成兩個 chart」列為做法之一［16］。laoban 的 CRD 會隨版本演進，所以獨立成 `laoban-crd`，CRD 放在 `templates/` 讓 `helm upgrade` 能更新。M0 不使用 CRD：主 chart 預設 `crds.required: false`，`Chart.yaml` 也暫時拿掉 `catalog.cattle.io/auto-install: laoban-crd=match`。第一階段用到 CRD 時，把這個 annotation 加回來讓 Rancher 先裝相同版本的 CRD chart［4］，並設 `crds.required: true`，render 時就會檢查 API 是否存在。
+Rancher charts 的慣例：CRD chart 是「唯一目的就是在主 chart 之前把 CRD 裝進叢集」的 chart，用來處理 CRD 的自動升級，以及讓使用者能用另一個 release 乾淨地移除 CRD［12］。Helm 文件明寫目前不支援用 Helm 升級或刪除 `crds/` 目錄裡的 CRD，並把「CRD 與使用它的資源分成兩個 chart」列為做法之一［16］。laoban 的 CRD 會隨版本演進，所以獨立成 `laoban-crd`，CRD 放在 `templates/` 讓 `helm upgrade` 能更新。M0 只用 `Round`（意見收斂，v0.1.15 起），其他三個是第一階段的：主 chart 預設 `crds.required: false`，`Chart.yaml` 也暫時拿掉 `catalog.cattle.io/auto-install: laoban-crd=match`。第一階段用到 CRD 時，把這個 annotation 加回來讓 Rancher 先裝相同版本的 CRD chart［4］，並設 `crds.required: true`，render 時就會檢查 API 是否存在。
 
-CRD 預設加 `helm.sh/resource-policy: keep`（`keepOnUninstall: true`）：刪掉 CRD 會連同所有 ProjectPolicy、ChangeRequest、ArchitectureVersion 一起刪除。
+CRD 預設加 `helm.sh/resource-policy: keep`（`keepOnUninstall: true`）：刪掉 CRD 會連同所有 ProjectPolicy、ChangeRequest、ArchitectureVersion 與進行中的意見收斂一起刪除。
+
+`Round` 只由後端寫入：`spec.round` 是後端自己的資料（`crates/laoban-m0/src/rounds.rs`），以 `spec.schema` 標示格式版本，schema 只檢查外層欄位（`app`、`state`、`deadline`）。結束的一輪歸檔到應用 repo 的 `laoban-rounds` 分支後，在下一輪開始時刪除。
 
 ### API group：`laoban.yansheng133.github.io`
 
@@ -207,7 +214,7 @@ CI（`.github/workflows/ci.yml` 的 `chart` job）：
 
 1. `helm lint`：`laoban` 用兩組 values 各跑一次——`ci/ci-values.yaml`（把 M0 關掉的功能全部打開：impersonation RBAC、CRD 檢查、PVC、syslog mTLS，讓這些範本持續被檢查）與 `ci/m0-values.yaml`（M0 實際安裝的設定）；再加上 `laoban-crd`。全部 `--kube-version 1.34.0`。
 2. `helm template` 兩組 values，並確認缺必填值時會以明確訊息失敗：`image.digest`（兩組都測）、`anthropic.existingSecret`、`github.existingSecret`、`github.repo`、`config.model`、`ai.baseUrl` 格式、`ai.timeoutSeconds` 範圍；`crds.required` 為 `true` 而沒裝 CRD（`ci-values.yaml`，以及 M0 打開 `crds.required` 時）；`persistence.enabled` 為 `true` 而 `storageClass` 空白（兩組都測）。
-3. 確認 M0 的 render 沒有任何 ClusterRole、ClusterRoleBinding、Role、RoleBinding、PVC，ServiceAccount 與 Pod 都是 `automountServiceAccountToken: false`，M0 的環境變數都在、`LAOBAN_TOKEN_CAP` 是 `"2000000"`（不是 `2e+06`）；同時確認 `ci-values.yaml` 的 render 仍有 ClusterRole、ClusterRoleBinding、PVC。
+3. 確認 M0 的 render 沒有 ClusterRoleBinding、PVC、`impersonate`；只有一個 Role（`laoban-system` 裡的 `rounds`，沒有 patch、watch 或萬用字元）與兩個 RoleBinding（`kube-system` 讀 ConfigMap、`laoban-state`）；`rounds.limits` 沒設時不傳 `LAOBAN_ROUND_MAX_*`，設了就傳那一個；`rounds.limits` 調高、設 0、非整數或文字時 render 失敗；M0 的環境變數都在、`LAOBAN_TOKEN_CAP` 是 `"2000000"`（不是 `2e+06`）；同時確認 `ci-values.yaml` 的 render 仍有 ClusterRole、ClusterRoleBinding、PVC。
 4. `kubeconform -strict -kubernetes-version 1.34.0` 驗證兩份後端 manifest 與 `deploy/m0`。kubeconform 預設的 schema 集沒有 `CustomResourceDefinition` 本身與 Fleet 物件的 schema，這些改由下一步的 API server 檢查。
 5. 啟動 k3s（v1.34，只有 API server、不跑 agent）：`charts/laoban-crd/ci/test-crds.sh` 套用 CRD 與範例物件（結構化 schema、預設值、列舉、CEL 規則、spec 不可修改、status 規則）；兩份後端 manifest 做 server-side dry run；`deploy/m0/ci/test-m0.sh` 檢查 Fleet 物件與 `laoban-dev` 的 restricted（見 `deploy/m0/README.md`）。
 

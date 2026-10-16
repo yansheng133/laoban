@@ -101,7 +101,7 @@ pub struct Endpoint {
 }
 
 /// A validated plan.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppPlan {
     /// As suggested by the AI; may be replaced by the user's choice.

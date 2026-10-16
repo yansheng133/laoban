@@ -1,11 +1,11 @@
 apiVersion: v2
 name: laoban-crd
-description: CustomResourceDefinitions for laoban (ProjectPolicy, ChangeRequest, ArchitectureVersion).
+description: CustomResourceDefinitions for laoban (Round, ProjectPolicy, ChangeRequest, ArchitectureVersion).
 type: application
 # Keep in step with charts/laoban: catalog.cattle.io/auto-install "laoban-crd=match"
 # installs the CRD chart with the same version as the main chart.
-version: 0.1.0
-appVersion: "0.1.0"
+version: 0.1.15
+appVersion: "0.1.15"
 kubeVersion: ">= 1.34.0-0"
 home: https://github.com/yansheng133/laoban
 sources:

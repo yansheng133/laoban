@@ -14,9 +14,15 @@ import { RoundOpinion } from '../utils/backend';
 import { userLabel } from '../utils/users';
 import { formatDateTime } from '../utils/time';
 import { groupOpinions } from '../utils/opinions';
+import {
+  DEFAULT_LIMITS, RoundLimits, chars, textState
+} from '../utils/limits';
+import CharCounter from './CharCounter.vue';
 
 export default defineComponent({
   name: 'LaobanOpinionList',
+
+  components: { CharCounter },
 
   props: {
     opinions: {
@@ -42,6 +48,15 @@ export default defineComponent({
       type:    String as PropType<string | null>,
       default: null,
     },
+    limits: {
+      type:    Object as PropType<RoundLimits>,
+      default: () => ({ ...DEFAULT_LIMITS }),
+    },
+    // Characters the round still has room for (opinions and replies).
+    roundLeft: {
+      type:    Number,
+      default: Number.POSITIVE_INFINITY,
+    },
   },
 
   emits: ['support', 'reply', 'select'],
@@ -61,10 +76,28 @@ export default defineComponent({
       open.value = { ...open.value, [id]: !open.value[id] };
     }
 
+    // Why a reply cannot be sent now ('' when it can).
+    function replyProblem(o: RoundOpinion): string {
+      const text = replyText.value[o.id] || '';
+
+      if ((o.replies || []).length >= props.limits.replies) {
+        return t('laoban.limits.repliesFull', { max: props.limits.replies });
+      }
+      if (textState(text, props.limits.replyChars).over) {
+        return 'tooLong';
+      }
+      if (chars(text) > props.roundLeft) {
+        return props.roundLeft <= 0 ? t('laoban.limits.roundFull') : t('laoban.limits.roundOver', { left: props.roundLeft });
+      }
+
+      return '';
+    }
+
     function sendReply(id: string) {
       const text = (replyText.value[id] || '').trim();
+      const o = props.opinions.find((x) => x.id === id);
 
-      if (text && !props.busy) {
+      if (text && !props.busy && o && !replyProblem(o)) {
         emit('reply', id, text);
         replyText.value = { ...replyText.value, [id]: '' };
       }
@@ -74,7 +107,7 @@ export default defineComponent({
     const number = (id: string) => id.replace(/^o/, '');
 
     return {
-      t, open, replyText, groups, who, supportedByMe, toggle, sendReply, number, formatTime: (at: string) => formatDateTime(store, at)
+      t, open, replyText, groups, who, supportedByMe, toggle, sendReply, replyProblem, number, formatTime: (at: string) => formatDateTime(store, at)
     };
   },
 });
@@ -157,18 +190,31 @@ export default defineComponent({
               <input
                 v-model="replyText[o.id]"
                 type="text"
-                maxlength="1000"
+                :class="{ 'laoban-over': replyProblem(o) === 'tooLong' }"
+                :aria-invalid="replyProblem(o) === 'tooLong' ? 'true' : 'false'"
                 :placeholder="t('laoban.opinions.replyPlaceholder')"
                 :aria-label="t('laoban.opinions.replyPlaceholder')"
-                :disabled="busy"
+                :disabled="busy || (o.replies || []).length >= limits.replies"
               >
               <button
                 type="submit"
                 class="btn btn-sm role-secondary"
-                :disabled="busy || !(replyText[o.id] || '').trim()"
+                :disabled="busy || !(replyText[o.id] || '').trim() || !!replyProblem(o)"
               >
                 {{ t('laoban.opinions.send') }}
               </button>
+              <CharCounter
+                v-if="replyText[o.id]"
+                class="laoban-reply-counter"
+                :text="replyText[o.id]"
+                :max="limits.replyChars"
+              />
+              <p
+                v-if="replyProblem(o) && replyProblem(o) !== 'tooLong'"
+                class="text-error laoban-reply-problem"
+              >
+                {{ replyProblem(o) }}
+              </p>
             </form>
           </div>
         </li>
@@ -264,5 +310,15 @@ export default defineComponent({
   button {
     flex: none;
   }
+}
+.laoban-over {
+  border-color: var(--error) !important;
+}
+
+.laoban-reply-counter,
+.laoban-reply-problem {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 12px;
 }
 </style>

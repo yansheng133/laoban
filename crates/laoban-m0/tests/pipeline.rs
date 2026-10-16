@@ -445,7 +445,10 @@ fn config_json_has_no_secrets() {
     assert_eq!(
         c,
         json!({"model": MODEL, "targetNamespace": "laoban-dev", "repo": "example-owner/laoban-apps",
-               "tokenBudget": {"cap": 1_000_000, "used": 0}, "aiTimeoutSeconds": 300})
+               "tokenBudget": {"cap": 1_000_000, "used": 0}, "aiTimeoutSeconds": 300,
+               "roundLimits": {"opinionChars": 1000, "replyChars": 300, "roundChars": 8000,
+                               "opinions": 30, "replies": 20, "batch": 10},
+               "roundsAvailable": true})
     );
     assert!(!c.to_string().contains(GH_TOKEN));
 }

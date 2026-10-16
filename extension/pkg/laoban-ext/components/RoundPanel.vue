@@ -11,8 +11,12 @@ import {
 import { useStore } from 'vuex';
 import { useText } from '../composables/useText';
 import { RoundView } from '../utils/backend';
-import { OpinionDraft, RemovedDraft, MAX_BATCH } from '../utils/opinions';
+import { OpinionDraft, RemovedDraft } from '../utils/opinions';
+import {
+  DEFAULT_LIMITS, RoundLimits, chars, roundSpace, textState
+} from '../utils/limits';
 import OpinionList from './OpinionList.vue';
+import CharCounter from './CharCounter.vue';
 import { userLabel } from '../utils/users';
 import { formatDateTime, formatClock } from '../utils/time';
 
@@ -21,7 +25,7 @@ export const DEADLINES = [0, 10, 30, 60, 240, 1440];
 export default defineComponent({
   name: 'LaobanRoundPanel',
 
-  components: { OpinionList },
+  components: { OpinionList, CharCounter },
 
   props: {
     round: {
@@ -70,6 +74,16 @@ export default defineComponent({
       type:    String,
       default: '',
     },
+    // Size limits, as the backend reports them.
+    limits: {
+      type:    Object as PropType<RoundLimits>,
+      default: () => ({ ...DEFAULT_LIMITS }),
+    },
+    // False when the backend cannot store rounds (the Round CRD is missing).
+    available: {
+      type:    Boolean,
+      default: true,
+    },
   },
 
   emits: ['update:draft', 'open', 'act', 'add', 'remove-draft', 'undo-draft', 'support', 'reply', 'select-target'],
@@ -108,7 +122,7 @@ export default defineComponent({
     // the same for everyone looking at the page.
     const stateSeconds = computed(() => {
       const r = props.round;
-      const entry = r ? [...r.log].reverse().find((e) => e.event === r.state) : null;
+      const entry = r ? [...r.log].reverse().find((e) => e.code === r.state) : null;
       const t0 = entry ? Date.parse(entry.at) : NaN;
 
       return Number.isNaN(t0) ? 0 : Math.max(0, Math.floor((now.value - t0) / 1000));
@@ -130,13 +144,27 @@ export default defineComponent({
     });
     // The general opinion counts as one more.
     const count = computed(() => props.drafts.length + (props.draft.trim() ? 1 : 0));
-    const tooMany = computed(() => count.value > MAX_BATCH);
-    const canOpen = computed(() => !busy.value && !active.value && count.value > 0 && !tooMany.value);
-    const canAdd = computed(() => !busy.value && !!you.value?.canAddOpinion && count.value > 0 && !tooMany.value);
+    const maxBatch = computed(() => props.limits.batch);
+    const tooMany = computed(() => count.value > maxBatch.value);
+    // Text that is too long stays as typed and cannot be sent.
+    const draftState = computed(() => textState(props.draft, props.limits.opinionChars));
+    const draftsTooLong = computed(() => props.drafts.some((d) => chars(d.text) > props.limits.opinionChars));
+    const tooLong = computed(() => draftState.value.over || draftsTooLong.value);
+    // How full the round is, with what is about to be sent. A new round
+    // starts empty.
+    const addingChars = computed(() => chars(props.draft) + props.drafts.reduce((n, d) => n + chars(d.text), 0));
+    const space = computed(() => roundSpace(active.value ? props.round : null, props.limits, { chars: addingChars.value, opinions: count.value }));
+    const objectionState = computed(() => textState(objection.value, props.limits.opinionChars));
+    const objectionSpace = computed(() => roundSpace(props.round, props.limits, { chars: chars(objection.value), opinions: 1 }));
+    const roundLeft = computed(() => roundSpace(props.round, props.limits, { chars: 0, opinions: 0 }).left);
+    const canObject = computed(() => !busy.value && !!objection.value.trim() && !objectionState.value.over && !objectionSpace.value.over);
+    const sendable = computed(() => count.value > 0 && !tooMany.value && !tooLong.value && !space.value.over);
+    const canOpen = computed(() => !busy.value && props.available && !active.value && sendable.value);
+    const canAdd = computed(() => !busy.value && props.available && !!you.value?.canAddOpinion && sendable.value);
 
     // Log entries in the page's language; the backend's Chinese text when
     // the code is unknown.
-    const EVENTS = ['opened', 'opinion', 'objected', 'converging', 'converged', 'failed', 'confirmed', 'skipped', 'applying', 'done', 'cancelled', 'supported', 'unsupported', 'replied'];
+    const EVENTS = ['opened', 'opinion', 'objected', 'converging', 'converged', 'failed', 'confirmed', 'skipped', 'applying', 'done', 'cancelled', 'supported', 'unsupported', 'replied', 'restarted'];
 
     function logText(l: RoundView['log'][number]): string {
       if (!l.code || !EVENTS.includes(l.code)) {
@@ -174,7 +202,7 @@ export default defineComponent({
     }
 
     function sendObjection() {
-      if (objection.value.trim() && !busy.value) {
+      if (canObject.value) {
         emit('act', 'object', { text: objection.value.trim() });
         objecting.value = false;
         objection.value = '';
@@ -200,7 +228,14 @@ export default defineComponent({
       canAdd,
       count,
       tooMany,
-      maxBatch: MAX_BATCH,
+      maxBatch,
+      draftState,
+      draftsTooLong,
+      space,
+      objectionState,
+      roundLeft,
+      objectionSpace,
+      canObject,
       formatTime,
       logText,
       open,
@@ -222,6 +257,13 @@ export default defineComponent({
       role="status"
     >
       {{ notice }}
+    </p>
+    <p
+      v-if="!available"
+      class="text-error laoban-round-notice"
+      role="alert"
+    >
+      {{ t('laoban.round.unavailable') }}
     </p>
     <!-- No round running: open one. -->
     <form
@@ -307,11 +349,28 @@ export default defineComponent({
         id="laoban-opinion"
         :value="draft"
         rows="4"
-        maxlength="1000"
+        :class="{ 'laoban-over': draftState.over }"
+        :aria-invalid="draftState.over ? 'true' : 'false'"
         :placeholder="t('laoban.edit.promptPlaceholder')"
         :disabled="busy"
         @input="$emit('update:draft', $event.target.value)"
       />
+      <CharCounter
+        :text="draft"
+        :max="limits.opinionChars"
+      />
+      <p
+        v-if="draftsTooLong"
+        class="text-error laoban-hint"
+      >
+        {{ t('laoban.limits.draftTooLong', { max: limits.opinionChars }) }}
+      </p>
+      <p
+        v-if="space.over"
+        class="text-error laoban-hint"
+      >
+        {{ t('laoban.limits.newRoundOver', { max: space.max }) }}
+      </p>
       <div class="laoban-round-row">
         <label>
           {{ t('laoban.round.deadlineLabel') }}
@@ -404,6 +463,8 @@ export default defineComponent({
         :can-discuss="!!you && !!you.canDiscuss"
         :busy="busy"
         :selected="selectedTarget"
+        :limits="limits"
+        :round-left="roundLeft"
         @support="$emit('support', $event)"
         @reply="(id, text) => $emit('reply', id, text)"
         @select="$emit('select-target', $event)"
@@ -472,6 +533,34 @@ export default defineComponent({
         >
           {{ t('laoban.opinions.howTo') }}
         </p>
+        <div
+          v-if="space.shown"
+          class="laoban-space"
+          :class="{ over: space.over || space.full }"
+          data-testid="laoban-space"
+        >
+          <div
+            class="laoban-space-bar"
+            role="meter"
+            :aria-valuenow="space.used + space.adding"
+            aria-valuemin="0"
+            :aria-valuemax="space.max"
+            :aria-label="t('laoban.limits.spaceLabel')"
+          >
+            <span :style="{ width: `${ Math.round(space.share * 100) }%` }" />
+          </div>
+          <p class="laoban-hint">
+            <template v-if="space.full">
+              {{ t('laoban.limits.roundFull') }}
+            </template>
+            <template v-else-if="space.over">
+              {{ t('laoban.limits.roundOver', { left: space.left }) }}
+            </template>
+            <template v-else>
+              {{ t('laoban.limits.roundSpace', { used: space.used, max: space.max, left: space.left }) }}
+            </template>
+          </p>
+        </div>
         <label
           for="laoban-opinion"
           class="laoban-label"
@@ -480,10 +569,21 @@ export default defineComponent({
           id="laoban-opinion"
           :value="draft"
           rows="3"
-          maxlength="1000"
-          :disabled="busy || !you || !you.canAddOpinion"
+          :class="{ 'laoban-over': draftState.over }"
+          :aria-invalid="draftState.over ? 'true' : 'false'"
+          :disabled="busy || !you || !you.canAddOpinion || space.full"
           @input="$emit('update:draft', $event.target.value)"
         />
+        <CharCounter
+          :text="draft"
+          :max="limits.opinionChars"
+        />
+        <p
+          v-if="draftsTooLong"
+          class="text-error laoban-hint"
+        >
+          {{ t('laoban.limits.draftTooLong', { max: limits.opinionChars }) }}
+        </p>
         <button
           type="submit"
           class="btn role-primary"
@@ -583,14 +683,25 @@ export default defineComponent({
           <textarea
             v-model="objection"
             rows="3"
-            maxlength="1000"
+            :class="{ 'laoban-over': objectionState.over }"
+            :aria-invalid="objectionState.over ? 'true' : 'false'"
             :placeholder="t('laoban.round.objectPlaceholder')"
             :aria-label="t('laoban.round.object')"
           />
+          <CharCounter
+            :text="objection"
+            :max="limits.opinionChars"
+          />
+          <p
+            v-if="objectionSpace.over && !objectionState.over"
+            class="text-error laoban-hint"
+          >
+            {{ objectionSpace.full ? t('laoban.limits.roundFull') : t('laoban.limits.roundOver', { left: objectionSpace.left }) }}
+          </p>
           <button
             type="submit"
             class="btn role-secondary"
-            :disabled="busy || !objection.trim()"
+            :disabled="!canObject"
           >
             {{ t('laoban.round.objectSend') }}
           </button>
@@ -783,6 +894,35 @@ export default defineComponent({
   ul {
     margin: 4px 0 0;
     padding-left: 16px;
+  }
+}
+.laoban-over {
+  border-color: var(--error) !important;
+  outline-color: var(--error);
+}
+
+.laoban-space {
+  margin: 4px 0;
+
+  .laoban-space-bar {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--border);
+    overflow: hidden;
+
+    span {
+      display: block;
+      height: 100%;
+      background: var(--warning);
+    }
+  }
+
+  &.over {
+    color: var(--error);
+
+    .laoban-space-bar span {
+      background: var(--error);
+    }
   }
 }
 </style>

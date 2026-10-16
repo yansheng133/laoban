@@ -1,5 +1,6 @@
 //! In-memory plan store: keyed by plan ID, 1 hour TTL, at most 20 plans
-//! (the oldest is evicted). Lost on restart, which M0 accepts.
+//! (the oldest is evicted). Lost on restart, which M0 accepts for new apps;
+//! a round keeps what its plan needs (`rounds::PlanRecipe`).
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -85,6 +86,11 @@ impl PlanStore {
         let ttl = self.ttl;
         self.entries
             .retain(|_, e| now.saturating_duration_since(e.created) < ttl);
+    }
+
+    /// A copy of a plan (expired ones too, until purged).
+    pub fn get(&self, id: &str) -> Option<StoredPlan> {
+        self.entries.get(id).map(|e| e.plan.clone())
     }
 
     pub fn contains(&self, id: &str) -> bool {

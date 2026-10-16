@@ -3,6 +3,7 @@
 //! JSON bodies and maps [`M0Error`] to status codes.
 
 use std::collections::HashMap;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -28,9 +29,13 @@ use crate::plan::{
     PLAN_INSTRUCTIONS, ROUND_PLAN_INSTRUCTIONS,
 };
 use crate::render::{render, rollout_hashes, RenderInput};
-use crate::rounds::{self, Part, Round, RoundError, RoundPlan, State};
+use crate::rounds::{self, Limits, Part, PlanRecipe, Round, RoundError, RoundPlan, State, Text};
+use crate::state::{MemoryStore, StateError, StateStore};
 use crate::store::{BaseApp, PlanStore, StoreError, StoredPlan};
 use crate::{time, InvalidOutput};
+
+mod persist;
+pub use persist::{ARCHIVE_BRANCH, ARCHIVE_DIR};
 
 /// Fleet objects created once by hand (design: Fleet).
 pub const FLEET_WORKSPACE: &str = "fleet-default";
@@ -269,6 +274,13 @@ pub enum M0Error {
     /// Too many background jobs at once.
     #[error("busy")]
     Busy,
+    /// Rounds cannot be stored: the `Round` CRD is not installed (or the
+    /// stored rounds are still being read).
+    #[error("rounds unavailable")]
+    RoundsUnavailable,
+    /// Writing a round to its resource failed.
+    #[error(transparent)]
+    State(StateError),
 }
 
 impl M0Error {
@@ -289,9 +301,9 @@ impl M0Error {
             M0Error::RoundActive => "round_active",
             M0Error::RoundScope(_) => "round_scope",
             M0Error::MergeConflict(_) | M0Error::ManualEditLost(_) => "merge_conflict",
-            M0Error::Round(RoundError::Invalid(_)) | M0Error::Round(RoundError::Full) => {
-                "bad_request"
-            }
+            M0Error::Round(RoundError::Invalid(_)) => "bad_request",
+            M0Error::Round(RoundError::TooLong { .. }) => "too_long",
+            M0Error::Round(RoundError::Full { .. }) => "round_full",
             M0Error::Round(RoundError::WrongState(_)) => "round_state",
             M0Error::Round(RoundError::NotInitiator) => "not_initiator",
             M0Error::Round(RoundError::NotConfirmer) => "not_confirmer",
@@ -301,6 +313,10 @@ impl M0Error {
             M0Error::InvalidFiles(_) => "invalid_files",
             M0Error::JobNotFound => "job_not_found",
             M0Error::Busy => "busy",
+            M0Error::RoundsUnavailable => "rounds_unavailable",
+            M0Error::State(StateError::Conflict) => "round_conflict",
+            M0Error::State(StateError::TooLarge) => "round_full",
+            M0Error::State(_) => "state_failed",
         }
     }
 
@@ -310,9 +326,10 @@ impl M0Error {
     /// user's prompt; AI output (`ai_invalid_output`) is deliberately left out.
     pub fn log_detail(&self) -> Option<String> {
         match self {
-            M0Error::Github(_) | M0Error::AiUnavailable(_) | M0Error::Internal(_) => {
-                Some(self.to_string())
-            }
+            M0Error::Github(_)
+            | M0Error::AiUnavailable(_)
+            | M0Error::Internal(_)
+            | M0Error::State(_) => Some(self.to_string()),
             _ => None,
         }
     }
@@ -335,13 +352,19 @@ impl M0Error {
             | M0Error::VersionConflict
             | M0Error::Round(RoundError::WrongState(_))
             | M0Error::Round(RoundError::NotConfirmer) => 409,
-            M0Error::Round(RoundError::Invalid(_)) | M0Error::Round(RoundError::Full) => 400,
+            M0Error::Round(RoundError::Invalid(_))
+            | M0Error::Round(RoundError::TooLong { .. })
+            | M0Error::Round(RoundError::Full { .. }) => 400,
             M0Error::Round(RoundError::NotInitiator) => 403,
             M0Error::Round(RoundError::NoSuchOpinion) => 404,
             M0Error::Unauthenticated => 401,
             M0Error::InvalidFiles(_) => 400,
             M0Error::JobNotFound => 404,
             M0Error::Busy => 503,
+            M0Error::RoundsUnavailable => 503,
+            M0Error::State(StateError::Conflict) => 409,
+            M0Error::State(StateError::TooLarge) => 400,
+            M0Error::State(_) => 503,
         }
     }
 
@@ -385,9 +408,17 @@ impl M0Error {
                 "AI 的修改會蓋掉這一輪期間對 {files} 的手動修改，沒有部署。請發起人重新收斂；如果手動修改不需要保留，請先把它改回去。"
             ),
             M0Error::Round(RoundError::Invalid(m)) => (*m).into(),
-            M0Error::Round(RoundError::Full) => {
-                "這一輪的意見已達上限（30 則或 8000 字），請等這一輪結束再開下一輪。".into()
-            }
+            M0Error::Round(RoundError::TooLong { what, max }) => match what {
+                Text::Opinion => format!("一則意見最多 {max} 字，請精簡後再送出。"),
+                Text::Reply => format!("一則回覆最多 {max} 字，請精簡後再送出。"),
+            },
+            M0Error::Round(RoundError::Full {
+                opinions,
+                replies,
+                chars,
+            }) => format!(
+                "這一輪的意見已滿（最多 {opinions} 則意見、每則 {replies} 則回覆，合計 {chars} 字），請先收斂，或等這一輪結束再開下一輪。"
+            ),
             M0Error::Round(RoundError::WrongState(st)) => format!(
                 "這一輪目前不能這樣做（{}）。請重新整理頁面。",
                 state_label(*st)
@@ -414,6 +445,20 @@ impl M0Error {
                 "找不到這項工作的進度，可能已超過 1 小時或後端已重新啟動。請到應用清單確認結果。".into()
             }
             M0Error::Busy => "後端目前有太多工作在進行，請稍後再試。".into(),
+            M0Error::RoundsUnavailable => {
+                "意見收斂暫時無法使用：叢集裡沒有 laoban 的 Round 資源。請管理者先升級 laoban-crd chart。"
+                    .into()
+            }
+            M0Error::State(StateError::Conflict) => {
+                "這一輪剛被別人改過，請重新整理頁面再試一次。".into()
+            }
+            M0Error::State(StateError::TooLarge) => {
+                "這一輪的資料超過儲存上限，沒有寫入。請精簡意見。".into()
+            }
+            M0Error::State(_) => {
+                "儲存意見收斂的資料失敗，沒有寫入，請稍後再試；若持續失敗請管理者檢查後端的權限。"
+                    .into()
+            }
         }
     }
 }
@@ -454,10 +499,18 @@ pub struct M0Service {
     budget: Arc<TokenBudget>,
     github: GithubCommitter,
     store: Mutex<PlanStore>,
-    /// The latest round of 意見收斂 per app (active or finished).
+    /// The latest round of 意見收斂 per app (active or finished), as
+    /// written to its `Round` resource.
     rounds: Mutex<HashMap<String, Round>>,
-    /// Per app: (round ID, the files when that round started).
-    round_starts: Mutex<HashMap<String, (String, GeneratedFiles)>>,
+    /// Where rounds are stored (Kubernetes in the server, memory in tests).
+    state: Arc<dyn StateStore>,
+    /// The stored rounds have been read and can be written.
+    rounds_ready: AtomicBool,
+    round_limits: Limits,
+    /// Replaced rounds waiting to be archived and deleted.
+    archive_queue: Mutex<Vec<Round>>,
+    /// Round ID → (failed archive attempts, next attempt in unix seconds).
+    archive_retry: Mutex<HashMap<String, (u32, u64)>>,
     /// Set by [`M0Service::attach`] in the server: the AI work of a round
     /// (converging, writing the code and publishing) then runs on its own
     /// thread and the request returns at once. Requests through the
@@ -503,10 +556,29 @@ impl M0Service {
             github,
             store: Mutex::new(PlanStore::default()),
             rounds: Mutex::new(HashMap::new()),
-            round_starts: Mutex::new(HashMap::new()),
+            state: Arc::new(MemoryStore::new()),
+            rounds_ready: AtomicBool::new(true),
+            round_limits: Limits::default(),
+            archive_queue: Mutex::new(Vec::new()),
+            archive_retry: Mutex::new(HashMap::new()),
             me: std::sync::OnceLock::new(),
             jobs: Mutex::new(HashMap::new()),
         })
+    }
+
+    /// Keep rounds in `store` instead of memory. Call before serving; the
+    /// stored rounds are read by [`M0Service::restore_rounds`] (the round
+    /// timer does it first).
+    pub fn use_state_store(&mut self, store: Arc<dyn StateStore>) {
+        self.state = store;
+        self.rounds_ready
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Lower the size limits of rounds (see [`Limits`]). Values above the
+    /// maximum are refused when the configuration is read.
+    pub fn set_round_limits(&mut self, limits: Limits) {
+        self.round_limits = limits;
     }
 
     /// Start `work` as a job and answer with it: still running when the
@@ -661,6 +733,8 @@ impl M0Service {
             "repo": self.settings.repo(),
             "tokenBudget": { "cap": self.budget.cap(), "used": self.budget.used() },
             "aiTimeoutSeconds": self.settings.ai_timeout_secs,
+            "roundLimits": self.round_limits,
+            "roundsAvailable": self.rounds_ready(),
         })
     }
 
@@ -723,7 +797,12 @@ impl M0Service {
         let mut parts: Vec<Part> = Vec::new();
         let (plan, completion, app, base) = match base_name {
             Some(base_app) => {
-                let current = self.load_app(&base_app)?;
+                // A round's plan is made from a known commit, so it can be
+                // made again from the same files after a restart.
+                let current = match round.as_ref().and_then(|r| r.base_commit.as_deref()) {
+                    Some(commit) => self.load_version(&base_app, commit)?,
+                    None => self.load_app(&base_app)?,
+                };
                 require_user(user)?;
                 if current.files.total_bytes() > MAX_EDIT_CODE_BYTES {
                     return Err(M0Error::BadRequest(
@@ -1103,8 +1182,14 @@ impl M0Service {
             .commit(&commit_files, &p.message)
             .map_err(M0Error::Github)?;
 
+        Ok(self.version_response(app, p.kind, &sha, p.files))
+    }
+
+    /// What publishing a version answers: the commit, the links and the
+    /// deployments to watch.
+    fn version_response(&self, app: &str, kind: &str, sha: &str, files: &GeneratedFiles) -> Value {
         let s = &self.settings;
-        let rollout: Vec<Value> = rollout_hashes(p.files)
+        let rollout: Vec<Value> = rollout_hashes(files)
             .into_iter()
             .map(|(component, hash)| {
                 let name = format!("{app}-{component}");
@@ -1118,11 +1203,11 @@ impl M0Service {
                 })
             })
             .collect();
-        Ok(json!({
-            "mode": p.kind,
+        json!({
+            "mode": kind,
             "appName": app,
             "commit": sha,
-            "commitUrl": self.commit_url(&sha),
+            "commitUrl": self.commit_url(sha),
             "path": format!("{APPS_DIR}/{app}"),
             "appUrl": self.app_url(app),
             "fleet": {
@@ -1131,7 +1216,7 @@ impl M0Service {
                 "bundlePrefix": format!("{FLEET_GITREPO}-{APPS_DIR}-{app}"),
             },
             "rollout": rollout,
-        }))
+        })
     }
 
     fn commit_url(&self, sha: &str) -> String {
@@ -1239,16 +1324,21 @@ impl M0Service {
         }
     }
 
-    /// `GET .../apps/<name>/round`: the latest round (or null).
+    /// `GET .../apps/<name>/round`: the latest round (or null), whether
+    /// rounds can be used, and the limits for a new round.
     pub fn round(&self, app: &str, user: Option<&str>) -> Result<Value, M0Error> {
         if !valid_app_name(app) {
             return Err(M0Error::BadRequest("應用名稱不正確。"));
         }
-        Ok(json!({ "round": self.round_json(app, user) }))
+        Ok(json!({
+            "round": self.round_json(app, user),
+            "roundsAvailable": self.rounds_ready(),
+            "limits": self.round_limits,
+        }))
     }
 
     /// `POST .../apps/<name>/round`: open a round with the first opinion.
-    /// With a deadline of 0 it converges right away (in this request).
+    /// With a deadline of 0 it converges right away.
     pub fn open_round(
         &self,
         app: &str,
@@ -1259,10 +1349,13 @@ impl M0Service {
         if !valid_app_name(app) {
             return Err(M0Error::BadRequest("應用名稱不正確。"));
         }
+        self.require_rounds()?;
         let scope = rounds::parse_scope(body.scope.as_deref().unwrap_or("all"))
             .ok_or(M0Error::BadRequest("範圍只能是 web、api 或 all。"))?;
         // Only apps laoban can change.
         let current = self.load_app(app)?;
+        // The files at this commit tell hand edits made during the round.
+        let start_commit = self.latest_commit(app)?;
         let mut items: Vec<OpinionItem> = Vec::new();
         if !body.opinion.trim().is_empty() || body.items.is_empty() {
             items.push(OpinionItem {
@@ -1272,7 +1365,6 @@ impl M0Service {
         }
         items.extend(body.items.iter().cloned());
         let opinions = self.new_opinions(app, &current, &items)?;
-        let start_files = current.files;
         let now = SystemTime::now();
         let at = time::rfc3339(now);
         let id = time::plan_id(now).replacen("p-", "r-", 1);
@@ -1281,7 +1373,8 @@ impl M0Service {
             if rs.get(app).is_some_and(|r| r.state.active()) {
                 return Err(M0Error::RoundActive);
             }
-            let r = Round::open(
+            let mut r = Round::open_with(
+                self.round_limits,
                 id,
                 app,
                 user,
@@ -1292,11 +1385,11 @@ impl M0Service {
                 &at,
             )
             .map_err(M0Error::Round)?;
-            self.round_starts
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .insert(app.to_string(), (r.id.clone(), start_files));
-            rs.insert(app.to_string(), r);
+            r.start_commit = start_commit;
+            self.write_round(&mut r).map_err(|e| self.state_error(e))?;
+            if let Some(old) = rs.insert(app.to_string(), r) {
+                self.retire_round(old);
+            }
         }
         if body.deadline_minutes == 0 {
             self.converge_if_due_soon(app, unix(now));
@@ -1312,6 +1405,7 @@ impl M0Service {
         user: Option<&str>,
     ) -> Result<Value, M0Error> {
         let user = require_user(user)?;
+        self.require_rounds()?;
         let mut items = body.items.clone();
         if !body.text.trim().is_empty() || body.target.is_some() || items.is_empty() {
             items.insert(
@@ -1334,7 +1428,7 @@ impl M0Service {
                 .collect()
         };
         let at = time::rfc3339(SystemTime::now());
-        self.with_round(app, |r| r.add_opinions(user, opinions, &at))?;
+        self.change_round(app, |r| r.add_opinions(user, opinions.clone(), &at))?;
         self.round(app, Some(user))
     }
 
@@ -1347,7 +1441,7 @@ impl M0Service {
     ) -> Result<Value, M0Error> {
         let user = require_user(user)?;
         let at = time::rfc3339(SystemTime::now());
-        self.with_round(app, |r| r.toggle_support(user, opinion, &at).map(|_| ()))?;
+        self.change_round(app, |r| r.toggle_support(user, opinion, &at).map(|_| ()))?;
         self.round(app, Some(user))
     }
 
@@ -1361,7 +1455,7 @@ impl M0Service {
     ) -> Result<Value, M0Error> {
         let user = require_user(user)?;
         let at = time::rfc3339(SystemTime::now());
-        self.with_round(app, |r| r.reply(user, opinion, &body.text, &at))?;
+        self.change_round(app, |r| r.reply(user, opinion, &body.text, &at))?;
         self.round(app, Some(user))
     }
 
@@ -1411,11 +1505,11 @@ impl M0Service {
     }
 
     /// `POST .../round/confirm`. The last answer starts the AI writing the
-    /// code (in this request); the response then has `applied`.
+    /// code; the response then has `applied` when it ran in the request.
     pub fn confirm_round(&self, app: &str, user: Option<&str>) -> Result<Value, M0Error> {
         let user = require_user(user)?;
         let at = time::rfc3339(SystemTime::now());
-        self.with_round(app, |r| r.confirm(user, &at))?;
+        self.change_round(app, |r| r.confirm(user, &at))?;
         self.finish_if_answered(app, user)
     }
 
@@ -1428,7 +1522,7 @@ impl M0Service {
     ) -> Result<Value, M0Error> {
         let user = require_user(user)?;
         let at = time::rfc3339(SystemTime::now());
-        self.with_round(app, |r| r.skip(user, body.user.trim(), &at))?;
+        self.change_round(app, |r| r.skip(user, body.user.trim(), &at))?;
         self.finish_if_answered(app, user)
     }
 
@@ -1442,7 +1536,7 @@ impl M0Service {
         let user = require_user(user)?;
         let now = SystemTime::now();
         let at = time::rfc3339(now);
-        self.with_round(app, |r| r.object(user, &body.text, unix(now), &at))?;
+        self.change_round(app, |r| r.object(user, &body.text, unix(now), &at))?;
         self.round(app, Some(user))
     }
 
@@ -1450,43 +1544,33 @@ impl M0Service {
     pub fn cancel_round(&self, app: &str, user: Option<&str>) -> Result<Value, M0Error> {
         let user = require_user(user)?;
         let at = time::rfc3339(SystemTime::now());
-        self.with_round(app, |r| r.cancel(user, &at))?;
+        self.change_round(app, |r| r.cancel(user, &at))?;
         self.round(app, Some(user))
     }
 
     /// `POST .../round/converge`: the initiator converges again after a
-    /// failure (in this request).
+    /// failure.
     pub fn retry_round(&self, app: &str, user: Option<&str>) -> Result<Value, M0Error> {
         let user = require_user(user)?;
-        let id = {
-            let mut rs = self.rounds();
-            let r = rs
-                .get_mut(app)
-                .ok_or(M0Error::Round(RoundError::WrongState(State::Cancelled)))?;
-            r.check_retry(user).map_err(M0Error::Round)?;
-            r.start_converging(&time::rfc3339(SystemTime::now()));
-            r.id.clone()
-        };
+        let at = time::rfc3339(SystemTime::now());
+        let id = self.change_round(app, |r| {
+            r.check_retry(user)?;
+            r.start_converging(&at);
+            Ok(r.id.clone())
+        })?;
         let app_owned = app.to_string();
         self.in_background("laoban-converge", move |s| s.converge(&app_owned, &id));
         self.round(app, Some(user))
     }
 
-    fn with_round<F>(&self, app: &str, f: F) -> Result<(), M0Error>
-    where
-        F: FnOnce(&mut Round) -> Result<(), RoundError>,
-    {
-        let mut rs = self.rounds();
-        match rs.get_mut(app) {
-            Some(r) if r.state.active() || r.state == State::Done => f(r).map_err(M0Error::Round),
-            Some(r) => Err(M0Error::Round(RoundError::WrongState(r.state))),
-            None => Err(M0Error::Round(RoundError::WrongState(State::Cancelled))),
-        }
-    }
-
     /// Converge every round whose deadline has passed. Called by the
     /// background timer (see [`M0Service::start_round_timer`]) and tests.
+    /// Until the stored rounds could be read, it tries to read them.
     pub fn tick(&self, now_unix: u64) {
+        if !self.rounds_ready() {
+            let _ = self.restore_rounds();
+            return;
+        }
         let due: Vec<String> = self
             .rounds()
             .iter()
@@ -1498,93 +1582,101 @@ impl M0Service {
         }
     }
 
-    /// Check for due rounds every 10 seconds, one at a time.
+    /// Read the stored rounds, then check for due rounds every 10 seconds,
+    /// one at a time, and archive finished ones.
     pub fn start_round_timer(self: &Arc<Self>) {
         self.attach();
+        let _ = self.restore_rounds();
         let service = Arc::downgrade(self);
         let _ = std::thread::Builder::new()
             .name("laoban-rounds".into())
             .spawn(move || loop {
                 std::thread::sleep(std::time::Duration::from_secs(10));
                 match service.upgrade() {
-                    Some(s) => s.tick(unix(SystemTime::now())),
+                    Some(s) => {
+                        let now = persist::now_unix();
+                        s.tick(now);
+                        s.archive_tick(now);
+                    }
                     None => return,
                 }
             });
+    }
+
+    /// Mark a due round converging (written before anything else).
+    fn begin_converging(&self, app: &str, now_unix: u64) -> Option<String> {
+        let mut rs = self.rounds();
+        let id = rs.get(app).filter(|r| r.due(now_unix))?.id.clone();
+        let at = time::rfc3339(SystemTime::now());
+        self.update_round(&mut rs, app, &id, |r| r.start_converging(&at));
+        Some(id)
     }
 
     /// Like [`Self::converge_if_due`], for a request: the round is marked
     /// converging now (so the response says so) and the AI runs in the
     /// background.
     fn converge_if_due_soon(&self, app: &str, now_unix: u64) {
-        let id = {
-            let mut rs = self.rounds();
-            match rs.get_mut(app) {
-                Some(r) if r.due(now_unix) => {
-                    r.start_converging(&time::rfc3339(SystemTime::now()));
-                    r.id.clone()
-                }
-                _ => return,
-            }
-        };
-        let app_owned = app.to_string();
-        self.in_background("laoban-converge", move |s| s.converge(&app_owned, &id));
+        if let Some(id) = self.begin_converging(app, now_unix) {
+            let app_owned = app.to_string();
+            self.in_background("laoban-converge", move |s| s.converge(&app_owned, &id));
+        }
     }
 
     fn converge_if_due(&self, app: &str, now_unix: u64) {
-        let id = {
-            let mut rs = self.rounds();
-            match rs.get_mut(app) {
-                Some(r) if r.due(now_unix) => {
-                    r.start_converging(&time::rfc3339(SystemTime::now()));
-                    r.id.clone()
-                }
-                _ => return,
-            }
-        };
-        self.converge(app, &id);
+        if let Some(id) = self.begin_converging(app, now_unix) {
+            self.converge(app, &id);
+        }
     }
 
-    /// The AI turns the round's opinions into one change plan.
+    /// The AI turns the round's opinions into one change plan, made from
+    /// the app's latest commit; the round keeps what publishing it needs.
     fn converge(&self, app: &str, round_id: &str) {
-        let (request, label, initiator) = {
+        let (request, label, initiator, start_commit) = {
             let rs = self.rounds();
             match rs.get(app) {
-                Some(r) if r.id == round_id && r.state == State::Converging => {
-                    (r.change_request(), r.opinion_list(), r.initiator.clone())
-                }
+                Some(r) if r.id == round_id && r.state == State::Converging => (
+                    r.change_request(),
+                    r.opinion_list(),
+                    r.initiator.clone(),
+                    r.start_commit.clone(),
+                ),
                 _ => return,
             }
         };
-        let start = self
-            .round_starts
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(app)
-            .filter(|(id, _)| id == round_id)
-            .map(|(_, f)| f.clone());
-        let body = PlanRequestBody {
-            prompt: request,
-            app_name: None,
-            base_app: Some(app.to_string()),
-            background: false,
-        };
-        let result = self.plan_with(
-            &body,
-            Some(&initiator),
-            Some(RoundInput { label, start }),
-            rounds::MAX_ROUND_CHARS + 2_000,
-        );
+        let result = self.latest_commit(app).and_then(|base_commit| {
+            let start = if start_commit.is_empty() || start_commit == base_commit {
+                None
+            } else {
+                Some(self.load_version(app, &start_commit)?.files)
+            };
+            let body = PlanRequestBody {
+                prompt: request,
+                app_name: None,
+                base_app: Some(app.to_string()),
+                background: false,
+            };
+            let v = self.plan_with(
+                &body,
+                Some(&initiator),
+                Some(RoundInput {
+                    label,
+                    start,
+                    base_commit: Some(base_commit.clone()),
+                }),
+                rounds::MAX_ROUND_CHARS + 2_000,
+            )?;
+            Ok((v, base_commit))
+        });
         let at = time::rfc3339(SystemTime::now());
         let mut rs = self.rounds();
-        let Some(r) = rs
-            .get_mut(app)
-            .filter(|r| r.id == round_id && r.state == State::Converging)
-        else {
+        if !rs
+            .get(app)
+            .is_some_and(|r| r.id == round_id && r.state == State::Converging)
+        {
             return;
-        };
+        }
         match result {
-            Ok(v) => {
+            Ok((v, base_commit)) => {
                 let parts: Vec<Part> = v["changedParts"]
                     .as_array()
                     .map(|a| {
@@ -1597,26 +1689,49 @@ impl M0Service {
                             .collect()
                     })
                     .unwrap_or_default();
-                r.widen_scope(&parts);
-                r.converged(
-                    RoundPlan {
-                        plan_id: v["planId"].as_str().unwrap_or_default().to_string(),
-                        summary: v["summary"].as_str().unwrap_or_default().to_string(),
-                        steps: v["steps"]
-                            .as_array()
-                            .map(|a| {
-                                a.iter()
-                                    .filter_map(|s| s.as_str().map(str::to_string))
-                                    .collect()
-                            })
-                            .unwrap_or_default(),
-                        architecture: v["architecture"].clone(),
-                        notes: v["notes"].as_str().unwrap_or_default().to_string(),
-                    },
-                    &at,
-                );
+                let plan_id = v["planId"].as_str().unwrap_or_default().to_string();
+                let plan = RoundPlan {
+                    plan_id: plan_id.clone(),
+                    summary: v["summary"].as_str().unwrap_or_default().to_string(),
+                    steps: v["steps"]
+                        .as_array()
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|s| s.as_str().map(str::to_string))
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    architecture: v["architecture"].clone(),
+                    notes: v["notes"].as_str().unwrap_or_default().to_string(),
+                };
+                let recipe = self.lock_store().get(&plan_id).map(|p| PlanRecipe {
+                    plan: p.plan,
+                    masked_prompt: p.masked_prompt,
+                    model: p.model,
+                    label: p.label,
+                    base_commit,
+                });
+                let size = json!({ "plan": &plan, "recipe": &recipe })
+                    .to_string()
+                    .len();
+                if size > rounds::MAX_PLAN_BYTES {
+                    self.update_round(&mut rs, app, round_id, |r| {
+                        r.fail(
+                            "AI 產生的修改計畫太大（超過 150 KB），請發起人縮小範圍或精簡意見後重新收斂。",
+                            &at,
+                        )
+                    });
+                } else {
+                    self.update_round(&mut rs, app, round_id, |r| {
+                        r.widen_scope(&parts);
+                        r.converged(plan, &at);
+                        r.recipe = recipe;
+                    });
+                }
             }
-            Err(e) => r.fail(&e.user_message(), &at),
+            Err(e) => {
+                self.update_round(&mut rs, app, round_id, |r| r.fail(&e.user_message(), &at));
+            }
         }
     }
 
@@ -1626,20 +1741,23 @@ impl M0Service {
     fn finish_if_answered(&self, app: &str, user: &str) -> Result<Value, M0Error> {
         let (plan_id, initiator, round_id) = {
             let mut rs = self.rounds();
-            let Some(r) = rs.get_mut(app) else {
+            let Some(r) = rs.get(app) else {
+                drop(rs);
                 return self.round(app, Some(user));
             };
             if !r.all_answered() {
                 drop(rs);
                 return self.round(app, Some(user));
             }
-            r.start_applying(&time::rfc3339(SystemTime::now()));
             let plan_id = r
                 .plan
                 .as_ref()
                 .map(|p| p.plan_id.clone())
                 .unwrap_or_default();
-            (plan_id, r.initiator.clone(), r.id.clone())
+            let ids = (plan_id, r.initiator.clone(), r.id.clone());
+            let at = time::rfc3339(SystemTime::now());
+            self.update_round(&mut rs, app, &ids.2, |r| r.start_applying(&at));
+            ids
         };
         let app_owned = app.to_string();
         let applied = self
@@ -1663,19 +1781,16 @@ impl M0Service {
         plan_id: &str,
         initiator: &str,
     ) -> Option<Value> {
-        let result = self.apply_plan(plan_id, Some(initiator), true);
+        let result = self
+            .ensure_round_plan(app, round_id, plan_id)
+            .and_then(|()| self.apply_plan(plan_id, Some(initiator), true));
         let at = time::rfc3339(SystemTime::now());
         let mut rs = self.rounds();
-        if let Some(r) = rs.get_mut(app).filter(|r| r.id == round_id) {
-            match &result {
-                Ok(v) => r.done(v.clone(), &at),
-                Err(M0Error::PlanNotFound) => r.fail(
-                    "修改計畫已超過 1 小時沒有部署而失效，請發起人重新收斂。",
-                    &at,
-                ),
-                Err(e) => r.fail(&e.user_message(), &at),
-            }
-        }
+        self.update_round(&mut rs, app, round_id, |r| match &result {
+            Ok(v) => r.done(v.clone(), &at),
+            Err(M0Error::PlanNotFound) => r.fail("找不到這一輪的修改計畫，請發起人重新收斂。", &at),
+            Err(e) => r.fail(&e.user_message(), &at),
+        });
         result.ok()
     }
 
@@ -1974,6 +2089,8 @@ struct RoundInput {
     label: String,
     /// The files when the round started.
     start: Option<GeneratedFiles>,
+    /// The app's commit the plan is made from.
+    base_commit: Option<String>,
 }
 
 fn unix(t: SystemTime) -> u64 {

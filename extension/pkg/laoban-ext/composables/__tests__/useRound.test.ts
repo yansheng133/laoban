@@ -116,3 +116,35 @@ describe('useRound when a slow request gets no answer', () => {
     flow.stop();
   });
 });
+
+describe('useRound limits and availability', () => {
+  beforeEach(() => {
+    jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    mockGetRound.mockReset();
+  });
+
+  it('takes the limits and whether rounds can be stored from the backend', async() => {
+    const { flow, scope } = setup();
+
+    expect(flow.limits.value.opinionChars).toBe(1000);
+    expect(flow.available.value).toBe(true);
+    mockGetRound.mockResolvedValue({
+      round: null, roundsAvailable: false, limits: {
+        opinionChars: 500, replyChars: 100, roundChars: 4000, opinions: 10, replies: 5, batch: 10
+      }
+    });
+    flow.start('todo');
+    await flow.refresh();
+    expect(flow.available.value).toBe(false);
+    expect(flow.limits.value.opinionChars).toBe(500);
+    // A round's own limits win.
+    mockGetRound.mockResolvedValue({
+      round: { ...round('collecting'), limits: { replyChars: 50 } }, roundsAvailable: true
+    });
+    await flow.refresh();
+    expect(flow.available.value).toBe(true);
+    expect([flow.limits.value.opinionChars, flow.limits.value.replyChars]).toEqual([1000, 50]);
+    scope.stop();
+    flow.stop();
+  });
+});
