@@ -163,6 +163,16 @@ impl MemoryStore {
         }
     }
 
+    /// Tests: delete an object behind the writer's back.
+    pub fn remove(&self, kind: Kind, name: &str) {
+        self.lock().remove(&(kind.plural, name.to_string()));
+    }
+
+    /// Tests: delete everything (as reinstalling the CRD does).
+    pub fn clear(&self) {
+        self.lock().clear();
+    }
+
     fn next_version(&self) -> String {
         (self.counter.fetch_add(1, Ordering::SeqCst) + 1).to_string()
     }

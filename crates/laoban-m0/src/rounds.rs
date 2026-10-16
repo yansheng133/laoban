@@ -857,6 +857,18 @@ impl Round {
             && self.confirmers.iter().all(|c| c.answer != Answer::Pending)
     }
 
+    /// After an answer: if everyone has answered, start applying (in the
+    /// same change as the answer, so no state has everyone answered but
+    /// nothing going on). Returns whether it started.
+    pub fn begin_applying_if_answered(&mut self, at: &str) -> bool {
+        if self.all_answered() {
+            self.start_applying(at);
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn start_applying(&mut self, at: &str) {
         self.state = State::Applying;
         self.note(

@@ -152,7 +152,7 @@ jobs:
           check "rounds.limits.opinionChars may only be lowered" "${m0[@]}" --set rounds.limits.opinionChars=1001
           check "rounds.limits.roundChars may only be lowered" "${m0[@]}" --set rounds.limits.roundChars=0
           check "rounds.limits.replies may only be lowered" "${m0[@]}" --set-string rounds.limits.replies=many
-          check "rounds.limits.replyChars may only be lowered" "${m0[@]}" --set rounds.limits.replyChars=2.5
+          check "rounds.limits.replyChars may only be lowered" "${m0[@]}" --set-json 'rounds.limits.replyChars=2.5'
       - name: Local-model render has no Anthropic key and points at the endpoint
         run: |
           f=rendered/laoban-m0-local.yaml

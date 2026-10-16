@@ -93,6 +93,14 @@ impl PlanStore {
         self.entries.get(id).map(|e| e.plan.clone())
     }
 
+    /// The plan is still there (not expired) and can be applied.
+    pub fn is_pending(&mut self, id: &str, now: Instant) -> bool {
+        self.purge(now);
+        self.entries
+            .get(id)
+            .is_some_and(|e| e.state == State::Pending)
+    }
+
     pub fn contains(&self, id: &str) -> bool {
         self.entries.contains_key(id)
     }
@@ -200,6 +208,8 @@ mod tests {
         let t0 = Instant::now();
         s.insert(plan("p1"), t0);
         assert!(s.contains("p1"));
+        assert!(s.is_pending("p1", t0));
+        assert!(!s.is_pending("p1", t0 + PLAN_TTL), "expired");
         assert_eq!(
             s.begin_apply("p1", t0 + PLAN_TTL),
             Err(StoreError::NotFound)

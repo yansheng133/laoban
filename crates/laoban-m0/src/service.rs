@@ -506,6 +506,9 @@ pub struct M0Service {
     state: Arc<dyn StateStore>,
     /// The stored rounds have been read and can be written.
     rounds_ready: AtomicBool,
+    /// The stored rounds were read once (at startup); later reads keep
+    /// what is in memory.
+    restored_once: AtomicBool,
     round_limits: Limits,
     /// Replaced rounds waiting to be archived and deleted.
     archive_queue: Mutex<Vec<Round>>,
@@ -558,6 +561,7 @@ impl M0Service {
             rounds: Mutex::new(HashMap::new()),
             state: Arc::new(MemoryStore::new()),
             rounds_ready: AtomicBool::new(true),
+            restored_once: AtomicBool::new(false),
             round_limits: Limits::default(),
             archive_queue: Mutex::new(Vec::new()),
             archive_retry: Mutex::new(HashMap::new()),
@@ -1509,8 +1513,11 @@ impl M0Service {
     pub fn confirm_round(&self, app: &str, user: Option<&str>) -> Result<Value, M0Error> {
         let user = require_user(user)?;
         let at = time::rfc3339(SystemTime::now());
-        self.change_round(app, |r| r.confirm(user, &at))?;
-        self.finish_if_answered(app, user)
+        let applying = self.change_round(app, |r| {
+            r.confirm(user, &at)?;
+            Ok(r.begin_applying_if_answered(&at))
+        })?;
+        self.finish_if_answered(app, user, applying)
     }
 
     /// `POST .../round/skip` `{user}`: the initiator skips someone.
@@ -1522,8 +1529,11 @@ impl M0Service {
     ) -> Result<Value, M0Error> {
         let user = require_user(user)?;
         let at = time::rfc3339(SystemTime::now());
-        self.change_round(app, |r| r.skip(user, body.user.trim(), &at))?;
-        self.finish_if_answered(app, user)
+        let applying = self.change_round(app, |r| {
+            r.skip(user, body.user.trim(), &at)?;
+            Ok(r.begin_applying_if_answered(&at))
+        })?;
+        self.finish_if_answered(app, user, applying)
     }
 
     /// `POST .../round/object` `{text}`: disagree; back to collecting.
@@ -1735,29 +1745,26 @@ impl M0Service {
         }
     }
 
-    /// When everyone answered: the AI writes the code and it is published,
+    /// After the last answer (already written as "applying", in the same
+    /// write as the answer): the AI writes the code and it is published,
     /// in the background when attached (the response then says
     /// "applying"; the page reads the round until it is done).
-    fn finish_if_answered(&self, app: &str, user: &str) -> Result<Value, M0Error> {
+    fn finish_if_answered(&self, app: &str, user: &str, applying: bool) -> Result<Value, M0Error> {
+        if !applying {
+            return self.round(app, Some(user));
+        }
         let (plan_id, initiator, round_id) = {
-            let mut rs = self.rounds();
-            let Some(r) = rs.get(app) else {
+            let rs = self.rounds();
+            let Some(r) = rs.get(app).filter(|r| r.state == State::Applying) else {
                 drop(rs);
                 return self.round(app, Some(user));
             };
-            if !r.all_answered() {
-                drop(rs);
-                return self.round(app, Some(user));
-            }
             let plan_id = r
                 .plan
                 .as_ref()
                 .map(|p| p.plan_id.clone())
                 .unwrap_or_default();
-            let ids = (plan_id, r.initiator.clone(), r.id.clone());
-            let at = time::rfc3339(SystemTime::now());
-            self.update_round(&mut rs, app, &ids.2, |r| r.start_applying(&at));
-            ids
+            (plan_id, r.initiator.clone(), r.id.clone())
         };
         let app_owned = app.to_string();
         let applied = self

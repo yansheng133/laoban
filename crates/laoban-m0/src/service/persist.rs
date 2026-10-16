@@ -107,14 +107,16 @@ impl M0Service {
 
     /// A user's change to the app's round: `f` runs on a copy, the copy is
     /// written, and only then it replaces the round. If someone else wrote
-    /// the round meanwhile, `f` runs again on what they wrote.
+    /// the round meanwhile, `f` runs again on what they wrote. If its
+    /// resource was deleted (by hand, or with the CRD), it is created again
+    /// from memory: the round goes on rather than getting stuck.
     pub(super) fn change_round<T, F>(&self, app: &str, mut f: F) -> Result<T, M0Error>
     where
         F: FnMut(&mut Round) -> Result<T, RoundError>,
     {
         self.require_rounds()?;
         let mut rs = self.rounds();
-        for attempt in 0..2 {
+        for attempt in 0..3 {
             let current = match rs.get(app) {
                 Some(r) if r.state.active() || r.state == State::Done => r,
                 Some(r) => return Err(M0Error::Round(RoundError::WrongState(r.state))),
@@ -127,12 +129,16 @@ impl M0Service {
                     rs.insert(app.to_string(), next);
                     return Ok(out);
                 }
-                Err(StateError::Conflict) if attempt == 0 => {
+                Err(StateError::Conflict) if attempt < 2 => {
                     match self.read_round(current).map_err(|e| self.state_error(e))? {
                         Some(fresh) => {
                             rs.insert(app.to_string(), fresh);
                         }
-                        None => return Err(M0Error::State(StateError::Conflict)),
+                        None => {
+                            if let Some(r) = rs.get_mut(app) {
+                                r.store_version = None;
+                            }
+                        }
                     }
                 }
                 Err(e) => return Err(self.state_error(e)),
@@ -156,10 +162,18 @@ impl M0Service {
         f(&mut next);
         let mut result = self.write_round(&mut next);
         if result == Err(StateError::Conflict) {
-            // laoban's step wins: write it over the newer version.
-            if let Ok(Some(fresh)) = self.read_round(&next) {
-                next.store_version = fresh.store_version;
-                result = self.write_round(&mut next);
+            // laoban's step wins: write it over the newer version, or
+            // create the resource again if it was deleted.
+            match self.read_round(&next) {
+                Ok(Some(fresh)) => {
+                    next.store_version = fresh.store_version;
+                    result = self.write_round(&mut next);
+                }
+                Ok(None) => {
+                    next.store_version = None;
+                    result = self.write_round(&mut next);
+                }
+                Err(_) => {}
             }
         }
         if let Err(e) = &result {
@@ -195,8 +209,16 @@ impl M0Service {
     }
 
     /// Read every stored round back (startup, or once the CRD is installed).
-    /// Rounds held in memory but missing from the store are written again.
+    ///
+    /// Only the first successful read takes the stored rounds and resumes
+    /// work cut off by the restart. A later read (the store was unreachable
+    /// or the CRD missing for a while, with this process running) keeps
+    /// what is in memory, where work may still be going on, and writes
+    /// again the rounds missing from the store.
     pub fn restore_rounds(&self) -> Result<usize, M0Error> {
+        if self.restored_once.load(Ordering::SeqCst) {
+            return self.rewrite_missing_rounds();
+        }
         let objects = match self.state.list(ROUNDS) {
             Ok(o) => o,
             Err(e) => {
@@ -244,18 +266,8 @@ impl M0Service {
                 }
                 rs.insert(app, current);
             }
-            // Kept in memory while the store was gone (the CRD reinstalled).
-            let stored: Vec<String> = rs.keys().cloned().collect();
-            for app in stored {
-                if let Some(r) = rs.get_mut(&app) {
-                    if r.store_version.is_none() {
-                        if let Err(e) = self.write_round(r) {
-                            log_store_problem("writing again", r, &e);
-                        }
-                    }
-                }
-            }
         }
+        self.restored_once.store(true, Ordering::SeqCst);
         self.rounds_ready.store(true, Ordering::SeqCst);
         let at = time::rfc3339(SystemTime::now());
         for (app, id) in resume {
@@ -269,6 +281,35 @@ impl M0Service {
             self.in_background("laoban-recover", move |s| s.recover_applying(&app, &id));
         }
         Ok(count)
+    }
+
+    /// A later read of the store: the rounds in memory stay as they are;
+    /// those whose resource is gone are created again.
+    fn rewrite_missing_rounds(&self) -> Result<usize, M0Error> {
+        let objects = match self.state.list(ROUNDS) {
+            Ok(o) => o,
+            Err(e) => {
+                self.rounds_ready.store(false, Ordering::SeqCst);
+                return Err(self.state_error(e));
+            }
+        };
+        let names: std::collections::HashSet<String> =
+            objects.into_iter().map(|o| o.name).collect();
+        let mut rewritten = 0;
+        {
+            let mut rs = self.rounds();
+            for r in rs.values_mut() {
+                if !names.contains(&object_name(r)) {
+                    r.store_version = None;
+                    match self.write_round(r) {
+                        Ok(()) => rewritten += 1,
+                        Err(e) => log_store_problem("writing again", r, &e),
+                    }
+                }
+            }
+        }
+        self.rounds_ready.store(true, Ordering::SeqCst);
+        Ok(rewritten)
     }
 
     /// The backend restarted while a round was being published: see if the
@@ -290,7 +331,8 @@ impl M0Service {
             }
         };
         let published = self.load_app(app).and_then(|m| {
-            let found = m.history.last().is_some_and(|h| {
+            // Any later entry: hand edits or a layout may have come after.
+            let found = m.history.iter().rev().any(|h| {
                 h.kind == "edit" && label.as_deref() == Some(h.request.as_str()) && h.at >= since
             });
             if found {
@@ -333,7 +375,8 @@ impl M0Service {
         round_id: &str,
         plan_id: &str,
     ) -> Result<(), M0Error> {
-        if self.lock_store().contains(plan_id) {
+        // An expired plan counts as missing (it would be purged on apply).
+        if self.lock_store().is_pending(plan_id, Instant::now()) {
             return Ok(());
         }
         let (recipe, start_commit): (PlanRecipe, String) = {

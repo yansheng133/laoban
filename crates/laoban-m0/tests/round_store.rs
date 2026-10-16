@@ -265,6 +265,27 @@ fn a_restart_while_publishing_never_publishes_twice() {
     let applying = stored(&store);
     let v = a.service.confirm_round("todo", Some("u-a")).unwrap();
     assert_eq!(state(&v), "done");
+    // Someone arranges the 3D view afterwards: the round's version is no
+    // longer the last entry in the history.
+    let commit = a.service.files("todo").unwrap()["commit"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    a.service
+        .save_layout(
+            "todo",
+            &laoban_m0::SaveLayoutRequest {
+                base_commit: commit,
+                positions: [(
+                    "app-web".to_string(),
+                    laoban_m0::meta::Pos { x: 1.0, z: 2.0 },
+                )]
+                .into_iter()
+                .collect(),
+            },
+            Some("u-b"),
+        )
+        .unwrap();
     drop(a);
     let name = store.list(ROUNDS).unwrap()[0].name.clone();
     store.touch(ROUNDS, &name, |spec| {
@@ -607,4 +628,68 @@ fn limits_are_checked_and_shown() {
         .unwrap_err();
     assert_eq!(err.code(), "too_long");
     assert_eq!(b.config_json()["roundLimits"]["opinionChars"], 20);
+}
+
+#[test]
+fn a_deleted_resource_is_written_again() {
+    let github = github_mock_with(RefUpdate::Ok, todo_app());
+    let store = Arc::new(MemoryStore::new());
+    let a = backend(MockProvider::new(), &github, &store);
+    a.service
+        .open_round("todo", &open(30), Some("u-a"))
+        .unwrap();
+
+    // Deleted by hand: the next change creates it again from memory.
+    let name = store.list(ROUNDS).unwrap()[0].name.clone();
+    store.remove(ROUNDS, &name);
+    a.service
+        .add_opinion("todo", &opinion("也要能篩選"), Some("u-b"))
+        .unwrap();
+    let spec = stored(&store);
+    assert_eq!(spec["round"]["opinions"].as_array().unwrap().len(), 2);
+
+    // The CRD gone and reinstalled (every object deleted) while this
+    // backend runs: what is in memory stays and is written again; nothing
+    // is restarted.
+    store.set_installed(false);
+    let err = a
+        .service
+        .add_opinion("todo", &opinion("第三則"), Some("u-c"))
+        .unwrap_err();
+    assert_eq!(err.code(), "rounds_unavailable");
+    store.clear();
+    store.set_installed(true);
+    a.service.tick(now());
+    let spec = stored(&store);
+    assert_eq!(spec["round"]["opinions"].as_array().unwrap().len(), 2);
+    assert_eq!(round_of(&a)["roundsAvailable"], true);
+    a.service
+        .add_opinion("todo", &opinion("第三則"), Some("u-c"))
+        .unwrap();
+    assert_eq!(
+        stored(&store)["round"]["opinions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+}
+
+#[test]
+fn a_later_read_does_not_restart_work_in_memory() {
+    let github = github_mock_with(RefUpdate::Ok, todo_app());
+    let store = Arc::new(MemoryStore::new());
+    let a = backend(MockProvider::new(), &github, &store);
+    a.service
+        .open_round("todo", &open(30), Some("u-a"))
+        .unwrap();
+    // The stored copy says converging (a stale write); memory says
+    // collecting. A later read keeps memory and starts no AI work.
+    set_stored_state(&store, "converging");
+    store.set_installed(false);
+    let _ = a.service.add_opinion("todo", &opinion("x"), Some("u-b"));
+    store.set_installed(true);
+    a.service.tick(now());
+    assert_eq!(state(&round_of(&a)), "collecting");
+    assert_eq!(a.provider.call_count(), 0);
 }
