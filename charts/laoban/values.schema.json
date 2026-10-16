@@ -343,6 +343,62 @@
         }
       }
     },
+    "rounds": {
+      "description": "Rounds of 意見收斂 (stored in Round resources, laoban-crd chart).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "limits": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "opinionChars": {
+              "description": "Lower a size limit of rounds; empty keeps the built-in value. Checked by the template (it may only be lowered), so other types reach that check and its message.",
+              "type": [
+                "null",
+                "number",
+                "string"
+              ]
+            },
+            "replyChars": {
+              "description": "Lower a size limit of rounds; empty keeps the built-in value. Checked by the template (it may only be lowered), so other types reach that check and its message.",
+              "type": [
+                "null",
+                "number",
+                "string"
+              ]
+            },
+            "roundChars": {
+              "description": "Lower a size limit of rounds; empty keeps the built-in value. Checked by the template (it may only be lowered), so other types reach that check and its message.",
+              "type": [
+                "null",
+                "number",
+                "string"
+              ]
+            },
+            "opinions": {
+              "description": "Lower a size limit of rounds; empty keeps the built-in value. Checked by the template (it may only be lowered), so other types reach that check and its message.",
+              "type": [
+                "null",
+                "number",
+                "string"
+              ]
+            },
+            "replies": {
+              "description": "Lower a size limit of rounds; empty keeps the built-in value. Checked by the template (it may only be lowered), so other types reach that check and its message.",
+              "type": [
+                "null",
+                "number",
+                "string"
+              ]
+            }
+          }
+        }
+      }
+    },
     "crds": {
       "type": "object",
       "additionalProperties": false,
