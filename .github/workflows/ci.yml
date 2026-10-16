@@ -228,6 +228,38 @@ jobs:
           for k in ClusterRole ClusterRoleBinding PersistentVolumeClaim; do
             grep -q "^kind: ${k}$" rendered/laoban.yaml || fail "ci render: ${k} missing"
           done
+      - name: Rancher project roles match the chart's user roles
+        # deploy/rancher/roletemplate.yaml must give Project members the same
+        # rules as laoban-api-edit / laoban-api-view.
+        run: |
+          python3 - <<'PY'
+          import re, sys
+          def docs(text):
+              return [d for d in text.split("\n---\n") if "kind:" in d]
+          def rules(doc):
+              res = set(re.findall(r"^\s+- ([a-z/]+)$", doc, re.M))
+              inline = re.findall(r'resources: \[([^\]]*)\]', doc)
+              for line in inline:
+                  res |= {x.strip().strip('"') for x in line.split(",")}
+              verbs = re.findall(r'verbs: \[([^\]]*)\]', doc)
+              return res, {v.strip().strip('"') for v in verbs[0].split(",")}
+          rt = docs(open("deploy/rancher/roletemplate.yaml").read())
+          chart = open("rendered/laoban-m0.yaml").read()
+          roles = {}
+          for d in docs(chart):
+              m = re.search(r"^kind: ClusterRole$", d, re.M)
+              n = re.search(r"^  name: (laoban-api-\w+)$", d, re.M)
+              if m and n:
+                  roles[n.group(1)] = rules(d)
+          want = {"laoban-user": roles["laoban-api-edit"], "laoban-viewer": roles["laoban-api-view"]}
+          for d in rt:
+              name = re.search(r"^  name: (\S+)$", d, re.M).group(1)
+              got = rules(d)
+              if got != want[name]:
+                  print(f"::error::{name} differs from the chart: {got} vs {want[name]}")
+                  sys.exit(1)
+              print(name, "matches")
+          PY
       - name: kubeconform (backend chart, deploy/m0)
         # The upstream schema set has no schema for CustomResourceDefinition
         # itself or for Fleet's kinds, so the CRD chart and the Fleet objects

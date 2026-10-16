@@ -1,0 +1,53 @@
+# Rancher project roles for laoban (v0.1.16): give members of a Rancher
+# Project the same rights in its namespaces as the built-in edit / view
+# roles give through charts/laoban (laoban-api-edit, laoban-api-view).
+#
+# Apply on the Rancher LOCAL (management) cluster, not on rke2:
+#   kubectl --kubeconfig <local cluster kubeconfig> apply -f deploy/rancher/roletemplate.yaml
+# or in Rancher: local cluster → Import YAML. Then, in the Project that
+# holds the target namespace (laoban-dev), add members with the role
+# "laoban user" or "laoban viewer". Rancher puts the rules into every
+# namespace of that Project.
+#
+# Keep the rules in step with charts/laoban/templates/aggregated-rbac.yaml
+# (CI compares them).
+apiVersion: management.cattle.io/v3
+kind: RoleTemplate
+metadata:
+  name: laoban-user
+builtin: false
+context: project
+displayName: laoban user
+description: Use laoban in the Project's namespaces (make and change apps, rounds of opinions).
+external: false
+hidden: false
+rules:
+  - apiGroups: ["api.laoban.yansheng133.github.io"]
+    resources:
+      - config
+      - apps
+      - apps/versions
+      - apps/files
+      - apps/layout
+      - apps/restore
+      - apps/round
+      - apps/rounds
+      - rounds
+      - plans
+      - plans/apply
+    verbs: ["get", "list", "create"]
+---
+apiVersion: management.cattle.io/v3
+kind: RoleTemplate
+metadata:
+  name: laoban-viewer
+builtin: false
+context: project
+displayName: laoban viewer
+description: See laoban's apps, versions and rounds in the Project's namespaces.
+external: false
+hidden: false
+rules:
+  - apiGroups: ["api.laoban.yansheng133.github.io"]
+    resources: ["config", "apps", "apps/versions", "apps/files", "apps/round", "apps/rounds", "rounds"]
+    verbs: ["get", "list"]
