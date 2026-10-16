@@ -51,6 +51,8 @@ const MAX_LOG: usize = 100;
 pub const MAX_DRAFTS: usize = 10;
 /// Comments on the steps of a converged plan.
 pub const MAX_PLAN_COMMENTS: usize = 50;
+/// How much of a step's text a comment's request quotes.
+const STEP_TEXT_IN_REQUEST: usize = 200;
 
 fn is_false(b: &bool) -> bool {
     !*b
@@ -636,7 +638,10 @@ impl Round {
             ));
         }
         let added: usize = cleaned.iter().map(|(t, _)| t.chars().count()).sum();
+        // Withdrawn ones are kept (as numbers); a bound on all of them too,
+        // so add-and-withdraw cannot grow the round without end.
         if self.active().count() + cleaned.len() > self.limits.opinions
+            || self.opinions.len() + cleaned.len() > 2 * self.limits.opinions
             || self.total_chars() + added > self.limits.round_chars
         {
             return Err(self.full());
@@ -800,8 +805,8 @@ impl Round {
             at,
             "laoban",
             "converging",
-            &[("count", self.opinions.len().to_string())],
-            format!("AI 開始收斂 {} 則意見", self.opinions.len()),
+            &[("count", self.active().count().to_string())],
+            format!("AI 開始收斂 {} 則意見", self.active().count()),
         );
     }
 
@@ -852,15 +857,36 @@ impl Round {
                 }
             }
         }
-        if !self.plan_comments.is_empty() {
-            s.push_str(
-                "\n【對上一版修改計畫各步驟的留言】（請一併考慮；步驟是上一版計畫的內容）\n",
-            );
-            for c in &self.plan_comments {
-                s.push_str(&format!(
-                    "- 第 {} 步「{}」：（{}）{}",
-                    c.step, c.step_text, c.by, c.text
-                ));
+        s.push_str(&self.comments_section());
+        s
+    }
+
+    /// The plan comments for the change request, by step; each step's
+    /// text once, shortened.
+    fn comments_section(&self) -> String {
+        if self.plan_comments.is_empty() {
+            return String::new();
+        }
+        let mut s = String::from(
+            "\n【對上一版修改計畫各步驟的留言】（請一併考慮；步驟是上一版計畫的內容）\n",
+        );
+        let mut steps: Vec<usize> = self.plan_comments.iter().map(|c| c.step).collect();
+        steps.sort_unstable();
+        steps.dedup();
+        for step in steps {
+            let mut comments = self.plan_comments.iter().filter(|c| c.step == step);
+            let Some(first) = comments.clone().next() else {
+                continue;
+            };
+            let text: String = first.step_text.chars().take(STEP_TEXT_IN_REQUEST).collect();
+            let more = if first.step_text.chars().count() > STEP_TEXT_IN_REQUEST {
+                "…"
+            } else {
+                ""
+            };
+            s.push_str(&format!("第 {step} 步「{text}{more}」：\n"));
+            for c in comments.by_ref() {
+                s.push_str(&format!("- （{}）{}", c.by, c.text));
                 if !c.supporters.is_empty() {
                     s.push_str(&format!(
                         "　〔{} 人附議：{}〕",
@@ -872,6 +898,17 @@ impl Round {
             }
         }
         s
+    }
+
+    /// Characters the plan comments add to the change request beyond their
+    /// own text (counted in the round's space): step texts, names.
+    pub fn comments_overhead(&self) -> usize {
+        let own: usize = self
+            .plan_comments
+            .iter()
+            .map(|c| c.text.chars().count())
+            .sum();
+        self.comments_section().chars().count().saturating_sub(own)
     }
 
     /// The opinions as a short list for the history: "（user）text；…".
@@ -1154,6 +1191,10 @@ impl Round {
         }
         o.withdrawn = true;
         o.text.clear();
+        // Replies and +1s go with it: they may quote it, and kept they
+        // would fill the round outside its limits.
+        o.replies.clear();
+        o.supporters.clear();
         o.edited_after_support = false;
         let id = o.id.clone();
         self.note(
@@ -1320,7 +1361,7 @@ impl Round {
             .plan_comments
             .iter_mut()
             .find(|c| c.id == comment)
-            .ok_or(RoundError::NoSuchOpinion)?;
+            .ok_or(RoundError::Invalid("找不到這則留言，可能已經清除。"))?;
         if c.by == user {
             return Err(RoundError::Invalid("不能附議自己的留言。"));
         }
@@ -1948,7 +1989,7 @@ mod tests {
         r.object("u-a", "改小一點", T0, "t2").unwrap();
         r.start_converging("t3");
         let req = r.change_request();
-        assert!(req.contains("第 1 步「x」：（u-b）這一步太大"), "{req}");
+        assert!(req.contains("第 1 步「x」：\n- （u-b）這一步太大"), "{req}");
         assert!(req.contains("〔1 人附議：u-a〕"), "{req}");
         r.converged(plan(), "t4");
         assert!(r.plan_comments.is_empty(), "they were about the old plan");
@@ -1958,5 +1999,43 @@ mod tests {
         let mut back = back;
         back.add_plan_comment("u-a", 1, "z", "t").unwrap();
         assert_eq!(back.plan_comments.last().unwrap().id, "c3");
+    }
+
+    #[test]
+    fn add_and_withdraw_cannot_grow_the_round_without_end() {
+        let mut r = open(30);
+        let limit = r.limits.opinions;
+        let mut n = 1;
+        let err = loop {
+            let id = format!("o{n}");
+            r.withdraw_opinion(if n == 1 { "u-a" } else { "u-b" }, &id, "t")
+                .unwrap();
+            match r.add_opinion("u-b", "再一則", "t") {
+                Ok(_) => n += 1,
+                Err(e) => break e,
+            }
+            assert!(n <= 2 * limit, "bounded");
+        };
+        assert!(matches!(err, RoundError::Full { .. }), "{err:?}");
+        assert_eq!(r.opinions.len(), 2 * limit);
+    }
+
+    #[test]
+    fn step_texts_in_the_request_are_quoted_once_and_allowed_for() {
+        let mut r = open(0);
+        r.start_converging("t");
+        let mut p = plan();
+        p.steps = vec!["步".repeat(400)];
+        r.converged(p, "t");
+        for i in 0..5 {
+            r.add_plan_comment("u-b", 1, &format!("留言{i}"), "t")
+                .unwrap();
+        }
+        let section = r.comments_section();
+        assert_eq!(section.matches("第 1 步").count(), 1, "{section}");
+        assert!(section.contains('…'));
+        let own: usize = r.plan_comments.iter().map(|c| c.text.chars().count()).sum();
+        assert_eq!(r.comments_overhead() + own, section.chars().count());
+        assert!(r.comments_overhead() < 400);
     }
 }

@@ -179,10 +179,10 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 | 請求 | 誰 | 做什麼 |
 |---|---|---|
 | `POST .../round/opinions/<id>/edit` `{text}` | 意見作者 | 收集中改寫自己的意見（字數限制同提意見）。已有人附議時保留附議，意見標 `editedAfterSupport` |
-| `POST .../round/opinions/<id>/withdraw` | 意見作者 | 收集中撤回：原文刪除（任何人都看不到，也不交給 AI），編號保留，標 `withdrawn`；不能再附議或回覆，作者不再是確認人。所有意見都撤回時，截止後這一輪自動取消（紀錄 `emptyCancelled`），不呼叫 AI |
+| `POST .../round/opinions/<id>/withdraw` | 意見作者 | 收集中撤回：原文、它的回覆與附議一起刪除（任何人都看不到，也不交給 AI），編號保留，標 `withdrawn`；不能再附議或回覆。撤回的也算進一輪最多意見數的兩倍（60 則），作者不再是確認人。所有意見都撤回時，截止後這一輪自動取消（紀錄 `emptyCancelled`），不呼叫 AI |
 | `POST .../round/deadline` `{minutes}` | 發起人 | 收集中把截止時間改成現在加幾分鐘，最晚是開始後 24 小時；0 表示立即收斂 |
 | `POST .../round/drafts` `{items: [{text, target}], shared}` | 任何人 | 收集中把自己的草稿（針對元件的與一般的）存在這一輪裡，取代先前存的；`shared` 預設 `true`（其他人看得到，不能改）。每人最多 10 則、每則 1000 字，全部草稿合計不超過一輪的 8000 字；不算進意見、不進紀錄、不寫進歸檔。頁面在最後一次變更 1.5 秒後儲存；還沒有一輪時草稿只在瀏覽器裡 |
-| `POST .../round/plan/steps/<n>/comments` `{text}` | 任何人 | 等待確認時針對計畫第 n 步留言（300 字，最多 50 則，算進一輪的 8000 字） |
+| `POST .../round/plan/steps/<n>/comments` `{text}` | 任何人 | 等待確認時針對計畫第 n 步留言（300 字，最多 50 則，算進一輪的 8000 字）。歸檔時留言也遮蔽 |
 | `POST .../round/plan/comments/<id>/support` | 留言者以外 | 附議留言或取消 |
 | `GET .../rounds/mine`（RBAC 資源 `rounds`） | 任何人 | 所有應用中等呼叫者處理的輪次：`confirm`（等他確認）、`othersConfirm`（他發起、還有人沒回覆）、`retry`（他發起、失敗）。只讀記憶體 |
 | `GET .../apps/<name>/rounds`、`.../rounds/<id>`（RBAC 子資源 `apps/rounds`） | 任何人 | 從 `laoban-rounds` 分支讀這個應用歸檔的輪次：清單（依日期由新到舊，最多 50 輪）與單一輪（遮蔽過的內容、`openedAt`、`archivedAt`） |
@@ -190,7 +190,7 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 - 一輪的 JSON 多了 `drafts`（`mine`：自己的；`shared`：其他人分享的）與 `planComments`；`you.canComment` 表示能不能對計畫留言。對計畫的留言在有人按「有意見」後跟著意見一起交給 AI（標出是哪一步、原本的步驟文字、附議），新的計畫產生後清空。留言不影響確認，確認的人仍然只有寫意見的人。
 - 紀錄新增 `edited`、`withdrawn`、`deadline`（`minutes`，0 是立即收斂）、`commented`（`step`）、`emptyCancelled`。
 - 失敗原因多了 `messageCode`／`messageArgs`（例如 `restartUnpublished`、`mergeConflict` 帶 `files`），頁面依語言顯示；沒有代碼的照舊顯示中文 `message`。發布完成的紀錄改成「新版本已寫入 GitHub，等待 Fleet 部署」。
-- 同一個應用的版本一次只寫一個（手動存檔、版面、還原、發布），第二個請求等第一個寫完，再和它寫的版本比對，所以會收到 `409 version_conflict`（「有了新版本」）而不是 GitHub 錯誤。萬一分支被別人（不經過 laoban）先推了，也回 `409 version_conflict`（20 報告 B11）。
+- 所有應用共用一個分支，laoban 的 commit 一次一個；同一個應用的版本一次只寫一個（手動存檔、版面、還原、發布），第二個請求等第一個寫完，再和它寫的版本比對，所以會收到 `409 version_conflict`（「有了新版本」）而不是 GitHub 錯誤。萬一分支被別人（不經過 laoban）先推了，也回 `409 version_conflict`（20 報告 B11）。
 - 頁面：應用清單標出等你確認、等其他人確認、失敗待處理的應用，上方寫出幾輪等你確認；左側選單的「應用」顯示等你確認的件數（每 60 秒更新）；詳細頁的意見收斂上方顯示「這一輪等你確認」。詳細頁有「過去的輪次」，打開才讀取。
 
 **保存與重啟**（v0.1.15）：

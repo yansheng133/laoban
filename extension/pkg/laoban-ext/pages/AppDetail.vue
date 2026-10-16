@@ -622,21 +622,30 @@ export default defineComponent({
       if (draftsTimer) {
         clearTimeout(draftsTimer);
       }
-      draftsTimer = setTimeout(() => {
-        draftsTimer = null;
-        const items = draftItems();
-        const key = JSON.stringify({ items: items.map((i) => ({ text: i.text, target: i.target })), shared: draftsShared.value });
-
-        if (key !== draftsSaved) {
-          draftsSaved = key;
-          round.saveDrafts(items, draftsShared.value);
-        }
-      }, DRAFTS_SAVE_MS);
+      draftsTimer = setTimeout(flushDrafts, DRAFTS_SAVE_MS);
     }, { deep: true });
 
+    // Save what is not saved yet. The key is kept only once the save went
+    // through, so a refused one is tried again with the next change.
+    async function flushDrafts() {
+      draftsTimer = null;
+      if (round.round.value?.state !== 'collecting') {
+        return;
+      }
+      const items = draftItems();
+      const shared = draftsShared.value;
+      const key = JSON.stringify({ items: items.map((i) => ({ text: i.text, target: i.target })), shared });
+
+      if (key !== draftsSaved && await round.saveDrafts(items, shared)) {
+        draftsSaved = key;
+      }
+    }
+
+    // Leaving within the wait: save at once rather than lose the last words.
     onBeforeUnmount(() => {
       if (draftsTimer) {
         clearTimeout(draftsTimer);
+        flushDrafts();
       }
     });
 

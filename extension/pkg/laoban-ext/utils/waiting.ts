@@ -16,17 +16,21 @@ export function confirmCount(rounds: WaitingRound[]): number {
   return rounds.filter((w) => w.reason === 'confirm').length;
 }
 
+// The last answer, kept when a read fails (the badges are a hint).
+let last: WaitingRound[] = [];
+
 export async function refreshWaiting(store: StoreLike): Promise<WaitingRound[]> {
   try {
     const res = await getWaitingRounds(store);
     const rounds = res.rounds || [];
 
     waitingToConfirm.value = confirmCount(rounds);
+    last = rounds;
 
     return rounds;
   } catch {
     // The count is a hint; keep the last one.
-    return [];
+    return last;
   }
 }
 

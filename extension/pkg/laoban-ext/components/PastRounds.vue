@@ -84,12 +84,21 @@ export default defineComponent({
       detailLoading.value = true;
       error.value = '';
       try {
-        detail.value = await getPastRound(store, props.app, id);
+        const got = await getPastRound(store, props.app, id);
+
+        // Another round was opened meanwhile: this answer is not for it.
+        if (shown.value === id) {
+          detail.value = got;
+        }
       } catch (e) {
-        error.value = fail(e);
-        shown.value = null;
+        if (shown.value === id) {
+          error.value = fail(e);
+          shown.value = null;
+        }
       } finally {
-        detailLoading.value = false;
+        if (shown.value === id || shown.value === null) {
+          detailLoading.value = false;
+        }
       }
     }
 

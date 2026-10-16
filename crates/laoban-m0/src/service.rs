@@ -551,6 +551,10 @@ pub struct M0Service {
     /// checked against the version the previous one wrote (report 20, B11:
     /// two saves at once made the second fail as a GitHub problem).
     app_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    /// All apps share one branch: commits go one at a time, each on the
+    /// head the previous one left, so two apps saving at once do not make
+    /// one of them a version conflict. Taken after the app's lock.
+    commit_lock: Mutex<()>,
 }
 
 impl M0Service {
@@ -596,6 +600,7 @@ impl M0Service {
             me: std::sync::OnceLock::new(),
             jobs: Mutex::new(HashMap::new()),
             app_locks: Mutex::new(HashMap::new()),
+            commit_lock: Mutex::new(()),
         })
     }
 
@@ -1220,20 +1225,23 @@ impl M0Service {
             generated_at: &generated_at,
             meta_json: &meta_json,
         });
+        let commit = self.commit_lock.lock().unwrap_or_else(|e| e.into_inner());
         let sha = self
             .github
             .commit(&commit_files, &p.message)
             .map_err(|e| match e {
-                // The branch moved since it was read: someone else wrote a
-                // version first (outside laoban, as laoban's own writes
-                // wait for each other). Not a GitHub or token problem.
+                // The branch moved since it was read: someone pushed to it
+                // outside laoban (laoban's own commits wait for each other
+                // on `commit_lock`). Not a GitHub or token problem.
                 GithubError::Status {
                     stage: "update ref",
                     status: 409 | 422,
                     ..
                 } => M0Error::VersionConflict,
                 other => M0Error::Github(other),
-            })?;
+            });
+        drop(commit);
+        let sha = sha?;
 
         Ok(self.version_response(app, p.kind, &sha, p.files))
     }
@@ -1829,11 +1837,12 @@ impl M0Service {
     /// The AI turns the round's opinions into one change plan, made from
     /// the app's latest commit; the round keeps what publishing it needs.
     fn converge(&self, app: &str, round_id: &str) {
-        let (request, label, initiator, start_commit) = {
+        let (request, overhead, label, initiator, start_commit) = {
             let rs = self.rounds();
             match rs.get(app) {
                 Some(r) if r.id == round_id && r.state == State::Converging => (
                     r.change_request(),
+                    r.comments_overhead(),
                     r.opinion_list(),
                     r.initiator.clone(),
                     r.start_commit.clone(),
@@ -1861,7 +1870,9 @@ impl M0Service {
                     start,
                     base_commit: Some(base_commit.clone()),
                 }),
-                rounds::MAX_ROUND_CHARS + 2_000,
+                // The round's text, its framing, and the plan steps the
+                // comments are on (not counted in the round's space).
+                rounds::MAX_ROUND_CHARS + 2_000 + overhead,
             )?;
             Ok((v, base_commit))
         });

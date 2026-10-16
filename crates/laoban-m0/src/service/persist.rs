@@ -500,8 +500,9 @@ impl M0Service {
         );
     }
 
-    /// Write the finished round to the archive branch, with opinions and
-    /// replies masked like everything else laoban writes to GitHub.
+    /// Write the finished round to the archive branch, with opinions,
+    /// replies and plan comments masked like everything else laoban
+    /// writes to GitHub.
     fn archive_round(&self, r: &Round, now_unix: u64) -> Result<(), M0Error> {
         let mut masked = r.clone();
         for o in &mut masked.opinions {
@@ -509,6 +510,9 @@ impl M0Service {
             for reply in &mut o.replies {
                 reply.text = self.orchestrator.mask_for_ai(&reply.text).text;
             }
+        }
+        for c in &mut masked.plan_comments {
+            c.text = self.orchestrator.mask_for_ai(&c.text).text;
         }
         let doc = json!({
             "schema": SCHEMA,

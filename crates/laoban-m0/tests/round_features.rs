@@ -342,3 +342,53 @@ fn archived_rounds_can_be_listed_and_read() {
         "bad_request"
     );
 }
+
+#[test]
+fn plan_comments_are_masked_in_the_archive() {
+    let h = harness_with(
+        MockProvider::new().then(ok(&changed_plan())),
+        RefUpdate::Ok,
+        1_000_000,
+        todo_app(),
+    );
+    let id_no = with_check_digit("A12345678");
+    let v = h.service.open_round("todo", &open(0), Some("u-a")).unwrap();
+    let id = v["round"]["id"].as_str().unwrap().to_string();
+    h.service
+        .comment_on_plan(
+            "todo",
+            1,
+            &text(&format!("聯絡人 {id_no} 先處理")),
+            Some("u-b"),
+        )
+        .unwrap();
+    h.service.cancel_round("todo", Some("u-a")).unwrap();
+    h.service.archive_tick(now());
+    let one = h.service.past_round("todo", &id).unwrap();
+    let s = one.to_string();
+    assert!(s.contains("先處理"), "{s}");
+    assert!(!s.contains(&id_no), "plan comments are masked as archived");
+}
+
+#[test]
+fn a_withdrawn_opinion_takes_its_replies_and_supports_with_it() {
+    let h = harness_with(MockProvider::new(), RefUpdate::Ok, 1_000_000, todo_app());
+    h.service
+        .open_round("todo", &open(30), Some("u-a"))
+        .unwrap();
+    h.service
+        .support_opinion("todo", "o1", Some("u-b"))
+        .unwrap();
+    h.service
+        .reply_to_opinion("todo", "o1", &text("同意這個"), Some("u-b"))
+        .unwrap();
+    let v = h
+        .service
+        .withdraw_opinion("todo", "o1", Some("u-a"))
+        .unwrap();
+    let o = &v["round"]["opinions"][0];
+    assert_eq!(o["withdrawn"], true);
+    assert_eq!(o["replies"], json!([]));
+    assert_eq!(o["supporters"], json!([]));
+    assert!(!v.to_string().contains("同意這個"));
+}
