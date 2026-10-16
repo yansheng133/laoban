@@ -21,7 +21,7 @@ Rules:
 - handler.py must define `def handle(method: str, path: str, body: bytes) -> tuple[int, dict]`. `path` is the request path without the api/ prefix and without the query string, for example "/orders"; do not rely on query strings, pass input in a JSON body. Return (HTTP status, JSON-serializable dict). Import only the Python standard library. Keep all data in module-level variables (in memory). Requests are handled one at a time.
 - app.js must call the API with relative URLs only: `api/<endpoint path without the leading slash>`, for example fetch("api/orders"). Never use absolute URLs or a leading slash, because the page is served under a proxy sub-path.
 - index.html must load style.css and app.js with relative URLs ("style.css", "app.js") and no external resources (no CDNs, fonts or analytics).
-- Text shown to users is Traditional Chinese (Taiwan).
+- Text shown to users is in the same language as the app description.
 - Each file at most 60000 bytes."#;
 
 /// The four generated files.

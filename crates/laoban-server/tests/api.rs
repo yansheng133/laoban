@@ -510,7 +510,10 @@ fn slow_ai_calls_are_not_cut_by_socket_timeouts() {
 #[test]
 fn unconfigured_api_still_serves_probes() {
     let r = start_with(
-        ApiState::Unconfigured("後端設定不完整：缺少環境變數 LAOBAN_MODEL。".into()),
+        ApiState::Unconfigured(
+            "Backend configuration is incomplete: missing environment variables LAOBAN_MODEL."
+                .into(),
+        ),
         None,
     );
     assert_eq!(get(r.addr, "/healthz"), (200, "ok".to_string()));
