@@ -37,7 +37,7 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 
 ## 後端 API
 
-基底路徑：`/k8s/clusters/c-m-26kbxk5f/apis/api.laoban.yansheng133.github.io/v1alpha1/namespaces/laoban-dev`。全部 JSON，UTF-8。下面各節沿用內部的 `/api/...` 名稱，對應的外部路徑（接在基底路徑後）如下，括號是 RBAC 上的資源與動作：
+基底路徑：`/k8s/clusters/<叢集 ID>/apis/api.laoban.yansheng133.github.io/v1alpha1/namespaces/<目標 namespace>`（Sam 的環境是 `c-m-26kbxk5f`、`laoban-dev`）。頁面在執行時找出叢集與 namespace（v0.1.17，見「頁面找後端」）。全部 JSON，UTF-8。下面各節沿用內部的 `/api/...` 名稱，對應的外部路徑（接在基底路徑後）如下，括號是 RBAC 上的資源與動作：
 
 | 內部名稱 | 外部路徑 |
 |---|---|
@@ -180,18 +180,26 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 |---|---|---|
 | `POST .../round/opinions/<id>/edit` `{text}` | 意見作者 | 收集中改寫自己的意見（字數限制同提意見）。已有人附議時保留附議，意見標 `editedAfterSupport` |
 | `POST .../round/opinions/<id>/withdraw` | 意見作者 | 收集中撤回：原文、它的回覆與附議一起刪除（任何人都看不到，也不交給 AI），編號保留，標 `withdrawn`；不能再附議或回覆。撤回的也算進一輪最多意見數的兩倍（60 則），作者不再是確認人。所有意見都撤回時，截止後這一輪自動取消（紀錄 `emptyCancelled`），不呼叫 AI |
-| `POST .../round/deadline` `{minutes}` | 發起人 | 收集中把截止時間改成現在加幾分鐘，最晚是開始後 24 小時；0 表示立即收斂 |
+| `POST .../round/deadline` `{minutes}` | 發起人 | 收集中把截止時間改成現在加幾分鐘；超過開始後 24 小時的改成剛好 24 小時（v0.1.17，之前會被拒絕）；0 表示立即收斂。一輪的 JSON 有 `latestDeadline`，頁面只列出它之前的選項 |
 | `POST .../round/drafts` `{items: [{text, target}], shared}` | 任何人 | 收集中把自己的草稿（針對元件的與一般的）存在這一輪裡，取代先前存的；`shared` 預設 `true`（其他人看得到，不能改）。每人最多 10 則、每則 1000 字，全部草稿合計不超過一輪的 8000 字；不算進意見、不進紀錄、不寫進歸檔。頁面在最後一次變更 1.5 秒後儲存；還沒有一輪時草稿只在瀏覽器裡 |
 | `POST .../round/plan/steps/<n>/comments` `{text}` | 任何人 | 等待確認時針對計畫第 n 步留言（300 字，最多 50 則，算進一輪的 8000 字）。歸檔時留言也遮蔽 |
 | `POST .../round/plan/comments/<id>/support` | 留言者以外 | 附議留言或取消 |
-| `GET .../rounds/mine`（RBAC 資源 `rounds`） | 任何人 | 所有應用中等呼叫者處理的輪次：`confirm`（等他確認）、`othersConfirm`（他發起、還有人沒回覆）、`retry`（他發起、失敗）。只讀記憶體 |
-| `GET .../apps/<name>/rounds`、`.../rounds/<id>`（RBAC 子資源 `apps/rounds`） | 任何人 | 從 `laoban-rounds` 分支讀這個應用歸檔的輪次：清單（依日期由新到舊，最多 50 輪）與單一輪（遮蔽過的內容、`openedAt`、`archivedAt`） |
+| `GET .../waitingrounds`（RBAC 資源 `waitingrounds`，動作 list；v0.1.17 前是 `rounds/mine`，跟 Round CRD 撞名） | 任何人 | 所有應用中等呼叫者處理的輪次：`confirm`（等他確認）、`othersConfirm`（他發起或已確認、還有人沒回覆）、`retry`（他發起、失敗）、`failed`（他確認過、失敗）。只讀記憶體 |
+| `GET .../apps/<name>/rounds`、`.../rounds/<id>`（RBAC 子資源 `apps/rounds`） | 任何人 | 從 `laoban-rounds` 分支讀這個應用歸檔的輪次：清單（依輪次 ID 由新到舊，最多 50 輪；v0.1.17 起 ID 是 `r-YYYYMMDD-` 加當天第幾秒（5 位十六進位）與 1 位亂數，同一天也依時間排）與單一輪（遮蔽過的內容、`openedAt`、`archivedAt`） |
 
 - 一輪的 JSON 多了 `drafts`（`mine`：自己的；`shared`：其他人分享的）與 `planComments`；`you.canComment` 表示能不能對計畫留言。對計畫的留言在有人按「有意見」後跟著意見一起交給 AI（標出是哪一步、原本的步驟文字、附議），新的計畫產生後清空。留言不影響確認，確認的人仍然只有寫意見的人。
 - 紀錄新增 `edited`、`withdrawn`、`deadline`（`minutes`，0 是立即收斂）、`commented`（`step`）、`emptyCancelled`。
 - 失敗原因多了 `messageCode`／`messageArgs`（例如 `restartUnpublished`、`mergeConflict` 帶 `files`），頁面依語言顯示；沒有代碼的照舊顯示中文 `message`。發布完成的紀錄改成「新版本已寫入 GitHub，等待 Fleet 部署」。
 - 所有應用共用一個分支，laoban 的 commit 一次一個；同一個應用的版本一次只寫一個（手動存檔、版面、還原、發布），第二個請求等第一個寫完，再和它寫的版本比對，所以會收到 `409 version_conflict`（「有了新版本」）而不是 GitHub 錯誤。萬一分支被別人（不經過 laoban）先推了，也回 `409 version_conflict`（20 報告 B11）。
 - 頁面：應用清單標出等你確認、等其他人確認、失敗待處理的應用，上方寫出幾輪等你確認；左側選單的「應用」顯示等你確認的件數（每 60 秒更新）；詳細頁的意見收斂上方顯示「這一輪等你確認」。詳細頁有「過去的輪次」，打開才讀取。
+
+**v0.1.17**：
+
+- **頁面找後端**：extension 不再寫死叢集 ID 與 namespace。第一次需要時，先試上次記住的（這個瀏覽器），再列出使用者看得到的叢集（`/v1/management.cattle.io.clusters`），對每個叢集讀 laoban API group 的 discovery（任何登入的人都能讀）；在有的那個叢集用 `GET .../namespaces/<ns>/config` 找 namespace：先試 `laoban-dev`，再試使用者在那裡看得到的 namespace。後端對其他 namespace 的請求回 `404 other_namespace`，`error.targetNamespace` 寫出它服務的 namespace（能在某個 namespace 呼叫這個 API 的人就能知道它的名稱），所以通常一個請求就找到。找不到時頁面說明要請管理者給角色，或照 Quickstart 安裝。一個 Rancher 只用第一個找到的後端。
+- **可以修改嗎**：頁面用 SelfSubjectAccessReview 問 API server 能不能 `create` `apps/files`；不能的人看不到新增應用與編輯按鈕（後端照樣檢查）。
+- **背景工作的 log**：收斂、發布、產生計畫在背景失敗時，後端 log 寫一行 `<工作> <應用> <輪次> failed: <代碼> (<原因>)`，原因同同步請求的 `detail`，不含 token、金鑰與使用者的文字。
+- **Rancher 側邊選單**：laoban 的頁面可以收合 Rancher 的側邊選單。做法是在 `<body>` 加 class，把 Rancher 版面的 `--nav-width` 設成 0 並隱藏選單；只在 laoban 的頁面上，離開就恢復；選擇記在瀏覽器。
+- **發布**：打 `vX.Y.Z` tag 後，`publish` workflow 用 `@rancher/shell` 的發布腳本建 extension 與它的 chart，加上兩個後端 chart（`laoban` 的 `image.digest` 填這個版本的映像檔），寫進 `gh-pages` 分支，成為 Helm repo（`https://yansheng133.github.io/laoban`），並以 `docs/releases/<tag>.md` 建立 GitHub Release。tag、Cargo、兩個 chart 與 extension 的版本必須一致。
 
 **保存與重啟**（v0.1.15）：
 - 每一輪存成一個 `Round` 資源（`laoban-crd` chart，group `laoban.yansheng133.github.io/v1alpha1`），放在後端自己的 namespace `laoban-system`，名稱 `<應用>-<輪次 ID>`，label `laoban.yansheng133.github.io/app`。`spec` 有 `schema`（目前 1）、`app`、`targetNamespace`、`state`、`deadline` 與 `round`（這一輪的全部內容，包括頁面看不到的開始時的 commit、收斂好的計畫要寫程式時需要的內容）。

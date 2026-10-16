@@ -11,6 +11,9 @@ name: publish
 #    is built and packaged by @rancher/shell's own publish script, as the
 #    Rancher extension docs describe ("Publishing an Extension"), only from
 #    extension/ instead of the repository root.
+#    The laoban chart is published with the image digest of this release
+#    filled in (image.digest), so `helm install` needs no digest; the job
+#    waits for the image workflow of the same tag to push it.
 # 2. A GitHub release is created with the notes in docs/releases/<tag>.md.
 #
 # The versions must agree: the tag, Cargo.toml, both charts and the
@@ -36,6 +39,7 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      packages: read
     env:
       TAG: ${{ inputs.tag || github.ref_name }}
     steps:
@@ -80,12 +84,48 @@ jobs:
           yarn publish-pkgs -s "${GITHUB_REPOSITORY}" -b gh-pages -t "laoban-ext-${{ steps.ver.outputs.version }}"
           test -f tmp/index.yaml
 
+      - name: Image digest of this release
+        id: image
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ghcr.io/${{ github.repository_owner }}/laoban-server:${{ steps.ver.outputs.version }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin >/dev/null
+          # The image workflow of this tag builds both architectures first.
+          for _ in $(seq 1 90); do
+            if digest="$(docker buildx imagetools inspect "$IMAGE" --format '{{json .Manifest}}' 2>/dev/null | jq -r .digest)" \
+              && [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "digest=$digest" >> "$GITHUB_OUTPUT"
+              echo "$IMAGE is $digest"
+              docker logout ghcr.io >/dev/null
+              # Readers pull without logging in: say so if they cannot.
+              repo="${IMAGE#ghcr.io/}"; repo="${repo%:*}"
+              tok="$(curl -fsS "https://ghcr.io/token?scope=repository:${repo}:pull" | jq -r .token || true)"
+              code="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer ${tok}" \
+                -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json' \
+                "https://ghcr.io/v2/${repo}/manifests/${digest}")"
+              [ "$code" = "200" ] || echo "::warning::the image cannot be pulled without logging in (HTTP $code); make the GHCR package public"
+              exit 0
+            fi
+            sleep 30
+          done
+          echo "::error::$IMAGE did not appear within 45 minutes"
+          exit 1
+
       - name: Add the backend charts to the index
+        env:
+          DIGEST: ${{ steps.image.outputs.digest }}
+          VERSION: ${{ steps.ver.outputs.version }}
         run: |
           out=extension/tmp
+          work="$(mktemp -d)"
+          cp -R charts/laoban charts/laoban-crd "$work/"
+          # The top-level image block only (two-space keys right under it).
+          sed -i "/^image:/,/^[a-z]/{s|^  digest: \"\"|  digest: \"${DIGEST}\"|;s|^  tag: \"\"|  tag: \"${VERSION}\"|}" "$work/laoban/values.yaml"
+          [ "$(grep -c "^  digest: \"${DIGEST}\"$" "$work/laoban/values.yaml")" = 1 ] || { echo "::error::digest not set in values.yaml"; exit 1; }
           for c in laoban laoban-crd; do
             mkdir -p "$out/assets/$c"
-            helm package "charts/$c" -d "$out/assets/$c"
+            helm package "$work/$c" -d "$out/assets/$c"
           done
           helm repo index "$out/assets" --url assets --merge "$out/index.yaml"
           mv "$out/assets/index.yaml" "$out/index.yaml"
