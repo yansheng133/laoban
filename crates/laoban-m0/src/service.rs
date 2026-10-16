@@ -35,7 +35,7 @@ use crate::store::{BaseApp, PlanStore, StoreError, StoredPlan};
 use crate::{time, InvalidOutput};
 
 mod persist;
-pub use persist::{ARCHIVE_BRANCH, ARCHIVE_DIR};
+pub use persist::{valid_round_id, ARCHIVE_BRANCH, ARCHIVE_DIR, MAX_PAST_ROUNDS};
 
 /// Fleet objects created once by hand (design: Fleet).
 pub const FLEET_WORKSPACE: &str = "fleet-default";
@@ -135,6 +135,24 @@ pub struct AddOpinionsRequest {
     pub target: Option<String>,
     #[serde(default)]
     pub items: Vec<OpinionItem>,
+}
+
+/// `POST .../round/deadline` body: minutes from now; 0 converges now.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeadlineRequest {
+    pub minutes: u64,
+}
+
+/// `POST .../round/drafts` body: all of the caller's drafts (replacing
+/// the ones kept), and whether others may see them (default yes).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DraftsRequest {
+    #[serde(default)]
+    pub items: Vec<OpinionItem>,
+    #[serde(default)]
+    pub shared: Option<bool>,
 }
 
 /// `POST .../round/skip` body.
@@ -281,6 +299,9 @@ pub enum M0Error {
     /// Writing a round to its resource failed.
     #[error(transparent)]
     State(StateError),
+    /// No archived round with that ID for the app.
+    #[error("past round not found")]
+    PastRoundNotFound,
 }
 
 impl M0Error {
@@ -317,6 +338,7 @@ impl M0Error {
             M0Error::State(StateError::Conflict) => "round_conflict",
             M0Error::State(StateError::TooLarge) => "round_full",
             M0Error::State(_) => "state_failed",
+            M0Error::PastRoundNotFound => "round_not_found",
         }
     }
 
@@ -365,6 +387,7 @@ impl M0Error {
             M0Error::State(StateError::Conflict) => 409,
             M0Error::State(StateError::TooLarge) => 400,
             M0Error::State(_) => 503,
+            M0Error::PastRoundNotFound => 404,
         }
     }
 
@@ -459,6 +482,7 @@ impl M0Error {
                 "儲存意見收斂的資料失敗，沒有寫入，請稍後再試；若持續失敗請管理者檢查後端的權限。"
                     .into()
             }
+            M0Error::PastRoundNotFound => "找不到這一輪的紀錄。".into(),
         }
     }
 }
@@ -1488,6 +1512,138 @@ impl M0Service {
         self.round(app, Some(user))
     }
 
+    /// `POST .../round/opinions/<id>/edit` `{text}`: the author changes it.
+    pub fn edit_opinion(
+        &self,
+        app: &str,
+        opinion: &str,
+        body: &OpinionRequest,
+        user: Option<&str>,
+    ) -> Result<Value, M0Error> {
+        let user = require_user(user)?;
+        let at = time::rfc3339(SystemTime::now());
+        self.change_round(app, |r| r.edit_opinion(user, opinion, &body.text, &at))?;
+        self.round(app, Some(user))
+    }
+
+    /// `POST .../round/opinions/<id>/withdraw`: the author takes it back.
+    pub fn withdraw_opinion(
+        &self,
+        app: &str,
+        opinion: &str,
+        user: Option<&str>,
+    ) -> Result<Value, M0Error> {
+        let user = require_user(user)?;
+        let at = time::rfc3339(SystemTime::now());
+        self.change_round(app, |r| r.withdraw_opinion(user, opinion, &at))?;
+        self.round(app, Some(user))
+    }
+
+    /// `POST .../round/deadline` `{minutes}`: the initiator moves the
+    /// deadline; 0 converges now.
+    pub fn set_round_deadline(
+        &self,
+        app: &str,
+        body: &DeadlineRequest,
+        user: Option<&str>,
+    ) -> Result<Value, M0Error> {
+        let user = require_user(user)?;
+        let now = SystemTime::now();
+        let at = time::rfc3339(now);
+        self.change_round(app, |r| r.set_deadline(user, body.minutes, unix(now), &at))?;
+        if body.minutes == 0 {
+            self.converge_if_due_soon(app, unix(now));
+        }
+        self.round(app, Some(user))
+    }
+
+    /// `POST .../round/drafts` `{items, shared}`: keep the caller's drafts
+    /// in the round, so they are there on another computer and (shared)
+    /// others see them.
+    pub fn save_drafts(
+        &self,
+        app: &str,
+        body: &DraftsRequest,
+        user: Option<&str>,
+    ) -> Result<Value, M0Error> {
+        let user = require_user(user)?;
+        self.require_rounds()?;
+        let items = if body.items.iter().any(|i| i.target.is_some()) {
+            let current = self.load_app(app)?;
+            self.new_opinions(app, &current, &body.items)?
+        } else {
+            body.items
+                .iter()
+                .map(|i| rounds::NewOpinion::general(&i.text))
+                .collect()
+        };
+        let shared = body.shared.unwrap_or(true);
+        let at = time::rfc3339(SystemTime::now());
+        self.change_round(app, |r| r.set_drafts(user, items.clone(), shared, &at))?;
+        self.round(app, Some(user))
+    }
+
+    /// `POST .../round/plan/steps/<n>/comments` `{text}`: comment on a step
+    /// of the converged plan while confirming.
+    pub fn comment_on_plan(
+        &self,
+        app: &str,
+        step: usize,
+        body: &OpinionRequest,
+        user: Option<&str>,
+    ) -> Result<Value, M0Error> {
+        let user = require_user(user)?;
+        let at = time::rfc3339(SystemTime::now());
+        self.change_round(app, |r| r.add_plan_comment(user, step, &body.text, &at))?;
+        self.round(app, Some(user))
+    }
+
+    /// `POST .../round/plan/comments/<id>/support`: +1 a comment, or take
+    /// it back.
+    pub fn support_plan_comment(
+        &self,
+        app: &str,
+        comment: &str,
+        user: Option<&str>,
+    ) -> Result<Value, M0Error> {
+        let user = require_user(user)?;
+        self.change_round(app, |r| r.toggle_comment_support(user, comment).map(|_| ()))?;
+        self.round(app, Some(user))
+    }
+
+    /// `GET /api/rounds/mine`: the rounds that wait for the caller, on any
+    /// app: to confirm, or (initiator) for others to confirm or to retry a
+    /// failed one. From memory only; no GitHub call.
+    pub fn rounds_waiting(&self, user: Option<&str>) -> Result<Value, M0Error> {
+        let user = require_user(user)?;
+        let mut items: Vec<Value> = Vec::new();
+        for (app, r) in self.rounds().iter() {
+            let pending: Vec<&str> = r
+                .confirmers
+                .iter()
+                .filter(|c| c.answer == rounds::Answer::Pending)
+                .map(|c| c.user.as_str())
+                .collect();
+            let reason = match r.state {
+                State::Confirming if pending.contains(&user) => "confirm",
+                State::Confirming if r.initiator == user && !pending.is_empty() => "othersConfirm",
+                State::Failed if r.initiator == user => "retry",
+                _ => continue,
+            };
+            items.push(json!({
+                "app": app,
+                "roundId": r.id,
+                "state": r.state,
+                "reason": reason,
+                "pending": pending.len(),
+            }));
+        }
+        items.sort_by(|a, b| a["app"].as_str().cmp(&b["app"].as_str()));
+        // What the caller must do comes first.
+        items.sort_by_key(|v| v["reason"] != "confirm");
+        Ok(json!({ "rounds": items, "roundsAvailable": self.rounds_ready() }))
+    }
+
     /// Opinions as sent, with each target checked against the app's
     /// architecture and named as the 3D view names it.
     fn new_opinions(
@@ -1641,8 +1797,15 @@ impl M0Service {
     /// Mark a due round converging (written before anything else).
     fn begin_converging(&self, app: &str, now_unix: u64) -> Option<String> {
         let mut rs = self.rounds();
-        let id = rs.get(app).filter(|r| r.due(now_unix))?.id.clone();
+        let r = rs.get(app).filter(|r| r.due(now_unix))?;
+        let id = r.id.clone();
+        let empty = r.active().count() == 0;
         let at = time::rfc3339(SystemTime::now());
+        if empty {
+            // Every opinion was withdrawn: nothing to converge.
+            self.update_round(&mut rs, app, &id, |r| r.cancel_empty(&at));
+            return None;
+        }
         self.update_round(&mut rs, app, &id, |r| r.start_converging(&at));
         Some(id)
     }

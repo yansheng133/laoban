@@ -143,6 +143,8 @@ pub fn discovery_json() -> String {
             r("apps/layout", &["create"]),
             r("apps/restore", &["create"]),
             r("apps/round", &["get", "create"]),
+            r("apps/rounds", &["get"]),
+            r("rounds", &["get"]),
             r("plans", &["get", "create"]),
             r("plans/apply", &["create"]),
         ],
@@ -178,6 +180,9 @@ pub fn internal_path(path: &str, namespace: &str) -> Option<String> {
     }
     if rest == "plans" {
         return Some("/api/plan".into());
+    }
+    if rest == "rounds/mine" {
+        return Some("/api/rounds/mine".into());
     }
     if rest == "apps" || rest.starts_with("apps/") || rest.starts_with("plans/") {
         return Some(format!("/api/{rest}"));
@@ -267,6 +272,8 @@ mod tests {
             p("plans/p-1/apply").as_deref(),
             Some("/api/plans/p-1/apply")
         );
+        assert_eq!(p("rounds/mine").as_deref(), Some("/api/rounds/mine"));
+        assert_eq!(p("rounds/other"), None);
         assert_eq!(p("other"), None);
         assert_eq!(
             internal_path(

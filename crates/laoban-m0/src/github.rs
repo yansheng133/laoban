@@ -246,6 +246,30 @@ impl GithubCommitter {
         Ok(names)
     }
 
+    /// Names of the files in `path` at `git_ref` (a branch or SHA). A
+    /// missing directory or branch is an empty list.
+    pub fn list_files_at(&self, path: &str, git_ref: &str) -> Result<Vec<String>, GithubError> {
+        if !safe_path(path) || !safe_ref(git_ref) {
+            return Err(GithubError::BadPath);
+        }
+        let url = self.contents_url(path, git_ref);
+        let v = match self.call("list directory", "GET", &url, None) {
+            Ok(v) => v,
+            Err(GithubError::Status { status: 404, .. }) => return Ok(Vec::new()),
+            Err(e) => return Err(e),
+        };
+        let items = v.as_array().ok_or(GithubError::InvalidResponse {
+            stage: "list directory",
+        })?;
+        let mut names: Vec<String> = items
+            .iter()
+            .filter(|i| i["type"] == "file")
+            .filter_map(|i| i["name"].as_str().map(str::to_string))
+            .collect();
+        names.sort();
+        Ok(names)
+    }
+
     /// A file's content on the branch, or `None` if it does not exist.
     pub fn read_file(&self, path: &str) -> Result<Option<String>, GithubError> {
         let branch = self.config.branch.clone();
