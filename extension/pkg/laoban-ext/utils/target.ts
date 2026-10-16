@@ -33,11 +33,24 @@ const MAX_NAMESPACES = 200;
 
 let current: BackendTarget | null = null;
 let finding: Promise<BackendTarget> | null = null;
+// A search that found nothing is not repeated for a while (the nav's count
+// asks every minute).
+const FAILED_FOR_MS = 5 * 60 * 1000;
+let failed: { at: number; error: Error } | null = null;
 
 export class BackendNotFound extends Error {
   constructor() {
     super('backend_not_found');
     this.name = 'BackendNotFound';
+  }
+}
+
+// The API is there but not answering (the backend restarting or being
+// upgraded): not the same as not installed.
+export class BackendUnavailable extends Error {
+  constructor() {
+    super('unavailable');
+    this.name = 'BackendUnavailable';
   }
 }
 
@@ -53,12 +66,14 @@ export function currentTarget(): BackendTarget | null {
 export function setTarget(t: BackendTarget | null) {
   current = t;
   finding = null;
+  failed = null;
 }
 
 /** Forget the answer (when the backend moved). */
 export function resetTarget() {
   current = null;
   finding = null;
+  failed = null;
   try {
     window.localStorage.removeItem(STORAGE_KEY);
   } catch {}
@@ -146,20 +161,26 @@ async function namespaceIn(clusterId: string, probe: Probe): Promise<string | nu
 
 async function search(probe: Probe): Promise<BackendTarget> {
   const kept = remembered();
+  let unavailable = false;
 
   if (kept) {
-    const ns = namespaceFrom(kept.namespace, await probe(`${ apiBase(kept) }/config`));
+    const a = await probe(`${ apiBase(kept) }/config`);
+    const ns = namespaceFrom(kept.namespace, a);
 
     if (ns) {
       return { clusterId: kept.clusterId, namespace: ns };
     }
+    unavailable = a.status === 503;
   }
   const clusters = await probe('/v1/management.cattle.io.clusters');
   const ids = ((clusters.body as { data?: { id?: unknown }[] } | null)?.data || [])
     .map((c) => c.id)
     .filter((id): id is string => typeof id === 'string' && !!id);
   // Ask every cluster at once; keep the list's order among those that have it.
-  const has = await Promise.all(ids.map(async(id) => (await probe(`/k8s/clusters/${ encodeURIComponent(id) }/apis/${ API_GROUP }/${ API_VERSION }`)).status === 200));
+  const statuses = await Promise.all(ids.map(async(id) => (await probe(`/k8s/clusters/${ encodeURIComponent(id) }/apis/${ API_GROUP }/${ API_VERSION }`)).status));
+  const has = statuses.map((st) => st === 200);
+
+  unavailable = unavailable || statuses.includes(503);
 
   for (const [i, id] of ids.entries()) {
     if (has[i]) {
@@ -170,7 +191,7 @@ async function search(probe: Probe): Promise<BackendTarget> {
       }
     }
   }
-  throw new BackendNotFound();
+  throw unavailable ? new BackendUnavailable() : new BackendNotFound();
 }
 
 /** Where the backend is; found once and kept. */
@@ -178,11 +199,20 @@ export function findTarget(probe: Probe = fetchProbe): Promise<BackendTarget> {
   if (current) {
     return Promise.resolve(current);
   }
+  if (failed && Date.now() - failed.at < FAILED_FOR_MS) {
+    return Promise.reject(failed.error);
+  }
   if (!finding) {
     finding = search(probe).then((t) => {
       remember(t);
 
       return t;
+    }, (e: Error) => {
+      // Not found is kept for a while; unavailable is asked again next time.
+      if (e instanceof BackendNotFound) {
+        failed = { at: Date.now(), error: e };
+      }
+      throw e;
     }).finally(() => {
       finding = null;
     });

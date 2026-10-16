@@ -150,9 +150,9 @@ kubectl --context local apply -f https://raw.githubusercontent.com/yansheng133/l
 
 | 症状 | 確認すること |
 |---|---|
-| ページに「laoban バックエンドが見つかりません」と表示される | `kubectl get apiservice v1alpha1.api.laoban.yansheng133.github.io` の AVAILABLE。`laoban-dev` の edit／view、または laoban user／viewer ロールを持っているか |
+| ページに「laoban バックエンドが見つかりません」と表示される | `kubectl --context downstream get apiservice v1alpha1.api.laoban.yansheng133.github.io` の AVAILABLE。`laoban-dev` の edit／view、または laoban user／viewer ロールを持っているか |
 | 計画の作成に失敗し、token や支出上限について表示される | Anthropic Console の利用枠。バックエンドの月間 token 上限（`config.tokenCap`） |
-| GitHub への書き込みに失敗する | token にその repo の Contents: Read and write だけが付与されているか、repo に `main` ブランチがあるか。バックエンドのログ：`kubectl -n laoban-system logs deploy/laoban` |
+| GitHub への書き込みに失敗する | token にその repo の Contents: Read and write だけが付与されているか、repo に `main` ブランチがあるか。バックエンドのログ：`kubectl --context downstream -n laoban-system logs deploy/laoban` |
 | デプロイがいつまでも完了しない | Rancher → Continuous Delivery → Git Repos → `laoban-apps` のステータス。Pod が Pod Security でブロックされていないか |
 | 意見のラウンドに、管理者に laoban-crd chart のアップグレードを求めるメッセージが表示される | `laoban-crd` がインストールされていないか、バージョンがバックエンドより古い |
 

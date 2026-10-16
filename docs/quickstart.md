@@ -150,9 +150,9 @@ kubectl --context local apply -f https://raw.githubusercontent.com/yansheng133/l
 
 | 現象 | 檢查 |
 |---|---|
-| 頁面寫「找不到 laoban 後端」 | `kubectl get apiservice v1alpha1.api.laoban.yansheng133.github.io` 的 AVAILABLE；你是否有 `laoban-dev` 的 edit／view 或 laoban user／viewer 角色 |
+| 頁面寫「找不到 laoban 後端」 | `kubectl --context downstream get apiservice v1alpha1.api.laoban.yansheng133.github.io` 的 AVAILABLE；你是否有 `laoban-dev` 的 edit／view 或 laoban user／viewer 角色 |
 | 產生計畫失敗、提到 token 或花費上限 | Anthropic Console 的額度；後端每月 token 上限（`config.tokenCap`） |
-| 「寫入 GitHub 失敗」 | token 是否只給了那個 repo 的 Contents: Read and write、repo 是否有 `main` 分支；後端 log：`kubectl -n laoban-system logs deploy/laoban` |
+| 「寫入 GitHub 失敗」 | token 是否只給了那個 repo 的 Contents: Read and write、repo 是否有 `main` 分支；後端 log：`kubectl --context downstream -n laoban-system logs deploy/laoban` |
 | 部署一直沒好 | Rancher → Continuous Delivery → Git Repos → `laoban-apps` 的狀態；Pod 是否被 Pod Security 擋下 |
 | 意見收斂顯示「請管理者先升級 laoban-crd chart」 | 沒裝 `laoban-crd`，或版本比後端舊 |
 

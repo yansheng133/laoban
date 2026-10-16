@@ -6,7 +6,9 @@
 import {
   AI_REQUEST_MARGIN_MS, AI_REQUEST_TIMEOUT_MS, API_GROUP, FLEET_BUNDLES_PATH, DEFAULT_REQUEST_TIMEOUT_MS
 } from '../config/backend';
-import { apiBase, findTarget, BackendNotFound } from './target';
+import {
+  apiBase, findTarget, resetTarget, BackendNotFound, BackendUnavailable
+} from './target';
 import type { Architecture } from './layout';
 import type { RoundLimits } from './limits';
 import type { Deployment } from './rollout';
@@ -341,6 +343,20 @@ interface RequestOptions {
 }
 
 async function requestJson<T>(store: StoreLike, url: string, opts: RequestOptions = {}): Promise<T> {
+  try {
+    return await requestOnce<T>(store, url, opts);
+  } catch (e) {
+    // The backend moved (reinstalled elsewhere): look for it again, once.
+    if (url.startsWith(BACKEND) && e instanceof RequestError && e.code === 'other_namespace') {
+      resetTarget();
+
+      return requestOnce<T>(store, url, opts);
+    }
+    throw e;
+  }
+}
+
+async function requestOnce<T>(store: StoreLike, url: string, opts: RequestOptions = {}): Promise<T> {
   const method = opts.method || 'GET';
   const headers: Record<string, string> = { Accept: 'application/json' };
 
@@ -455,6 +471,9 @@ async function resolveBackend(url: string): Promise<string> {
   } catch (e) {
     if (e instanceof BackendNotFound) {
       throw new RequestError('backend_not_found', null, 404);
+    }
+    if (e instanceof BackendUnavailable) {
+      throw new RequestError('unavailable', null, 503);
     }
     throw new RequestError('network', null);
   }

@@ -150,9 +150,9 @@ kubectl --context local apply -f https://raw.githubusercontent.com/yansheng133/l
 
 | Symptom | What to check |
 |---|---|
-| The page says "No laoban backend was found…" | AVAILABLE in `kubectl get apiservice v1alpha1.api.laoban.yansheng133.github.io`; whether you have edit/view on `laoban-dev` or the laoban user/viewer role |
+| The page says "No laoban backend was found…" | AVAILABLE in `kubectl --context downstream get apiservice v1alpha1.api.laoban.yansheng133.github.io`; whether you have edit/view on `laoban-dev` or the laoban user/viewer role |
 | Generating a plan fails and mentions the token or spend limit | Your quota in the Anthropic Console; the backend's monthly token cap (`config.tokenCap`) |
-| Writing to GitHub fails | Whether the token has only Contents: Read and write on that one repo, and whether the repo has a `main` branch; backend log: `kubectl -n laoban-system logs deploy/laoban` |
+| Writing to GitHub fails | Whether the token has only Contents: Read and write on that one repo, and whether the repo has a `main` branch; backend log: `kubectl --context downstream -n laoban-system logs deploy/laoban` |
 | Deployment never finishes | Status of `laoban-apps` in Rancher → Continuous Delivery → Git Repos; whether the Pod is blocked by Pod Security |
 | Rounds of opinions show a message asking an administrator to upgrade the laoban-crd chart first | `laoban-crd` is not installed, or its version is older than the backend |
 

@@ -112,6 +112,13 @@ jobs:
           echo "::error::$IMAGE did not appear within 45 minutes"
           exit 1
 
+      # The branch as it is now: the index is merged with this copy, not the
+      # one the publish script fetched through the (cached) raw URL.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: gh-pages
+          path: gh-pages
+
       - name: Add the backend charts to the index
         env:
           DIGEST: ${{ steps.image.outputs.digest }}
@@ -127,16 +134,12 @@ jobs:
             mkdir -p "$out/assets/$c"
             helm package "$work/$c" -d "$out/assets/$c"
           done
-          helm repo index "$out/assets" --url assets --merge "$out/index.yaml"
+          if [ -f gh-pages/index.yaml ]; then merge=gh-pages/index.yaml; else merge="$out/index.yaml"; fi
+          helm repo index "$out/assets" --url assets --merge "$merge"
           mv "$out/assets/index.yaml" "$out/index.yaml"
           for c in laoban laoban-crd laoban-ext; do
             grep -q "^  $c:$" "$out/index.yaml" || { echo "::error::$c missing from index.yaml"; exit 1; }
           done
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: gh-pages
-          path: gh-pages
 
       - name: Commit to gh-pages
         run: |

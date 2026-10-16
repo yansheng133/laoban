@@ -2,7 +2,7 @@ import {
   describe, it, expect, beforeEach
 } from '@jest/globals';
 import {
-  findTarget, setTarget, namespaceFrom, apiBase, BackendNotFound, Probe, ProbeAnswer
+  findTarget, setTarget, namespaceFrom, apiBase, BackendNotFound, BackendUnavailable, Probe, ProbeAnswer
 } from '../target';
 
 const GV = '/apis/api.laoban.yansheng133.github.io/v1alpha1';
@@ -81,10 +81,26 @@ describe('findTarget', () => {
     expect(await findTarget(r.probe)).toStrictEqual({ clusterId: 'c-m-9', namespace: 'apps-b' });
   });
 
-  it('says so when no cluster has it', async() => {
+  it('says so when no cluster has it, and does not search again right away', async() => {
     const r = rancher({ clusters: ['local', 'c-m-1'] });
 
     await expect(findTarget(r.probe)).rejects.toBeInstanceOf(BackendNotFound);
+    const n = r.asked.length;
+
+    await expect(findTarget(r.probe)).rejects.toBeInstanceOf(BackendNotFound);
+    expect(r.asked).toHaveLength(n);
+  });
+
+  it('tells a backend that is not answering from one that is not installed', async() => {
+    const probe: Probe = async(url) => {
+      if (url === '/v1/management.cattle.io.clusters') {
+        return { status: 200, body: { data: [{ id: 'c-m-1' }] } };
+      }
+
+      return { status: 503, body: { kind: 'Status' } };
+    };
+
+    await expect(findTarget(probe)).rejects.toBeInstanceOf(BackendUnavailable);
   });
 });
 
