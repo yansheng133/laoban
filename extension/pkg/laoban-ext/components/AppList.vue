@@ -4,12 +4,15 @@
 // it is changed).
 //
 // Summaries come from AI output: rendered with {{ }} only, never v-html.
-import { defineComponent, ref, onMounted } from 'vue';
+import {
+  defineComponent, ref, computed, onMounted, onBeforeUnmount
+} from 'vue';
 import { useStore } from 'vuex';
 import { useText } from '../composables/useText';
 import {
-  listApps, listBundles, resolveAppUrl, RequestError, AppSummary
+  listApps, listBundles, resolveAppUrl, RequestError, AppSummary, WaitingRound
 } from '../utils/backend';
+import { refreshWaiting } from '../utils/waiting';
 import { bundleReadiness, Bundle, ReadinessState } from '../utils/bundle';
 import { appDetailRoute } from '../config/laoban';
 import { formatDateTime } from '../utils/time';
@@ -26,9 +29,25 @@ export default defineComponent({
     const loading = ref(false);
     const loaded = ref(false);
     const errorText = ref('');
+    // Rounds that wait for the caller (v0.1.16): marked per app and counted
+    // above the list. Read again every WAITING_POLL_MS.
+    const waiting = ref<Record<string, WaitingRound>>({});
+    const waitingCount = computed(() => Object.values(waiting.value).filter((w) => w.reason === 'confirm').length);
+    let waitingTimer: ReturnType<typeof setInterval> | null = null;
+
+    async function loadWaiting() {
+      // A nice-to-have, like the Fleet state; also updates the nav count.
+      const next: Record<string, WaitingRound> = {};
+
+      for (const w of await refreshWaiting(store)) {
+        next[w.app] = w;
+      }
+      waiting.value = next;
+    }
 
     async function refresh() {
       loading.value = true;
+      loadWaiting();
       try {
         const res = await listApps(store);
 
@@ -89,11 +108,25 @@ export default defineComponent({
       }
     }
 
-    onMounted(refresh);
+    const WAITING_POLL_MS = 30 * 1000;
+
+    onMounted(() => {
+      refresh();
+      waitingTimer = setInterval(() => {
+        if (document.visibilityState !== 'hidden') {
+          loadWaiting();
+        }
+      }, WAITING_POLL_MS);
+    });
+    onBeforeUnmount(() => {
+      if (waitingTimer) {
+        clearInterval(waitingTimer);
+      }
+    });
     expose({ refresh });
 
     return {
-      t, apps, loading, loaded, errorText, refresh, openUrl, formatTime, stateLabel, stateClass, appDetailRoute
+      t, apps, loading, loaded, errorText, waiting, waitingCount, refresh, openUrl, formatTime, stateLabel, stateClass, appDetailRoute
     };
   },
 });
@@ -122,6 +155,14 @@ export default defineComponent({
       </button>
     </div>
 
+    <p
+      v-if="waitingCount"
+      class="laoban-apps-waiting banner warning"
+      role="status"
+      data-testid="laoban-apps-waiting"
+    >
+      {{ t('laoban.waiting.count', { count: waitingCount }) }}
+    </p>
     <p
       v-if="errorText"
       class="text-error"
@@ -167,6 +208,11 @@ export default defineComponent({
                 class="laoban-apps-round"
               >{{ t(`laoban.round.states.${ app.round }`) }}</span>
               <span
+                v-if="waiting[app.appName]"
+                class="laoban-apps-waiting-badge"
+                :class="{ mine: waiting[app.appName].reason === 'confirm' }"
+              >{{ t(`laoban.waiting.badge.${ waiting[app.appName].reason }`) }}</span>
+              <span
                 v-if="!app.editable"
                 class="text-muted"
               >{{ t('laoban.apps.legacy') }}</span>
@@ -204,6 +250,25 @@ export default defineComponent({
 </template>
 
 <style lang="scss" scoped>
+.laoban-apps-waiting-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: var(--border-radius);
+  font-size: 11px;
+  border: 1px solid var(--border);
+
+  &.mine {
+    border-color: var(--warning);
+    background: var(--warning-banner-bg, transparent);
+    font-weight: 600;
+  }
+}
+
+.laoban-apps-waiting {
+  margin: 0 0 8px;
+}
+
 .laoban-apps-round {
   display: inline-block;
   margin-left: 6px;

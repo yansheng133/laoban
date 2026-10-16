@@ -154,6 +154,12 @@ laoban:
     showCurrent: Show current architecture
     showPlan: Show converged plan
     logLine: "{who}: {event}"
+    moveDeadline: Change the deadline
+    moveDeadlineApply: Apply
+    convergeNow: Converge now
+    stepComments: "Comments ({count})"
+    stepCommentPlaceholder: Your comment on this step
+    stepCommentsHint: Comments on steps do not affect confirming; when someone objects, they go to the AI with the opinions.
     failures:
       planTooLarge: The AI's change plan is too large (over 150 KB). The initiator can narrow the scope or shorten the opinions and converge again.
       planMissing: This round's change plan was not found. The initiator can converge again.
@@ -183,6 +189,12 @@ laoban:
       done: The new version is in GitHub; Fleet deploys it next
       cancelled: cancelled this round
       restarted: The backend restarted; the AI converges again
+      edited: "edited opinion {opinion}"
+      withdrawn: "withdrew opinion {opinion}"
+      deadline: "moved the deadline to {minutes} minutes from now"
+      deadlineNow: chose to converge now
+      commented: "commented on step {step} of the plan"
+      emptyCancelled: Every opinion was withdrawn; the round ended by itself
   expand:
     open: Enlarge
     close: Close
@@ -219,6 +231,16 @@ laoban:
     supportedBy: "+1 from {names}"
     replies: "Replies ({count})"
     replyPlaceholder: Reply to this opinion
+    withdrawn: (withdrawn)
+    edit: Edit
+    saveEdit: Save
+    cancelEdit: Cancel
+    edited: (edited)
+    editedAfterSupport: (edited after +1s)
+    withdraw: Withdraw
+    withdrawConfirm: Withdraw it?
+    othersDrafts: "Drafts others are writing ({count})"
+    shareDrafts: Let others see my drafts
     showMore: Show all
     showLess: Show less
     send: Send
@@ -236,6 +258,20 @@ laoban:
     draftHint: "{count} draft(s); send them with the opinion round on the left."
     sideTitle: Opinions
     sideOpenHint: Close the enlarged view and start a round on the left; the drafts are sent with it.
+  waiting:
+    confirm: This round is waiting for your confirmation.
+    retry: This round failed. You started it, so you can converge again or cancel it.
+    count: "{count} round(s) wait for your confirmation."
+    badge:
+      confirm: Waiting for you
+      othersConfirm: Waiting for others
+      retry: Failed, up to you
+  pastRounds:
+    title: Past rounds
+    loading: Loading…
+    none: No finished rounds yet.
+    loadFailed: Could not read the past rounds.
+    commit: "Published version: {commit}"
   limits:
     count: "{count} / {max}"
     tooLong: "Longer than {max} characters ({over} too many). Please shorten it before sending."

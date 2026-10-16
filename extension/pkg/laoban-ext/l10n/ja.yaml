@@ -156,6 +156,12 @@ laoban:
     showCurrent: 現在のアーキテクチャを表示
     showPlan: 収束した計画を表示
     logLine: "{who}：{event}"
+    moveDeadline: 締め切りの変更
+    moveDeadlineApply: 適用
+    convergeNow: すぐに収束
+    stepComments: "コメント（{count}）"
+    stepCommentPlaceholder: このステップへのコメント
+    stepCommentsHint: ステップへのコメントは確認には影響しません。誰かが「意見あり」を押すと、意見と一緒に AI に渡されます。
     failures:
       planTooLarge: AI の変更計画が大きすぎます（150 KB 超）。開始した人が範囲を狭めるか意見を短くして、もう一度収束してください。
       planMissing: このラウンドの変更計画が見つかりません。開始した人がもう一度収束してください。
@@ -185,6 +191,12 @@ laoban:
       done: 新しいバージョンを GitHub に書き込みました。Fleet がこれからデプロイします
       cancelled: このラウンドを取り消し
       restarted: バックエンドが再起動したため、AI が収束をやり直します
+      edited: "意見 {opinion} を編集"
+      withdrawn: "意見 {opinion} を取り下げ"
+      deadline: "締め切りを {minutes} 分後に変更"
+      deadlineNow: すぐに収束するよう変更
+      commented: "計画のステップ {step} にコメント"
+      emptyCancelled: すべての意見が取り下げられたため、このラウンドは自動的に終了しました
   expand:
     open: 拡大
     close: 拡大を閉じる
@@ -221,6 +233,16 @@ laoban:
     supportedBy: "{names}が賛成"
     replies: "返信（{count}）"
     replyPlaceholder: この意見に返信
+    withdrawn: （取り下げ済み）
+    edit: 編集
+    saveEdit: 保存
+    cancelEdit: キャンセル
+    edited: （編集済み）
+    editedAfterSupport: （賛成の後に編集）
+    withdraw: 取り下げ
+    withdrawConfirm: 取り下げますか？
+    othersDrafts: "ほかの人が書いている下書き（{count} 人）"
+    shareDrafts: 自分の下書きをほかの人に見せる
     showMore: すべて表示
     showLess: 折りたたむ
     send: 送信
@@ -238,6 +260,20 @@ laoban:
     draftHint: "下書きが {count} 件あります。左の意見の収束でまとめて送信します。"
     sideTitle: 意見
     sideOpenHint: 拡大を閉じて左でラウンドを開始すると、下書きも一緒に送信されます。
+  waiting:
+    confirm: このラウンドはあなたの確認を待っています。
+    retry: このラウンドは失敗しました。開始した人として、もう一度収束するか取り消せます。
+    count: "{count} 件のラウンドがあなたの確認を待っています。"
+    badge:
+      confirm: あなたの確認待ち
+      othersConfirm: ほかの人の確認待ち
+      retry: 失敗（対応待ち）
+  pastRounds:
+    title: 過去のラウンド
+    loading: 読み込み中…
+    none: 終了したラウンドはまだありません。
+    loadFailed: 過去のラウンドを読み込めませんでした。
+    commit: "公開したバージョン：{commit}"
   limits:
     count: "{count} / {max}"
     tooLong: "{max} 文字を超えています（{over} 文字超過）。短くしてから送信してください。"

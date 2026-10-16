@@ -43,6 +43,11 @@ export default defineComponent({
       type:    Boolean,
       default: false,
     },
+    // Authors may change or take back their opinions now (collecting).
+    canEdit: {
+      type:    Boolean,
+      default: false,
+    },
     busy: {
       type:    Boolean,
       default: false,
@@ -63,7 +68,7 @@ export default defineComponent({
     },
   },
 
-  emits: ['support', 'reply', 'select'],
+  emits: ['support', 'reply', 'select', 'edit', 'withdraw'],
 
   setup(props, { emit }) {
     const store = useStore();
@@ -85,6 +90,43 @@ export default defineComponent({
 
     function toggle(id: string) {
       open.value = { ...open.value, [id]: !open.value[id] };
+    }
+
+    // The opinion being changed and its new text; the one asked to be
+    // withdrawn (a second press confirms; no browser dialog).
+    const editing = ref<string | null>(null);
+    const editText = ref('');
+    const confirmWithdraw = ref<string | null>(null);
+    const mine = (o: RoundOpinion) => !!props.me && o.by === props.me && !o.withdrawn;
+
+    function startEdit(o: RoundOpinion) {
+      editing.value = o.id;
+      editText.value = o.text;
+      confirmWithdraw.value = null;
+    }
+
+    function editProblem(o: RoundOpinion): boolean {
+      const text = editText.value;
+      const extra = chars(text) - chars(o.text);
+
+      return !text.trim() || text.trim() === o.text || textState(text, props.limits.opinionChars).over || extra > props.roundLeft;
+    }
+
+    function saveEdit(o: RoundOpinion) {
+      if (!props.busy && !editProblem(o)) {
+        emit('edit', o.id, editText.value.trim());
+        editing.value = null;
+      }
+    }
+
+    function withdraw(o: RoundOpinion) {
+      if (confirmWithdraw.value !== o.id) {
+        confirmWithdraw.value = o.id;
+
+        return;
+      }
+      confirmWithdraw.value = null;
+      emit('withdraw', o.id);
     }
 
     // Why a reply cannot be sent now ('' when it can).
@@ -119,7 +161,7 @@ export default defineComponent({
     const number = (id: string) => id.replace(/^o/, '');
 
     return {
-      t, open, full, isLong, toggleFull, replyText, groups, who, supportedByMe, toggle, sendReply, replyProblem, number, formatTime: (at: string) => formatDateTime(store, at)
+      t, charsOf: chars, open, full, isLong, toggleFull, editing, editText, confirmWithdraw, mine, startEdit, editProblem, saveEdit, withdraw, replyText, groups, who, supportedByMe, toggle, sendReply, replyProblem, number, formatTime: (at: string) => formatDateTime(store, at)
     };
   },
 });
@@ -155,14 +197,60 @@ export default defineComponent({
           <div class="text-muted laoban-opinion-meta">
             <strong class="laoban-opinion-number">#{{ number(o.id) }}</strong> {{ who(o.by) }} · {{ formatTime(o.at) }}
           </div>
+          <p
+            v-if="o.withdrawn"
+            class="text-muted laoban-withdrawn"
+          >
+            {{ t('laoban.opinions.withdrawn') }}
+          </p>
+          <form
+            v-else-if="editing === o.id"
+            class="laoban-opinion-edit"
+            @submit.prevent="saveEdit(o)"
+          >
+            <textarea
+              v-model="editText"
+              rows="3"
+              :aria-label="t('laoban.opinions.edit')"
+              :class="{ 'laoban-over': editProblem(o) && editText.trim() && editText.trim() !== o.text }"
+            />
+            <CharCounter
+              :text="editText"
+              :max="limits.opinionChars"
+              :left="roundLeft + charsOf(o.text)"
+            />
+            <div class="laoban-opinion-actions">
+              <button
+                type="submit"
+                class="btn btn-sm role-primary"
+                :disabled="busy || editProblem(o)"
+              >
+                {{ t('laoban.opinions.saveEdit') }}
+              </button>
+              <button
+                type="button"
+                class="btn btn-sm role-secondary"
+                @click="editing = null"
+              >
+                {{ t('laoban.opinions.cancelEdit') }}
+              </button>
+            </div>
+          </form>
           <div
+            v-else
             class="laoban-text"
             :class="{ 'laoban-folded': isLong(o.text) && !full[o.id] }"
           >
             {{ o.text }}
           </div>
+          <p
+            v-if="!o.withdrawn && (o.editedAt || o.editedAfterSupport)"
+            class="text-muted laoban-edited"
+          >
+            {{ o.editedAfterSupport ? t('laoban.opinions.editedAfterSupport') : t('laoban.opinions.edited') }}
+          </p>
           <button
-            v-if="isLong(o.text)"
+            v-if="!o.withdrawn && editing !== o.id && isLong(o.text)"
             type="button"
             class="btn btn-sm role-link laoban-fold"
             :aria-expanded="full[o.id] ? 'true' : 'false'"
@@ -170,7 +258,29 @@ export default defineComponent({
           >
             {{ full[o.id] ? t('laoban.opinions.showLess') : t('laoban.opinions.showMore') }}
           </button>
-          <div class="laoban-opinion-actions">
+          <div
+            v-if="!o.withdrawn && editing !== o.id"
+            class="laoban-opinion-actions"
+          >
+            <template v-if="canEdit && mine(o)">
+              <button
+                type="button"
+                class="btn btn-sm role-link"
+                :disabled="busy"
+                @click="startEdit(o)"
+              >
+                {{ t('laoban.opinions.edit') }}
+              </button>
+              <button
+                type="button"
+                class="btn btn-sm"
+                :class="confirmWithdraw === o.id ? 'role-primary bg-error' : 'role-link'"
+                :disabled="busy"
+                @click="withdraw(o)"
+              >
+                {{ confirmWithdraw === o.id ? t('laoban.opinions.withdrawConfirm') : t('laoban.opinions.withdraw') }}
+              </button>
+            </template>
             <button
               type="button"
               class="btn btn-sm"
@@ -356,5 +466,15 @@ export default defineComponent({
 
 .laoban-fold {
   padding-left: 0;
+}
+.laoban-withdrawn,
+.laoban-edited {
+  margin: 0;
+  font-size: 12px;
+  font-style: italic;
+}
+
+.laoban-opinion-edit textarea {
+  width: 100%;
 }
 </style>

@@ -106,10 +106,60 @@ export interface RoundView {
   messageArgs?: Record<string, string>;
   result: ApplyResponse | null;
   log: { at: string; by: string; event: string; code?: string; args?: Record<string, string> }[];
-  you: { user: string; isInitiator: boolean; mustConfirm: boolean; canAddOpinion: boolean; canDiscuss?: boolean };
+  you: { user: string; isInitiator: boolean; mustConfirm: boolean; canAddOpinion: boolean; canDiscuss?: boolean; canComment?: boolean };
   // Size limits and what the round has used of them (the backend counts).
   limits?: RoundLimits;
   used?: { chars: number; opinions: number };
+  // The caller's own drafts, and the ones others share.
+  drafts?: { mine: RoundDrafts | null; shared: { user: string; items: RoundDraft[] }[] };
+  // Comments on the steps of the converged plan (while confirming).
+  planComments?: PlanComment[];
+}
+
+export interface RoundDraft {
+  target?: { id: string; name: string };
+  text: string;
+  at: string;
+}
+
+export interface RoundDrafts {
+  shared: boolean;
+  items: RoundDraft[];
+}
+
+export interface PlanComment {
+  id: string;
+  // 1-based.
+  step: number;
+  stepText: string;
+  by: string;
+  at: string;
+  text: string;
+  supporters: string[];
+}
+
+// A round waiting for the caller (GET .../rounds/mine).
+export interface WaitingRound {
+  app: string;
+  roundId: string;
+  state: RoundState;
+  // "confirm": the caller has to confirm; "othersConfirm": the caller
+  // started it and others have not answered; "retry": it failed.
+  reason: 'confirm' | 'othersConfirm' | 'retry';
+  pending: number;
+}
+
+// An archived round as listed, and as read.
+export interface PastRoundEntry {
+  id: string;
+  // YYYY-MM-DD
+  date: string;
+}
+
+export interface PastRound {
+  round: RoundView;
+  archivedAt?: string;
+  openedAt?: string;
 }
 
 // One opinion: optionally about one component of the architecture, with
@@ -122,6 +172,11 @@ export interface RoundOpinion {
   target?: { id: string; name: string };
   supporters?: string[];
   replies?: { by: string; at: string; text: string }[];
+  // Set when the author changed it; editedAfterSupport when +1s came first.
+  editedAt?: string;
+  editedAfterSupport?: boolean;
+  // Taken back by the author: the text is gone, the number stays.
+  withdrawn?: boolean;
 }
 
 // An opinion as sent; `target` is the architecture node id.
@@ -407,6 +462,66 @@ export function supportOpinion(store: StoreLike, name: string, id: string): Prom
 
 export function replyToOpinion(store: StoreLike, name: string, id: string, text: string): Promise<RoundResponse> {
   return requestJson<RoundResponse>(store, opinionPath(name, id, 'replies'), { method: 'POST', body: { text } });
+}
+
+/** The author changes an opinion while collecting. */
+export function editOpinion(store: StoreLike, name: string, id: string, text: string): Promise<RoundResponse> {
+  return requestJson<RoundResponse>(store, opinionPath(name, id, 'edit'), { method: 'POST', body: { text } });
+}
+
+/** The author takes an opinion back while collecting. */
+export function withdrawOpinion(store: StoreLike, name: string, id: string): Promise<RoundResponse> {
+  return requestJson<RoundResponse>(store, opinionPath(name, id, 'withdraw'), { method: 'POST', body: {} });
+}
+
+/** The initiator moves the deadline (minutes from now; 0 converges now). */
+export function setRoundDeadline(store: StoreLike, name: string, minutes: number, timeoutMs?: number): Promise<RoundResponse> {
+  return requestJson<RoundResponse>(store, appPath(name, '/round/deadline'), { method: 'POST', body: { minutes }, timeoutMs });
+}
+
+/** Keep the caller's drafts in the round (replacing the ones kept). */
+export function saveRoundDrafts(store: StoreLike, name: string, items: OpinionItem[], shared: boolean): Promise<RoundResponse> {
+  return requestJson<RoundResponse>(store, appPath(name, '/round/drafts'), { method: 'POST', body: { items, shared } });
+}
+
+/** Comment on step `step` (1-based) of the converged plan. */
+export function commentOnPlan(store: StoreLike, name: string, step: number, text: string): Promise<RoundResponse> {
+  if (!Number.isInteger(step) || step < 1 || step > 100) {
+    throw new RequestError('bad_request', null);
+  }
+
+  return requestJson<RoundResponse>(store, appPath(name, `/round/plan/steps/${ step }/comments`), { method: 'POST', body: { text } });
+}
+
+const COMMENT_ID = /^c[1-9][0-9]{0,4}$/;
+
+/** +1 a comment on the plan, or take it back. */
+export function supportPlanComment(store: StoreLike, name: string, id: string): Promise<RoundResponse> {
+  if (!COMMENT_ID.test(id)) {
+    throw new RequestError('bad_request', null);
+  }
+
+  return requestJson<RoundResponse>(store, appPath(name, `/round/plan/comments/${ id }/support`), { method: 'POST', body: {} });
+}
+
+/** Rounds on any app that wait for the caller. */
+export function getWaitingRounds(store: StoreLike): Promise<{ rounds: WaitingRound[]; roundsAvailable?: boolean }> {
+  return requestJson(store, backendUrl('/rounds/mine'));
+}
+
+/** The app's archived rounds, newest first. */
+export function listPastRounds(store: StoreLike, name: string): Promise<{ rounds: PastRoundEntry[]; truncated?: boolean }> {
+  return requestJson(store, appPath(name, '/rounds'));
+}
+
+const ROUND_ID = /^r-[0-9]{8}-[0-9a-f]{6}$/;
+
+export function getPastRound(store: StoreLike, name: string, id: string): Promise<PastRound> {
+  if (!ROUND_ID.test(id)) {
+    throw new RequestError('bad_request', null);
+  }
+
+  return requestJson(store, appPath(name, `/rounds/${ id }`));
 }
 
 export type RoundAction = 'opinions' | 'confirm' | 'object' | 'skip' | 'cancel' | 'converge';

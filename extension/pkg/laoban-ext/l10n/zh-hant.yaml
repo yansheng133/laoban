@@ -154,6 +154,12 @@ laoban:
     showCurrent: 看目前的架構
     showPlan: 看收斂後的計畫
     logLine: "{who}：{event}"
+    moveDeadline: 調整截止時間
+    moveDeadlineApply: 套用
+    convergeNow: 立即收斂
+    stepComments: "留言（{count}）"
+    stepCommentPlaceholder: 對這一步的意見
+    stepCommentsHint: 對步驟的留言不影響確認；有人按「有意見」時，留言會一起交給 AI 重新收斂。
     failures:
       planTooLarge: AI 產生的修改計畫太大（超過 150 KB），請發起人縮小範圍或精簡意見後重新收斂。
       planMissing: 找不到這一輪的修改計畫，請發起人重新收斂。
@@ -183,6 +189,12 @@ laoban:
       done: 新版本已寫入 GitHub，等待 Fleet 部署
       cancelled: 取消這一輪
       restarted: 後端重新啟動，AI 重新開始收斂
+      edited: "修改意見 {opinion}"
+      withdrawn: "撤回意見 {opinion}"
+      deadline: "截止時間改成 {minutes} 分鐘後"
+      deadlineNow: 改成立即收斂
+      commented: "對計畫第 {step} 步留言"
+      emptyCancelled: 所有意見都撤回了，這一輪自動取消
   expand:
     open: 放大
     close: 關閉放大
@@ -219,6 +231,16 @@ laoban:
     supportedBy: "{names} 附議"
     replies: "回覆（{count}）"
     replyPlaceholder: 回覆這則意見
+    withdrawn: （已撤回）
+    edit: 修改
+    saveEdit: 儲存修改
+    cancelEdit: 取消
+    edited: （已修改）
+    editedAfterSupport: （附議之後修改過）
+    withdraw: 撤回
+    withdrawConfirm: 確定撤回？
+    othersDrafts: "其他人正在寫的草稿（{count} 人）"
+    shareDrafts: 讓其他人看到我的草稿
     showMore: 展開全文
     showLess: 收合
     send: 送出
@@ -236,6 +258,20 @@ laoban:
     draftHint: "目前有 {count} 則草稿，到左邊的意見收斂一起送出。"
     sideTitle: 意見
     sideOpenHint: 關閉放大後，在左邊的意見收斂開一輪，草稿會一起送出。
+  waiting:
+    confirm: 這一輪等你確認。
+    retry: 這一輪失敗了，你是發起人，可以重新收斂或取消。
+    count: "有 {count} 輪意見收斂等你確認。"
+    badge:
+      confirm: 等你確認
+      othersConfirm: 等其他人確認
+      retry: 失敗，等你處理
+  pastRounds:
+    title: 過去的輪次
+    loading: 讀取中…
+    none: 還沒有結束的輪次。
+    loadFailed: 讀不到過去的輪次。
+    commit: "發布的版本：{commit}"
   limits:
     count: "{count} / {max}"
     tooLong: "超過 {max} 字（多 {over} 字），請精簡後再送出。"

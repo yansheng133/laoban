@@ -241,3 +241,106 @@ describe('the round panel in the page\'s language', () => {
     app.unmount();
   });
 });
+
+describe('v0.1.16 pieces mount and act', () => {
+  beforeAll(() => {
+    jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+  });
+
+  function mount(file: string, props: Record<string, unknown>, emitted: unknown[][] = []) {
+    const def = loadPage(join(PAGES, file));
+    const p = reactive(props);
+    let b: Record<string, unknown> = {};
+    const app = createApp({
+      setup() {
+        b = def.setup(p, { emit: (...a: unknown[]) => emitted.push(a), expose: () => undefined }) as Record<string, unknown>;
+
+        return () => h('div');
+      },
+    });
+
+    app.mount(document.createElement('div'));
+
+    return { b, p, app };
+  }
+
+  const LIMITS = {
+    opinionChars: 1000, replyChars: 300, roundChars: 8000, opinions: 30, replies: 20, batch: 10
+  };
+
+  it('an author edits within the limits and withdraws with a second press', () => {
+    const emitted: unknown[][] = [];
+    const o = {
+      id: 'o2', by: 'u-b', at: '', text: '舊的', supporters: [], replies: []
+    };
+    const { b, app } = mount('../components/OpinionList.vue', {
+      opinions: [o], me: 'u-b', canDiscuss: true, canEdit: true, busy: false, selected: null, limits: LIMITS, roundLeft: 10
+    }, emitted);
+    const startEdit = b.startEdit as (x: unknown) => void;
+    const editText = b.editText as { value: string };
+    const editProblem = b.editProblem as (x: unknown) => boolean;
+
+    startEdit(o);
+    expect(editText.value).toBe('舊的');
+    expect(editProblem(o)).toBe(true);
+    editText.value = '新的內容';
+    expect(editProblem(o)).toBe(false);
+    // More than the round has room for.
+    editText.value = 'x'.repeat(13);
+    expect(editProblem(o)).toBe(true);
+    editText.value = '新的內容';
+    (b.saveEdit as (x: unknown) => void)(o);
+    expect(emitted).toContainEqual(['edit', 'o2', '新的內容']);
+    const withdraw = b.withdraw as (x: unknown) => void;
+
+    withdraw(o);
+    expect(emitted.some((e) => e[0] === 'withdraw')).toBe(false);
+    withdraw(o);
+    expect(emitted).toContainEqual(['withdraw', 'o2']);
+    app.unmount();
+  });
+
+  it('the round panel moves the deadline and sends step comments', () => {
+    const emitted: unknown[][] = [];
+    const round = {
+      id: 'r1', app: 'todo', initiator: 'u-a', scope: ['web'], state: 'confirming', deadline: 0, opinions: [], confirmers: [], message: '', result: null, log: [],
+      plan:         { planId: 'p', summary: 's', steps: ['做排序'], architecture: {} },
+      planComments: [{
+        id: 'c1', step: 1, stepText: '做排序', by: 'u-b', at: '', text: '先只做這個', supporters: []
+      }],
+      you: {
+        user: 'u-a', isInitiator: true, mustConfirm: true, canAddOpinion: false, canComment: true
+      },
+    };
+    const { b, app } = mount('../components/RoundPanel.vue', {
+      round, draft: '', pending: null, elapsed: 0, error: '', disabled: false, drafts: [], removedDraft: null, selectedTarget: null, notice: '', limits: LIMITS, available: true, draftsShared: true
+    }, emitted);
+
+    expect((b.commentsOf as (n: number) => unknown[])(1)).toHaveLength(1);
+    (b.stepText as { value: Record<number, string> }).value = { 1: '再小一點' };
+    (b.sendComment as (n: number) => void)(1);
+    expect(emitted).toContainEqual(['comment', 1, '再小一點']);
+    (b.stepText as { value: Record<number, string> }).value = { 1: 'x'.repeat(301) };
+    expect((b.stepTooLong as (n: number) => boolean)(1)).toBe(true);
+    (b.convergeNow as () => void)();
+    expect(emitted).toContainEqual(['deadline', 0]);
+    app.unmount();
+  });
+
+  it('past rounds load when opened', async() => {
+    const realFetch = global.fetch;
+
+    global.fetch = jest.fn(() => Promise.reject(new Error('offline'))) as unknown as typeof fetch;
+    const { b, app } = mount('../components/PastRounds.vue', { app: 'todo', messageFor: () => 'offline' });
+
+    (b.onToggle as (e: unknown) => void)({ target: { open: true } });
+    await new Promise((r) => setTimeout(r, 20));
+    expect((b.error as { value: string }).value).toBeTruthy();
+    expect((b.loaded as { value: boolean }).value).toBe(false);
+    // A known log line is shown in the page's language.
+    expect((b.logText as (l: unknown) => string)({ event: '撤回意見 o2', code: 'withdrawn', args: { opinion: 'o2' } })).toBe('laoban.round.events.withdrawn');
+    expect((b.logText as (l: unknown) => string)({ event: '截止', code: 'deadline', args: { minutes: '0' } })).toBe('laoban.round.events.deadlineNow');
+    app.unmount();
+    global.fetch = realFetch;
+  });
+});

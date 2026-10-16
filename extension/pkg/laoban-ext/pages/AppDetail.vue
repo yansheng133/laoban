@@ -23,6 +23,8 @@ import RoundPanel from '../components/RoundPanel.vue';
 import CharCounter from '../components/CharCounter.vue';
 import { roundSpace, textState } from '../utils/limits';
 import OpinionList from '../components/OpinionList.vue';
+import PastRounds from '../components/PastRounds.vue';
+import { refreshWaiting } from '../utils/waiting';
 import StatusBar from '../components/StatusBar.vue';
 import VersionList from '../components/VersionList.vue';
 import CodeEditor from '../components/CodeEditor.vue';
@@ -48,7 +50,7 @@ export default defineComponent({
   name: 'LaobanAppDetail',
 
   components: {
-    ArchitectureView, RoundPanel, OpinionList, StatusBar, VersionList, CodeEditor, StructureEdit, CharCounter
+    ArchitectureView, RoundPanel, OpinionList, StatusBar, VersionList, CodeEditor, StructureEdit, CharCounter, PastRounds
   },
 
   setup() {
@@ -578,6 +580,86 @@ export default defineComponent({
       }
     }
 
+    // Drafts kept in the round while it collects (v0.1.16): back on another
+    // computer, and seen by others when shared (the default). Saved a
+    // moment after the last change; before a round exists they stay here.
+    const draftsShared = ref(true);
+    let draftsTimer: ReturnType<typeof setTimeout> | null = null;
+    let draftsSaved = '';
+    let draftsTakenFor = '';
+    const DRAFTS_SAVE_MS = 1500;
+
+    function draftItems() {
+      return opinionItems(opinionDraft.value, drafts.value);
+    }
+
+    // The first time a collecting round is seen, take the drafts kept in
+    // it, unless something was already typed here.
+    watch(() => round.round.value, (r) => {
+      if (!r || r.state !== 'collecting' || draftsTakenFor === r.id) {
+        return;
+      }
+      draftsTakenFor = r.id;
+      const mine = r.drafts?.mine;
+
+      if (!mine) {
+        draftsSaved = JSON.stringify({ items: [], shared: true });
+
+        return;
+      }
+      draftsShared.value = mine.shared;
+      if (!drafts.value.length && !opinionDraft.value.trim()) {
+        drafts.value = mine.items.filter((d) => d.target).map((d) => ({ target: d.target!.id, targetName: d.target!.name, text: d.text }));
+        opinionDraft.value = mine.items.find((d) => !d.target)?.text || '';
+      }
+      draftsSaved = JSON.stringify({ items: mine.items.map((d) => ({ text: d.text, target: d.target?.id })), shared: mine.shared });
+    });
+
+    watch([drafts, opinionDraft, draftsShared], () => {
+      if (round.round.value?.state !== 'collecting') {
+        return;
+      }
+      if (draftsTimer) {
+        clearTimeout(draftsTimer);
+      }
+      draftsTimer = setTimeout(() => {
+        draftsTimer = null;
+        const items = draftItems();
+        const key = JSON.stringify({ items: items.map((i) => ({ text: i.text, target: i.target })), shared: draftsShared.value });
+
+        if (key !== draftsSaved) {
+          draftsSaved = key;
+          round.saveDrafts(items, draftsShared.value);
+        }
+      }, DRAFTS_SAVE_MS);
+    }, { deep: true });
+
+    onBeforeUnmount(() => {
+      if (draftsTimer) {
+        clearTimeout(draftsTimer);
+      }
+    });
+
+    // The nav's count follows what happens here (a confirm, a new plan).
+    watch(() => `${ round.round.value?.id }:${ round.round.value?.state }:${ round.round.value?.you?.mustConfirm }`, () => {
+      refreshWaiting(store);
+    });
+
+    // This round waits for the caller (A): a banner above the round.
+    const roundPanel = ref<HTMLElement | null>(null);
+    const waitingReason = computed(() => {
+      const r = round.round.value;
+
+      if (r?.state === 'confirming' && r.you?.mustConfirm) {
+        return 'confirm';
+      }
+      if (r?.state === 'failed' && r.you?.isInitiator) {
+        return 'retry';
+      }
+
+      return '';
+    });
+
     async function roundAct(action: RoundAction, body: Record<string, string>) {
       if (await round.act(action, body) && action === 'opinions') {
         opinionDraft.value = '';
@@ -749,6 +831,15 @@ export default defineComponent({
       addOpinions,
       roundSupport: round.support,
       roundReply: round.reply,
+      roundEdit: round.edit,
+      roundWithdraw: round.withdraw,
+      roundDeadline: round.deadline,
+      roundComment: round.comment,
+      roundSupportComment: round.supportComment,
+      draftsShared,
+      roundPanel,
+      waitingReason,
+      messageFor: flow.messageFor,
       canArrange,
       tab,
       pending,
@@ -828,12 +919,22 @@ export default defineComponent({
       class="laoban-work"
     >
       <section
+        ref="roundPanel"
         class="laoban-panel"
         :aria-label="t('laoban.edit.promptLabel')"
       >
+        <div
+          v-if="waitingReason"
+          class="laoban-waiting banner warning"
+          role="status"
+          data-testid="laoban-waiting"
+        >
+          <span>{{ t(`laoban.waiting.${ waitingReason }`) }}</span>
+        </div>
         <h2>{{ t('laoban.detail.changeTitle') }}</h2>
         <RoundPanel
           v-model:draft="opinionDraft"
+          v-model:drafts-shared="draftsShared"
           :round="roundState"
           :pending="roundPending"
           :elapsed="roundElapsed"
@@ -853,6 +954,11 @@ export default defineComponent({
           @support="roundSupport"
           @reply="roundReply"
           @select-target="selectTarget"
+          @edit="roundEdit"
+          @withdraw="roundWithdraw"
+          @deadline="roundDeadline"
+          @comment="roundComment"
+          @support-comment="roundSupportComment"
         />
 
         <p
@@ -862,6 +968,12 @@ export default defineComponent({
         >
           {{ errorText }}
         </p>
+
+        <PastRounds
+          :key="name"
+          :app="name"
+          :message-for="messageFor"
+        />
 
         <details class="laoban-detail-section">
           <summary>{{ t('laoban.detail.currentSteps') }}（{{ currentSteps.length }}）</summary>
@@ -1277,8 +1389,11 @@ export default defineComponent({
               :selected="selectedNode"
               :limits="roundLimits"
               :round-left="roundLeft"
+              :can-edit="!!roundState.you && roundState.state === 'collecting' && !!roundState.you.canAddOpinion"
               @support="roundSupport"
               @reply="roundReply"
+              @edit="roundEdit"
+              @withdraw="roundWithdraw"
               @select="selectTarget"
             />
             <template v-if="drafts.length">
@@ -1738,5 +1853,8 @@ export default defineComponent({
 @import '../styles/global.scss';
 .laoban-over {
   border-color: var(--error) !important;
+}
+.laoban-waiting {
+  margin: 0 0 8px;
 }
 </style>
