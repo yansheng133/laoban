@@ -6,11 +6,21 @@ laoban（老闆、「ボス」）は Rancher UI extension です。作りたい�
 
 > プロジェクトの愛称は「鉄板麺とチキンナゲット」（鐵板麵加雞塊）です。名前の由来は、システムに要望を伝えるのが、台湾の朝食屋で店主（老闆）に注文するようなものだからです。
 
+![一文でアプリを作り、みんなで修正する（動画は早送り）](docs/images/demo-zh.gif)
+
+| 一文 → 計画と 3D アーキテクチャ図 | みんなで意見を出す | AI が変更計画にまとめる |
+|---|---|---|
+| ![概要：要望、計画と 3D アーキテクチャ図](docs/images/01-overview-plan-zh.png) | ![意見のラウンド：意見、+1、返信](docs/images/08-ja.png) | ![まとめられた変更計画。3D 図に変更点を表示](docs/images/05-round-plan-zh.png) |
+| **デプロイ完了** | **バージョン比較** | **アプリ一覧** |
+| ![デプロイ完了、アプリを開く](docs/images/02-app-deployed-zh.png) | ![拡大表示で 2 つのバージョンを比較](docs/images/06-compare-versions-zh.png) | ![アプリ一覧と確認待ちのマーク](docs/images/03-apps-list-zh.png) |
+
+動画とほとんどのスクリーンショットは繁体字中国語の UI です。UI は英語と日本語にも対応しています。
+
 ## 試してみる
 
 **[クイックスタート](docs/quickstart.ja.md)** に沿って進めると、約 30 分で終わります。
 
-1. Rancher の Extensions に Helm repo `https://yansheng133.github.io/laoban` を追加し、**laoban** をインストールします。
+1. Rancher の Extensions に Helm repo `https://yansheng133.github.io/laoban` を追加し、**laoban** をインストールします（0.1.18 以降。0.1.17 の extension は読み込めません）。
 2. Helm でバックエンド（`laoban/laoban-crd`、`laoban/laoban`）をインストールします。
 3. アプリを置く GitHub repo を指す Fleet GitRepo を作成します。
 
@@ -86,7 +96,8 @@ GitHub repo ──► Fleet ──► 対象 namespace 内のアプリ
 - 1 つの Rancher で使うバックエンドは 1 つだけです。ページは、ユーザーから見えるクラスターの中で laoban がインストールされた最初のクラスターを探します。
 - 生成されるアプリは常に Web ページと API の 2 コンポーネント（Python）で、1 つの namespace（デフォルトは `laoban-dev`）にデプロイされ、Pod Security restricted で実行されます。
 - バックエンドのレプリカは 1 つだけです。計画はメモリーに、意見のラウンドは `Round` リソースに保存されます。
-- AI の費用はお使いの Anthropic アカウントに請求されます。バックエンドには月間 token 上限（デフォルト 2,000,000）があります。
+- AI の費用はお使いの Anthropic アカウントに請求されます。バックエンドには月間 token 上限（デフォルト 2,000,000）がありますが、使用量はメモリーにしか保存されず、バックエンドが再起動すると 0 から数え直します。必ず Anthropic Console で支出上限を設定してください。
+- バックエンドのメッセージはデフォルトで英語です。chart の `config.language: zh-Hant` で繁体字中国語に変更できます。ページは Rancher の言語設定に従って表示されます。
 
 ## インストール（詳細）
 
