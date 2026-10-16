@@ -156,6 +156,25 @@ laoban:
     showCurrent: 現在のアーキテクチャを表示
     showPlan: 収束した計画を表示
     logLine: "{who}：{event}"
+    moveDeadline: 締め切りの変更
+    moveDeadlineApply: 適用
+    convergeNow: すぐに収束
+    stepComments: "コメント（{count}）"
+    stepCommentPlaceholder: このステップへのコメント
+    stepCommentsHint: ステップへのコメントは確認には影響しません。誰かが「意見あり」を押すと、意見と一緒に AI に渡されます。
+    failures:
+      planTooLarge: AI の変更計画が大きすぎます（150 KB 超）。開始した人が範囲を狭めるか意見を短くして、もう一度収束してください。
+      planMissing: このラウンドの変更計画が見つかりません。開始した人がもう一度収束してください。
+      restartUnpublished: 公開中にバックエンドが再起動したため、このラウンドの変更は公開されていません。開始した人がもう一度収束してください。
+      restartUnknown: 公開中にバックエンドが再起動したため、このラウンドの変更が公開されたか確認できません。バージョン一覧を確認し、新しいバージョンがなければ開始した人がもう一度収束してください。
+      mergeConflict: "このラウンドの間に {files} も直接変更されていて、AI の変更と衝突するためデプロイしていません。開始した人がもう一度収束してください。"
+      manualEditLost: "AI の変更がこのラウンド中の {files} への手動変更を上書きするため、デプロイしていません。開始した人がもう一度収束してください。手動変更が不要なら先に元に戻してください。"
+      aiInvalidOutput: AI の応答が必要な形式ではなかったため、何も書き込んでいません。開始した人がもう一度収束してください。
+      aiUnavailable: AI サービスの呼び出しに失敗しました。開始した人が後でもう一度収束してください。
+      budgetExceeded: laoban の今期の AI トークン上限に達しました。来月まで待つか、管理者に上限の引き上げを依頼してください。
+      spendLimit: Anthropic アカウントが利用上限に達しました。管理者に Anthropic Console の確認を依頼してください。
+      githubFailed: GitHub への書き込みに失敗しました。開始した人が後でもう一度収束してください。続く場合は管理者に token とリポジトリの設定の確認を依頼してください。
+      versionConflict: この間にアプリの新しいバージョンができたため、デプロイしていません。開始した人がもう一度収束してください。
     events:
       opened: "ラウンドを開始（{minutes} 分後に収束）"
       opinion: "{count} 件の意見を追加"
@@ -169,9 +188,15 @@ laoban:
       confirmed: 確認
       skipped: "{user}の確認をスキップ"
       applying: 全員確認済み。AI がコードの変更を開始
-      done: 新しい版をデプロイ済み
+      done: 新しいバージョンを GitHub に書き込みました。Fleet がこれからデプロイします
       cancelled: このラウンドを取り消し
       restarted: バックエンドが再起動したため、AI が収束をやり直します
+      edited: "意見 {opinion} を編集"
+      withdrawn: "意見 {opinion} を取り下げ"
+      deadline: "締め切りを {minutes} 分後に変更"
+      deadlineNow: すぐに収束するよう変更
+      commented: "計画のステップ {step} にコメント"
+      emptyCancelled: すべての意見が取り下げられたため、このラウンドは自動的に終了しました
   expand:
     open: 拡大
     close: 拡大を閉じる
@@ -208,6 +233,18 @@ laoban:
     supportedBy: "{names}が賛成"
     replies: "返信（{count}）"
     replyPlaceholder: この意見に返信
+    withdrawn: （取り下げ済み）
+    edit: 編集
+    saveEdit: 保存
+    cancelEdit: キャンセル
+    edited: （編集済み）
+    editedAfterSupport: （賛成の後に編集）
+    withdraw: 取り下げ
+    withdrawConfirm: 取り下げますか？
+    othersDrafts: "ほかの人が書いている下書き（{count} 人）"
+    shareDrafts: 自分の下書きをほかの人に見せる
+    showMore: すべて表示
+    showLess: 折りたたむ
     send: 送信
     drafts: "コンポーネントへの下書き（{count}）"
     removeDraft: "{name}への下書きを削除"
@@ -223,13 +260,27 @@ laoban:
     draftHint: "下書きが {count} 件あります。左の意見の収束でまとめて送信します。"
     sideTitle: 意見
     sideOpenHint: 拡大を閉じて左でラウンドを開始すると、下書きも一緒に送信されます。
+  waiting:
+    confirm: このラウンドはあなたの確認を待っています。
+    retry: このラウンドは失敗しました。開始した人として、もう一度収束するか取り消せます。
+    count: "{count} 件のラウンドがあなたの確認を待っています。"
+    badge:
+      confirm: あなたの確認待ち
+      othersConfirm: ほかの人の確認待ち
+      retry: 失敗（対応待ち）
+  pastRounds:
+    title: 過去のラウンド
+    loading: 読み込み中…
+    none: 終了したラウンドはまだありません。
+    loadFailed: 過去のラウンドを読み込めませんでした。
+    commit: "公開したバージョン：{commit}"
   limits:
     count: "{count} / {max}"
     tooLong: "{max} 文字を超えています（{over} 文字超過）。短くしてから送信してください。"
     draftTooLong: "{max} 文字を超えるコンポーネントの下書きがあります。先に短くしてください。"
     newRoundOver: "これらの意見の合計が 1 ラウンドの上限（{max} 文字）を超えています。短くするか、分けて送信してください。"
-    roundSpace: "このラウンドは {max} 文字中 {used} 文字を使用、残り約 {left} 文字です。"
-    roundOver: "このラウンドの残りは約 {left} 文字です。短くしてから送信してください。"
+    roundSpace: "このラウンドは {max} 文字中 {used} 文字を使用、残り {left} 文字です。"
+    roundOver: "このラウンドの残りは {left} 文字です。短くしてから送信してください。"
     roundFull: このラウンドの意見はいっぱいです。先に収束してください。賛成（+1）は引き続きできます。
     repliesFull: "この意見への返信は上限（{max} 件）に達しました。"
     spaceLabel: このラウンドの意見の容量

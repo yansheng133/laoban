@@ -56,10 +56,14 @@ describe('limits', () => {
     // The backend's count is used when given.
     const r = round([{ text: 'x' }], { chars: 5000, opinions: 6 });
 
-    expect(roundSpace(r, DEFAULT_LIMITS, { chars: 0, opinions: 0 }).shown).toBe(false);
+    // Shown from 50% in a neutral colour, a warning from 70% (report 20).
+    expect(roundSpace(round([], { chars: 3999, opinions: 1 }), DEFAULT_LIMITS, { chars: 0, opinions: 0 }).shown).toBe(false);
+    const half = roundSpace(r, DEFAULT_LIMITS, { chars: 0, opinions: 0 });
+
+    expect([half.shown, half.warn]).toEqual([true, false]);
     const near = roundSpace(r, DEFAULT_LIMITS, { chars: 700, opinions: 1 });
 
-    expect(near.shown).toBe(true);
+    expect([near.shown, near.warn]).toEqual([true, true]);
     expect(near.over).toBe(false);
     expect(near.left).toBe(3000);
     const over = roundSpace(r, DEFAULT_LIMITS, { chars: 3001, opinions: 1 });

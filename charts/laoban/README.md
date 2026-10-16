@@ -97,7 +97,7 @@ chart 建立的物件：
 
 - API server 先驗證使用者並用他的 RBAC 授權，才把請求轉給後端；轉送時用自己的 proxy client 憑證，使用者放在 `X-Remote-User`／`X-Remote-Group`。後端只接受這張憑證（docs/m0-design.md 的「身分」）。
 - 因為要讀上面的 ConfigMap，開啟 `aggregatedApi` 時 Pod 會掛 ServiceAccount token。
-- Rancher 管理者有全部權限。Rancher Project 成員的角色是 Rancher 的 role template，不是內建 edit；要讓他們使用，得在 role template 加上這個 API group 的規則（第一階段的角色設計處理）。
+- Rancher 管理者有全部權限。Rancher Project 成員的角色是 Rancher 的 role template，不是內建 edit；`deploy/rancher/roletemplate.yaml` 提供 Project 角色「laoban user」「laoban viewer」，規則與這兩個 ClusterRole 相同（CI 比對），要套用在 Rancher local 叢集（見 `deploy/rancher/README.md`）。
 - 前綴 `/k8s/clusters/<cluster ID>` 把請求送進 Rancher 對該叢集的 Kubernetes API proxy（local 叢集的 ID 是 `local`，M0 用 `rke2` 的 ID `c-m-26kbxk5f`，由 `config.clusterId` 設定）［6］［7］。
 
 ## 身分委派模型（第一階段，M0 關閉）

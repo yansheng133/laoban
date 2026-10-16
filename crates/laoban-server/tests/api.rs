@@ -281,6 +281,57 @@ fn apps_endpoints() {
     let (status, v) = post_as(r.addr, "/api/apps/breakfast/round/confirm", "", "u-test01");
     assert_eq!(status, 409);
     assert_error(&v, "round_state");
+    // v0.1.16: author edits, deadline, drafts, plan comments, waiting list,
+    // archived rounds. No round here: each reaches the service.
+    for (path, body) in [
+        ("/api/apps/breakfast/round/opinions/o1/withdraw", ""),
+        (
+            "/api/apps/breakfast/round/opinions/o1/edit",
+            r#"{"text":"x"}"#,
+        ),
+        ("/api/apps/breakfast/round/deadline", r#"{"minutes":0}"#),
+        (
+            "/api/apps/breakfast/round/plan/steps/1/comments",
+            r#"{"text":"x"}"#,
+        ),
+        ("/api/apps/breakfast/round/plan/comments/c1/support", ""),
+    ] {
+        let (status, v) = post_as(r.addr, path, body, "u-test01");
+        assert_eq!(status, 409, "{path}");
+        assert_error(&v, "round_state");
+    }
+    for path in [
+        "/api/apps/breakfast/round/plan/steps/0/comments",
+        "/api/apps/breakfast/round/plan/steps/01/comments",
+        "/api/apps/breakfast/round/plan/comments/x1/support",
+        "/api/apps/breakfast/round/opinions/c1/edit",
+    ] {
+        let (status, _) = post_as(r.addr, path, r#"{"text":"x"}"#, "u-test01");
+        assert_eq!(status, 404, "{path}");
+    }
+    let (status, v) = post_as(
+        r.addr,
+        "/api/apps/breakfast/round/deadline",
+        r#"{"minutes":"soon"}"#,
+        "u-test01",
+    );
+    assert_eq!(status, 400);
+    assert_error(&v, "bad_request");
+    let (status, v) = get_as(r.addr, "/api/rounds/mine", "u-test01");
+    assert_eq!(status, 200);
+    assert_eq!(v["rounds"], json!([]));
+    let (status, _) = get(r.addr, "/api/rounds/mine");
+    assert_eq!(status, 401);
+    let (status, v) = get_as(r.addr, "/api/apps/breakfast/rounds", "u-test01");
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(v["rounds"], json!([]));
+    let (status, v) = get_as(
+        r.addr,
+        "/api/apps/breakfast/rounds/r-20260101-000000",
+        "u-test01",
+    );
+    assert_eq!(status, 404);
+    assert_error(&v, "round_not_found");
     let (status, body) = get(r.addr, "/api/apps/breakfast/files");
     assert_eq!(status, 404);
     assert_error(&serde_json::from_str(&body).unwrap(), "app_not_found");

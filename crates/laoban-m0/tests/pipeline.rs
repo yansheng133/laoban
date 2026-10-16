@@ -356,7 +356,7 @@ fn national_id_never_reaches_provider_or_readme() {
 }
 
 #[test]
-fn stale_ref_is_github_failed_without_retry() {
+fn stale_ref_is_a_version_conflict_without_retry() {
     for status in [422, 409] {
         let provider = MockProvider::new()
             .then(ok(&plan_json()))
@@ -364,7 +364,10 @@ fn stale_ref_is_github_failed_without_retry() {
         let h = harness(provider, RefUpdate::Status(status), 1_000_000);
         let id = plan_id(&h.service.plan(&plan_req("x 需求"), None).unwrap());
         let err = h.service.apply(&apply_req(&id), None).unwrap_err();
-        assert_eq!((err.status(), err.code()), (502, "github_failed"));
+        // Someone else moved the branch: not a GitHub or token problem
+        // (report 20, B11).
+        assert_eq!((err.status(), err.code()), (409, "version_conflict"));
+        assert!(!err.user_message().contains("token"));
         assert!(!format!("{err} {err:?}").contains(GH_TOKEN));
         let patches = h
             .github

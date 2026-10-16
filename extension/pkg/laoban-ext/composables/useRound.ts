@@ -10,7 +10,8 @@ import {
 } from 'vue';
 import {
   getRound, openRound, roundAction, addOpinions, supportOpinion, replyToOpinion, RequestError, StoreLike, RoundView,
-  RoundResponse, RoundAction, ApplyResponse, OpinionItem
+  RoundResponse, RoundAction, ApplyResponse, OpinionItem, editOpinion, withdrawOpinion, setRoundDeadline,
+  saveRoundDrafts, commentOnPlan, supportPlanComment
 } from '../utils/backend';
 import { DEFAULT_LIMITS, RoundLimits } from '../utils/limits';
 
@@ -49,6 +50,13 @@ export interface RoundFlow {
   add: (items: OpinionItem[]) => Promise<boolean>;
   support: (opinionId: string) => Promise<boolean>;
   reply: (opinionId: string, text: string) => Promise<boolean>;
+  edit: (opinionId: string, text: string) => Promise<boolean>;
+  withdraw: (opinionId: string) => Promise<boolean>;
+  deadline: (minutes: number) => Promise<boolean>;
+  comment: (step: number, text: string) => Promise<boolean>;
+  supportComment: (commentId: string) => Promise<boolean>;
+  // Keep drafts in the round; quiet (no spinner, errors only noted).
+  saveDrafts: (items: OpinionItem[], shared: boolean) => Promise<boolean>;
   start: (app: string) => void;
   stop: () => void;
 }
@@ -231,6 +239,56 @@ export function useRound(store: StoreLike, hooks: RoundHooks): RoundFlow {
     return run('reply', () => replyToOpinion(store, name, opinionId, text));
   }
 
+  function edit(opinionId: string, text: string) {
+    const name = app;
+
+    return run('edit', () => editOpinion(store, name, opinionId, text));
+  }
+
+  function withdraw(opinionId: string) {
+    const name = app;
+
+    return run('withdraw', () => withdrawOpinion(store, name, opinionId));
+  }
+
+  function deadline(minutes: number) {
+    const name = app;
+
+    // 0 converges now: like opening with "now", it may run the AI.
+    return run(minutes === 0 ? 'converge' : 'deadline', () => setRoundDeadline(store, name, minutes, minutes === 0 ? hooks.aiTimeoutMs() : undefined));
+  }
+
+  function comment(step: number, text: string) {
+    const name = app;
+
+    return run('comment', () => commentOnPlan(store, name, step, text));
+  }
+
+  function supportComment(commentId: string) {
+    const name = app;
+
+    return run('support', () => supportPlanComment(store, name, commentId));
+  }
+
+  // Not through run(): saving drafts must not block the page or show a
+  // spinner; a refused save is shown like other errors.
+  async function saveDrafts(items: OpinionItem[], shared: boolean): Promise<boolean> {
+    const name = app;
+
+    if (!name || !round.value || round.value.state !== 'collecting') {
+      return false;
+    }
+    try {
+      take(await saveRoundDrafts(store, name, items, shared), name);
+
+      return true;
+    } catch (e) {
+      error.value = hooks.messageFor(e);
+
+      return false;
+    }
+  }
+
   function act(action: RoundAction, body: Record<string, string> = {}) {
     const name = app;
 
@@ -266,6 +324,7 @@ export function useRound(store: StoreLike, hooks: RoundHooks): RoundFlow {
   });
 
   return {
-    round, error, notice, pending, elapsed, active, limits, available, refresh, open, act, add, support, reply, start, stop
+    round, error, notice, pending, elapsed, active, limits, available, refresh, open, act, add, support, reply,
+    edit, withdraw, deadline, comment, supportComment, saveDrafts, start, stop
   };
 }

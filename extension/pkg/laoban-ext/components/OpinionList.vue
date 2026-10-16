@@ -19,6 +19,10 @@ import {
 } from '../utils/limits';
 import CharCounter from './CharCounter.vue';
 
+// An opinion longer than this is shown folded.
+const LONG_CHARS = 280;
+const LONG_LINES = 6;
+
 export default defineComponent({
   name: 'LaobanOpinionList',
 
@@ -36,6 +40,11 @@ export default defineComponent({
     },
     // +1 and replies are possible now.
     canDiscuss: {
+      type:    Boolean,
+      default: false,
+    },
+    // Authors may change or take back their opinions now (collecting).
+    canEdit: {
       type:    Boolean,
       default: false,
     },
@@ -59,13 +68,20 @@ export default defineComponent({
     },
   },
 
-  emits: ['support', 'reply', 'select'],
+  emits: ['support', 'reply', 'select', 'edit', 'withdraw'],
 
   setup(props, { emit }) {
     const store = useStore();
     const { t } = useText(store);
     // Opinion IDs whose replies are open, and the reply being typed.
     const open = ref<Record<string, boolean>>({});
+    // Long opinions show their first lines until opened (report 20, N8).
+    const full = ref<Record<string, boolean>>({});
+    const isLong = (text: string) => chars(text) > LONG_CHARS || text.split('\n').length > LONG_LINES;
+
+    function toggleFull(id: string) {
+      full.value = { ...full.value, [id]: !full.value[id] };
+    }
     const replyText = ref<Record<string, string>>({});
 
     const groups = computed(() => groupOpinions(props.opinions));
@@ -76,6 +92,43 @@ export default defineComponent({
       open.value = { ...open.value, [id]: !open.value[id] };
     }
 
+    // The opinion being changed and its new text; the one asked to be
+    // withdrawn (a second press confirms; no browser dialog).
+    const editing = ref<string | null>(null);
+    const editText = ref('');
+    const confirmWithdraw = ref<string | null>(null);
+    const mine = (o: RoundOpinion) => !!props.me && o.by === props.me && !o.withdrawn;
+
+    function startEdit(o: RoundOpinion) {
+      editing.value = o.id;
+      editText.value = o.text;
+      confirmWithdraw.value = null;
+    }
+
+    function editProblem(o: RoundOpinion): boolean {
+      const text = editText.value;
+      const extra = chars(text) - chars(o.text);
+
+      return !text.trim() || text.trim() === o.text || textState(text, props.limits.opinionChars).over || extra > props.roundLeft;
+    }
+
+    function saveEdit(o: RoundOpinion) {
+      if (!props.busy && !editProblem(o)) {
+        emit('edit', o.id, editText.value.trim());
+        editing.value = null;
+      }
+    }
+
+    function withdraw(o: RoundOpinion) {
+      if (confirmWithdraw.value !== o.id) {
+        confirmWithdraw.value = o.id;
+
+        return;
+      }
+      confirmWithdraw.value = null;
+      emit('withdraw', o.id);
+    }
+
     // Why a reply cannot be sent now ('' when it can).
     function replyProblem(o: RoundOpinion): string {
       const text = replyText.value[o.id] || '';
@@ -83,11 +136,12 @@ export default defineComponent({
       if ((o.replies || []).length >= props.limits.replies) {
         return t('laoban.limits.repliesFull', { max: props.limits.replies });
       }
-      if (textState(text, props.limits.replyChars).over) {
-        return 'tooLong';
+      if (props.roundLeft <= 0) {
+        return t('laoban.limits.roundFull');
       }
-      if (chars(text) > props.roundLeft) {
-        return props.roundLeft <= 0 ? t('laoban.limits.roundFull') : t('laoban.limits.roundOver', { left: props.roundLeft });
+      // Too long for the reply or for the room left: the counter says which.
+      if (textState(text, props.limits.replyChars).over || chars(text) > props.roundLeft) {
+        return 'tooLong';
       }
 
       return '';
@@ -107,7 +161,7 @@ export default defineComponent({
     const number = (id: string) => id.replace(/^o/, '');
 
     return {
-      t, open, replyText, groups, who, supportedByMe, toggle, sendReply, replyProblem, number, formatTime: (at: string) => formatDateTime(store, at)
+      t, charsOf: chars, open, full, isLong, toggleFull, editing, editText, confirmWithdraw, mine, startEdit, editProblem, saveEdit, withdraw, replyText, groups, who, supportedByMe, toggle, sendReply, replyProblem, number, formatTime: (at: string) => formatDateTime(store, at)
     };
   },
 });
@@ -143,10 +197,90 @@ export default defineComponent({
           <div class="text-muted laoban-opinion-meta">
             <strong class="laoban-opinion-number">#{{ number(o.id) }}</strong> {{ who(o.by) }} · {{ formatTime(o.at) }}
           </div>
-          <div class="laoban-text">
+          <p
+            v-if="o.withdrawn"
+            class="text-muted laoban-withdrawn"
+          >
+            {{ t('laoban.opinions.withdrawn') }}
+          </p>
+          <form
+            v-else-if="editing === o.id"
+            class="laoban-opinion-edit"
+            @submit.prevent="saveEdit(o)"
+          >
+            <textarea
+              v-model="editText"
+              rows="3"
+              :aria-label="t('laoban.opinions.edit')"
+              :class="{ 'laoban-over': editProblem(o) && editText.trim() && editText.trim() !== o.text }"
+            />
+            <CharCounter
+              :text="editText"
+              :max="limits.opinionChars"
+              :left="roundLeft + charsOf(o.text)"
+            />
+            <div class="laoban-opinion-actions">
+              <button
+                type="submit"
+                class="btn btn-sm role-primary"
+                :disabled="busy || editProblem(o)"
+              >
+                {{ t('laoban.opinions.saveEdit') }}
+              </button>
+              <button
+                type="button"
+                class="btn btn-sm role-secondary"
+                @click="editing = null"
+              >
+                {{ t('laoban.opinions.cancelEdit') }}
+              </button>
+            </div>
+          </form>
+          <div
+            v-else
+            class="laoban-text"
+            :class="{ 'laoban-folded': isLong(o.text) && !full[o.id] }"
+          >
             {{ o.text }}
           </div>
-          <div class="laoban-opinion-actions">
+          <p
+            v-if="!o.withdrawn && (o.editedAt || o.editedAfterSupport)"
+            class="text-muted laoban-edited"
+          >
+            {{ o.editedAfterSupport ? t('laoban.opinions.editedAfterSupport') : t('laoban.opinions.edited') }}
+          </p>
+          <button
+            v-if="!o.withdrawn && editing !== o.id && isLong(o.text)"
+            type="button"
+            class="btn btn-sm role-link laoban-fold"
+            :aria-expanded="full[o.id] ? 'true' : 'false'"
+            @click="toggleFull(o.id)"
+          >
+            {{ full[o.id] ? t('laoban.opinions.showLess') : t('laoban.opinions.showMore') }}
+          </button>
+          <div
+            v-if="!o.withdrawn && editing !== o.id"
+            class="laoban-opinion-actions"
+          >
+            <template v-if="canEdit && mine(o)">
+              <button
+                type="button"
+                class="btn btn-sm role-link"
+                :disabled="busy"
+                @click="startEdit(o)"
+              >
+                {{ t('laoban.opinions.edit') }}
+              </button>
+              <button
+                type="button"
+                class="btn btn-sm"
+                :class="confirmWithdraw === o.id ? 'role-primary bg-error' : 'role-link'"
+                :disabled="busy"
+                @click="withdraw(o)"
+              >
+                {{ confirmWithdraw === o.id ? t('laoban.opinions.withdrawConfirm') : t('laoban.opinions.withdraw') }}
+              </button>
+            </template>
             <button
               type="button"
               class="btn btn-sm"
@@ -208,6 +342,7 @@ export default defineComponent({
                 class="laoban-reply-counter"
                 :text="replyText[o.id]"
                 :max="limits.replyChars"
+                :left="roundLeft"
               />
               <p
                 v-if="replyProblem(o) && replyProblem(o) !== 'tooLong'"
@@ -320,5 +455,26 @@ export default defineComponent({
   flex-basis: 100%;
   margin: 0;
   font-size: 12px;
+}
+.laoban-folded {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  overflow: hidden;
+}
+
+.laoban-fold {
+  padding-left: 0;
+}
+.laoban-withdrawn,
+.laoban-edited {
+  margin: 0;
+  font-size: 12px;
+  font-style: italic;
+}
+
+.laoban-opinion-edit textarea {
+  width: 100%;
 }
 </style>

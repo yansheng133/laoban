@@ -171,6 +171,8 @@ export default defineComponent({
     let pickable: THREE.Mesh[] = [];
     const raycaster = new THREE.Raycaster();
     let drag: { mesh: THREE.Mesh; id: string; plane: THREE.Plane; startX: number; startY: number; moved: boolean; pointerId: number } | null = null;
+    // Where a press on empty space started (see onPointerUp).
+    let blank: { x: number; y: number; pointerId: number } | null = null;
 
     function render() {
       if (renderer && labelRenderer && scene && camera) {
@@ -426,8 +428,13 @@ export default defineComponent({
       const hit = raycaster.intersectObjects(pickable, false)[0];
 
       if (!hit) {
+        // A click on empty space clears the selection; dragging there turns
+        // the view and keeps it (report 20, B10). Decided on release.
+        blank = { x: ev.clientX, y: ev.clientY, pointerId: ev.pointerId };
+
         return;
       }
+      blank = null;
       const mesh = hit.object as THREE.Mesh;
 
       drag = {
@@ -467,6 +474,16 @@ export default defineComponent({
     }
 
     function onPointerUp(ev: PointerEvent) {
+      if (blank && ev.pointerId === blank.pointerId) {
+        const b = blank;
+
+        blank = null;
+        if (ev.type === 'pointerup' && props.selected && Math.hypot(ev.clientX - b.x, ev.clientY - b.y) < CLICK_SLOP) {
+          emit('select', null);
+        }
+
+        return;
+      }
       if (!drag || ev.pointerId !== drag.pointerId) {
         return;
       }

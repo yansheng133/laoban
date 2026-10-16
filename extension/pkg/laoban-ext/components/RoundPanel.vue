@@ -84,9 +84,15 @@ export default defineComponent({
       type:    Boolean,
       default: true,
     },
+    // Others may see this person's drafts (kept in the round).
+    draftsShared: {
+      type:    Boolean,
+      default: true,
+    },
   },
 
-  emits: ['update:draft', 'open', 'act', 'add', 'remove-draft', 'undo-draft', 'support', 'reply', 'select-target'],
+  emits: ['update:draft', 'update:draftsShared', 'open', 'act', 'add', 'remove-draft', 'undo-draft', 'support', 'reply', 'select-target',
+    'edit', 'withdraw', 'deadline', 'comment', 'support-comment'],
 
   setup(props, { emit }) {
     const store = useStore();
@@ -157,6 +163,8 @@ export default defineComponent({
     const objectionState = computed(() => textState(objection.value, props.limits.opinionChars));
     const objectionSpace = computed(() => roundSpace(props.round, props.limits, { chars: chars(objection.value), opinions: 1 }));
     const roundLeft = computed(() => roundSpace(props.round, props.limits, { chars: 0, opinions: 0 }).left);
+    // Room for the general opinion: what the component drafts leave.
+    const draftLeft = computed(() => Math.max(0, roundLeft.value - props.drafts.reduce((n, d) => n + chars(d.text), 0)));
     const canObject = computed(() => !busy.value && !!objection.value.trim() && !objectionState.value.over && !objectionSpace.value.over);
     const sendable = computed(() => count.value > 0 && !tooMany.value && !tooLong.value && !space.value.over);
     const canOpen = computed(() => !busy.value && props.available && !active.value && sendable.value);
@@ -164,7 +172,9 @@ export default defineComponent({
 
     // Log entries in the page's language; the backend's Chinese text when
     // the code is unknown.
-    const EVENTS = ['opened', 'opinion', 'objected', 'converging', 'converged', 'failed', 'confirmed', 'skipped', 'applying', 'done', 'cancelled', 'supported', 'unsupported', 'replied', 'restarted'];
+    const FAILURES = ['planTooLarge', 'planMissing', 'restartUnpublished', 'restartUnknown', 'mergeConflict', 'manualEditLost', 'aiInvalidOutput', 'aiUnavailable', 'budgetExceeded', 'spendLimit', 'githubFailed', 'versionConflict'];
+    const EVENTS = ['opened', 'opinion', 'objected', 'converging', 'converged', 'failed', 'confirmed', 'skipped', 'applying', 'done', 'cancelled', 'supported', 'unsupported', 'replied', 'restarted',
+      'edited', 'withdrawn', 'deadline', 'commented', 'emptyCancelled'];
 
     function logText(l: RoundView['log'][number]): string {
       if (!l.code || !EVENTS.includes(l.code)) {
@@ -179,9 +189,27 @@ export default defineComponent({
       if (args.user) {
         args.user = who(args.user);
       }
+      // A failure the page knows: in its language (report 20, N7).
+      if (l.code === 'failed' && args.code && FAILURES.includes(args.code)) {
+        args.message = t(`laoban.round.failures.${ args.code }`, args);
+      }
 
-      return t(`laoban.round.events.${ l.code }`, args);
+      const code = l.code === 'deadline' && args.minutes === '0' ? 'deadlineNow' : l.code;
+
+      return t(`laoban.round.events.${ code }`, args);
     }
+
+    // Why the round failed, in the page's language when the backend gave a
+    // known code; its Chinese text otherwise.
+    const failureText = computed(() => {
+      const r = props.round;
+
+      if (r?.messageCode && FAILURES.includes(r.messageCode)) {
+        return t(`laoban.round.failures.${ r.messageCode }`, r.messageArgs || {});
+      }
+
+      return r?.message || '';
+    });
 
     function formatTime(at: string): string {
       const d = new Date(at);
@@ -200,6 +228,43 @@ export default defineComponent({
         emit('add');
       }
     }
+
+    // The initiator moves the deadline while collecting.
+    const newDeadline = ref(30);
+
+    function moveDeadline() {
+      if (!busy.value) {
+        emit('deadline', newDeadline.value);
+      }
+    }
+
+    function convergeNow() {
+      if (!busy.value) {
+        emit('deadline', 0);
+      }
+    }
+
+    // Comments on the plan's steps: which step's are open, the text typed.
+    const stepOpen = ref<Record<number, boolean>>({});
+    const stepText = ref<Record<number, string>>({});
+    const commentsOf = (step: number) => (props.round?.planComments || []).filter((c) => c.step === step);
+    const stepTooLong = (step: number) => textState(stepText.value[step] || '', props.limits.replyChars).over || chars(stepText.value[step] || '') > roundLeft.value;
+
+    function toggleStep(step: number) {
+      stepOpen.value = { ...stepOpen.value, [step]: !stepOpen.value[step] };
+    }
+
+    function sendComment(step: number) {
+      const text = (stepText.value[step] || '').trim();
+
+      if (text && !busy.value && !stepTooLong(step)) {
+        emit('comment', step, text);
+        stepText.value = { ...stepText.value, [step]: '' };
+      }
+    }
+
+    // Drafts others share (read only).
+    const sharedDrafts = computed(() => props.round?.drafts?.shared || []);
 
     function sendObjection() {
       if (canObject.value) {
@@ -234,10 +299,22 @@ export default defineComponent({
       space,
       objectionState,
       roundLeft,
+      draftLeft,
+      newDeadline,
+      moveDeadline,
+      convergeNow,
+      stepOpen,
+      stepText,
+      commentsOf,
+      stepTooLong,
+      toggleStep,
+      sendComment,
+      sharedDrafts,
       objectionSpace,
       canObject,
       formatTime,
       logText,
+      failureText,
       open,
       addOpinion,
       sendObjection,
@@ -456,6 +533,42 @@ export default defineComponent({
           class="text-muted"
         >{{ deadlineText }}</span>
       </div>
+      <div
+        v-if="state === 'collecting' && you && you.isInitiator"
+        class="laoban-round-row laoban-deadline"
+      >
+        <label>
+          {{ t('laoban.round.moveDeadline') }}
+          <select
+            v-model.number="newDeadline"
+            :disabled="busy"
+          >
+            <option
+              v-for="m in deadlines.filter((d) => d > 0)"
+              :key="m"
+              :value="m"
+            >
+              {{ t(`laoban.round.deadlines.m${ m }`) }}
+            </option>
+          </select>
+        </label>
+        <button
+          type="button"
+          class="btn btn-sm role-secondary"
+          :disabled="busy"
+          @click="moveDeadline"
+        >
+          {{ t('laoban.round.moveDeadlineApply') }}
+        </button>
+        <button
+          type="button"
+          class="btn btn-sm role-secondary"
+          :disabled="busy || !round.opinions.some((o) => !o.withdrawn)"
+          @click="convergeNow"
+        >
+          {{ t('laoban.round.convergeNow') }}
+        </button>
+      </div>
 
       <OpinionList
         :opinions="round.opinions"
@@ -465,8 +578,11 @@ export default defineComponent({
         :selected="selectedTarget"
         :limits="limits"
         :round-left="roundLeft"
+        :can-edit="state === 'collecting' && !!you && !!you.canAddOpinion"
         @support="$emit('support', $event)"
         @reply="(id, text) => $emit('reply', id, text)"
+        @edit="(id, text) => $emit('edit', id, text)"
+        @withdraw="$emit('withdraw', $event)"
         @select="$emit('select-target', $event)"
       />
 
@@ -533,10 +649,45 @@ export default defineComponent({
         >
           {{ t('laoban.opinions.howTo') }}
         </p>
+        <details
+          v-if="sharedDrafts.length"
+          class="laoban-shared-drafts"
+        >
+          <summary>{{ t('laoban.opinions.othersDrafts', { count: sharedDrafts.length }) }}</summary>
+          <ul>
+            <li
+              v-for="d in sharedDrafts"
+              :key="d.user"
+            >
+              <strong>{{ who(d.user) }}</strong>
+              <ul>
+                <li
+                  v-for="(it, i) in d.items"
+                  :key="i"
+                  class="laoban-text"
+                >
+                  <span
+                    v-if="it.target"
+                    class="laoban-opinion-target"
+                  >{{ it.target.name }}</span>
+                  {{ it.text }}
+                </li>
+              </ul>
+            </li>
+          </ul>
+        </details>
+        <label class="laoban-share-drafts">
+          <input
+            type="checkbox"
+            :checked="draftsShared"
+            @change="$emit('update:draftsShared', $event.target.checked)"
+          >
+          {{ t('laoban.opinions.shareDrafts') }}
+        </label>
         <div
           v-if="space.shown"
           class="laoban-space"
-          :class="{ over: space.over || space.full }"
+          :class="{ warn: space.warn, over: space.over || space.full }"
           data-testid="laoban-space"
         >
           <div
@@ -577,6 +728,7 @@ export default defineComponent({
         <CharCounter
           :text="draft"
           :max="limits.opinionChars"
+          :left="draftLeft"
         />
         <p
           v-if="draftsTooLong"
@@ -613,15 +765,76 @@ export default defineComponent({
         <p class="laoban-text">
           {{ round.plan.summary }}
         </p>
-        <ol>
+        <ol class="laoban-plan-steps">
           <li
             v-for="(s, i) in round.plan.steps"
             :key="i"
-            class="laoban-text"
           >
-            {{ s }}
+            <span class="laoban-text">{{ s }}</span>
+            <button
+              type="button"
+              class="btn btn-sm role-link"
+              :aria-expanded="stepOpen[i + 1] ? 'true' : 'false'"
+              @click="toggleStep(i + 1)"
+            >
+              {{ t('laoban.round.stepComments', { count: commentsOf(i + 1).length }) }}
+            </button>
+            <div
+              v-if="stepOpen[i + 1]"
+              class="laoban-step-comments"
+            >
+              <p
+                v-for="c in commentsOf(i + 1)"
+                :key="c.id"
+              >
+                <span class="text-muted">{{ who(c.by) }}</span>
+                <span class="laoban-text">{{ c.text }}</span>
+                <button
+                  type="button"
+                  class="btn btn-sm"
+                  :class="you && c.supporters.includes(you.user) ? 'role-primary' : 'role-secondary'"
+                  :disabled="busy || !you || !you.canComment || c.by === you.user"
+                  @click="$emit('support-comment', c.id)"
+                >
+                  +1 {{ c.supporters.length || '' }}
+                </button>
+              </p>
+              <form
+                v-if="you && you.canComment"
+                class="laoban-opinion-reply"
+                @submit.prevent="sendComment(i + 1)"
+              >
+                <input
+                  v-model="stepText[i + 1]"
+                  type="text"
+                  :class="{ 'laoban-over': stepTooLong(i + 1) }"
+                  :placeholder="t('laoban.round.stepCommentPlaceholder')"
+                  :aria-label="t('laoban.round.stepCommentPlaceholder')"
+                  :disabled="busy"
+                >
+                <button
+                  type="submit"
+                  class="btn btn-sm role-secondary"
+                  :disabled="busy || !(stepText[i + 1] || '').trim() || stepTooLong(i + 1)"
+                >
+                  {{ t('laoban.opinions.send') }}
+                </button>
+                <CharCounter
+                  v-if="stepText[i + 1]"
+                  :text="stepText[i + 1]"
+                  :max="limits.replyChars"
+                  :left="roundLeft"
+                />
+              </form>
+            </div>
           </li>
         </ol>
+        <p
+          v-if="(round.planComments || []).length"
+          class="text-muted laoban-hint"
+        >
+          {{ t('laoban.round.stepCommentsHint') }}
+        </p>
         <p
           v-if="round.plan.notes"
           class="laoban-text laoban-round-notes"
@@ -691,6 +904,7 @@ export default defineComponent({
           <CharCounter
             :text="objection"
             :max="limits.opinionChars"
+            :left="roundLeft"
           />
           <p
             v-if="objectionSpace.over && !objectionState.over"
@@ -728,7 +942,7 @@ export default defineComponent({
           class="text-error"
           role="alert"
         >
-          {{ round.message }}
+          {{ failureText }}
         </p>
         <button
           v-if="you && you.isInitiator"
@@ -913,8 +1127,12 @@ export default defineComponent({
     span {
       display: block;
       height: 100%;
-      background: var(--warning);
+      background: var(--muted);
     }
+  }
+
+  &.warn .laoban-space-bar span {
+    background: var(--warning);
   }
 
   &.over {
@@ -924,5 +1142,47 @@ export default defineComponent({
       background: var(--error);
     }
   }
+}
+.laoban-plan-steps > li {
+  margin-bottom: 4px;
+
+  > .btn {
+    padding-left: 6px;
+  }
+}
+
+.laoban-step-comments {
+  margin: 4px 0 8px;
+  padding-left: 8px;
+  border-left: 2px solid var(--border);
+  font-size: 13px;
+
+  p {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+    align-items: baseline;
+    margin: 0 0 4px;
+  }
+}
+
+.laoban-deadline {
+  font-size: 13px;
+}
+
+.laoban-shared-drafts {
+  font-size: 13px;
+
+  ul {
+    margin: 4px 0;
+    padding-left: 16px;
+  }
+}
+
+.laoban-share-drafts {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 13px;
 }
 </style>

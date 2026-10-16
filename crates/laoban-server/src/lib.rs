@@ -31,9 +31,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use laoban_m0::{
-    AddOpinionsRequest, ApplyOptions, ApplyRequest, M0Error, M0Service, OpenRoundRequest,
-    OpinionRequest, PlanRequestBody, RestoreRequest, SaveFilesRequest, SaveLayoutRequest,
-    SkipRequest,
+    AddOpinionsRequest, ApplyOptions, ApplyRequest, DeadlineRequest, DraftsRequest, M0Error,
+    M0Service, OpenRoundRequest, OpinionRequest, PlanRequestBody, RestoreRequest, SaveFilesRequest,
+    SaveLayoutRequest, SkipRequest,
 };
 use serde_json::json;
 
@@ -733,6 +733,15 @@ fn bad_request(message: &str) -> Response {
 }
 
 /// Opinion IDs as the backend gives them out: "o" and up to 4 digits.
+/// `c1`, `c2`, …: a comment on the plan.
+fn valid_comment_id(id: &str) -> bool {
+    id.len() >= 2
+        && id.len() <= 6
+        && id.starts_with('c')
+        && id[1..].bytes().all(|b| b.is_ascii_digit())
+        && !id[1..].starts_with('0')
+}
+
 fn valid_opinion_id(id: &str) -> bool {
     id.len() <= 5
         && id
@@ -781,6 +790,20 @@ enum Route<'a> {
     RoundSkip(&'a str),
     RoundCancel(&'a str),
     RoundConverge(&'a str),
+    /// `.../round/opinions/<id>/edit` and `/withdraw`: the author.
+    RoundEdit(&'a str, &'a str),
+    RoundWithdraw(&'a str, &'a str),
+    RoundDeadline(&'a str),
+    RoundDrafts(&'a str),
+    /// `.../round/plan/steps/<n>/comments`.
+    RoundPlanComment(&'a str, usize),
+    /// `.../round/plan/comments/<id>/support`.
+    RoundPlanCommentSupport(&'a str, &'a str),
+    /// `.../apps/<name>/rounds[/<id>]`: archived rounds.
+    PastRounds(&'a str),
+    PastRound(&'a str, &'a str),
+    /// `/api/rounds/mine`: rounds waiting for the caller.
+    RoundsMine,
     Files(&'a str),
     Layout(&'a str),
     Plan,
@@ -798,6 +821,7 @@ impl<'a> Route<'a> {
             "/api/apps" => return Some(Route::Apps),
             "/api/plan" => return Some(Route::Plan),
             "/api/apply" => return Some(Route::Apply),
+            "/api/rounds/mine" => return Some(Route::RoundsMine),
             _ => {}
         }
         if let Some(rest) = path.strip_prefix("/api/plans/") {
@@ -830,6 +854,24 @@ impl<'a> Route<'a> {
             [name, "round", "skip"] => Some(Route::RoundSkip(name)),
             [name, "round", "cancel"] => Some(Route::RoundCancel(name)),
             [name, "round", "converge"] => Some(Route::RoundConverge(name)),
+            [name, "round", "opinions", id, "edit"] if valid_opinion_id(id) => {
+                Some(Route::RoundEdit(name, id))
+            }
+            [name, "round", "opinions", id, "withdraw"] if valid_opinion_id(id) => {
+                Some(Route::RoundWithdraw(name, id))
+            }
+            [name, "round", "deadline"] => Some(Route::RoundDeadline(name)),
+            [name, "round", "drafts"] => Some(Route::RoundDrafts(name)),
+            [name, "round", "plan", "steps", n, "comments"] if !n.starts_with('0') => n
+                .parse::<usize>()
+                .ok()
+                .filter(|n| (1..=100).contains(n))
+                .map(|n| Route::RoundPlanComment(name, n)),
+            [name, "round", "plan", "comments", id, "support"] if valid_comment_id(id) => {
+                Some(Route::RoundPlanCommentSupport(name, id))
+            }
+            [name, "rounds"] => Some(Route::PastRounds(name)),
+            [name, "rounds", id] => Some(Route::PastRound(name, id)),
             [name, "files"] => Some(Route::Files(name)),
             [name, "layout"] => Some(Route::Layout(name)),
             _ => None,
@@ -847,7 +889,10 @@ impl<'a> Route<'a> {
             | Route::Version(..)
             | Route::Files(_)
             | Route::Round(_)
-            | Route::Job(_) => "GET",
+            | Route::Job(_)
+            | Route::PastRounds(_)
+            | Route::PastRound(..)
+            | Route::RoundsMine => "GET",
             _ => "POST",
         }
     }
@@ -914,6 +959,9 @@ fn route_api(api: &ApiState, head: &RequestHead, body: &[u8], caller: Option<&Ca
             Route::Version(name, commit) => service.version(name, commit),
             Route::Files(name) => service.files(name),
             Route::Job(id) => service.job(id, caller.map(|c| c.user.as_str())),
+            Route::PastRounds(name) => service.past_rounds(name),
+            Route::PastRound(name, id) => service.past_round(name, id),
+            Route::RoundsMine => service.rounds_waiting(caller.map(|c| c.user.as_str())),
             _ => return Response::api_error(404, "bad_request", "找不到這個 API。"),
         });
     }
@@ -924,6 +972,10 @@ fn route_api(api: &ApiState, head: &RequestHead, body: &[u8], caller: Option<&Ca
         Route::RoundSupport(name, id) => return reply(service.support_opinion(name, id, lock)),
         Route::RoundCancel(name) => return reply(service.cancel_round(name, lock)),
         Route::RoundConverge(name) => return reply(service.retry_round(name, lock)),
+        Route::RoundWithdraw(name, id) => return reply(service.withdraw_opinion(name, id, lock)),
+        Route::RoundPlanCommentSupport(name, id) => {
+            return reply(service.support_plan_comment(name, id, lock))
+        }
         Route::ApplyPlan(id) => {
             // An optional body: {"background": true}.
             let opts = if body.iter().all(u8::is_ascii_whitespace) {
@@ -1014,14 +1066,35 @@ fn route_api(api: &ApiState, head: &RequestHead, body: &[u8], caller: Option<&Ca
             };
             reply(service.add_opinion(name, &req, lock))
         }
-        Route::RoundObject(name) | Route::RoundReply(name, _) => {
+        Route::RoundObject(name)
+        | Route::RoundReply(name, _)
+        | Route::RoundEdit(name, _)
+        | Route::RoundPlanComment(name, _) => {
             let Ok(req) = serde_json::from_slice::<OpinionRequest>(body) else {
                 return bad_request("請求格式不正確：需要 {\"text\": \"…\"}。");
             };
             match route {
                 Route::RoundReply(_, id) => reply(service.reply_to_opinion(name, id, &req, lock)),
+                Route::RoundEdit(_, id) => reply(service.edit_opinion(name, id, &req, lock)),
+                Route::RoundPlanComment(_, step) => {
+                    reply(service.comment_on_plan(name, step, &req, lock))
+                }
                 _ => reply(service.object_in_round(name, &req, lock)),
             }
+        }
+        Route::RoundDeadline(name) => {
+            let Ok(req) = serde_json::from_slice::<DeadlineRequest>(body) else {
+                return bad_request("請求格式不正確：需要 {\"minutes\": 0～1440}。");
+            };
+            reply(service.set_round_deadline(name, &req, lock))
+        }
+        Route::RoundDrafts(name) => {
+            let Ok(req) = serde_json::from_slice::<DraftsRequest>(body) else {
+                return bad_request(
+                    "請求格式不正確：需要 {\"items\": [{\"text\": \"…\", \"target\": \"…\"}], \"shared\": true}。",
+                );
+            };
+            reply(service.save_drafts(name, &req, lock))
         }
         Route::RoundSkip(name) => {
             let Ok(req) = serde_json::from_slice::<SkipRequest>(body) else {

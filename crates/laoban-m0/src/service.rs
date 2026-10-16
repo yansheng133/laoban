@@ -35,7 +35,7 @@ use crate::store::{BaseApp, PlanStore, StoreError, StoredPlan};
 use crate::{time, InvalidOutput};
 
 mod persist;
-pub use persist::{ARCHIVE_BRANCH, ARCHIVE_DIR};
+pub use persist::{valid_round_id, ARCHIVE_BRANCH, ARCHIVE_DIR, MAX_PAST_ROUNDS};
 
 /// Fleet objects created once by hand (design: Fleet).
 pub const FLEET_WORKSPACE: &str = "fleet-default";
@@ -135,6 +135,24 @@ pub struct AddOpinionsRequest {
     pub target: Option<String>,
     #[serde(default)]
     pub items: Vec<OpinionItem>,
+}
+
+/// `POST .../round/deadline` body: minutes from now; 0 converges now.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeadlineRequest {
+    pub minutes: u64,
+}
+
+/// `POST .../round/drafts` body: all of the caller's drafts (replacing
+/// the ones kept), and whether others may see them (default yes).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DraftsRequest {
+    #[serde(default)]
+    pub items: Vec<OpinionItem>,
+    #[serde(default)]
+    pub shared: Option<bool>,
 }
 
 /// `POST .../round/skip` body.
@@ -281,6 +299,9 @@ pub enum M0Error {
     /// Writing a round to its resource failed.
     #[error(transparent)]
     State(StateError),
+    /// No archived round with that ID for the app.
+    #[error("past round not found")]
+    PastRoundNotFound,
 }
 
 impl M0Error {
@@ -317,6 +338,7 @@ impl M0Error {
             M0Error::State(StateError::Conflict) => "round_conflict",
             M0Error::State(StateError::TooLarge) => "round_full",
             M0Error::State(_) => "state_failed",
+            M0Error::PastRoundNotFound => "round_not_found",
         }
     }
 
@@ -365,6 +387,7 @@ impl M0Error {
             M0Error::State(StateError::Conflict) => 409,
             M0Error::State(StateError::TooLarge) => 400,
             M0Error::State(_) => 503,
+            M0Error::PastRoundNotFound => 404,
         }
     }
 
@@ -459,6 +482,7 @@ impl M0Error {
                 "儲存意見收斂的資料失敗，沒有寫入，請稍後再試；若持續失敗請管理者檢查後端的權限。"
                     .into()
             }
+            M0Error::PastRoundNotFound => "找不到這一輪的紀錄。".into(),
         }
     }
 }
@@ -523,6 +547,14 @@ pub struct M0Service {
     me: std::sync::OnceLock<std::sync::Weak<M0Service>>,
     /// Background plan / apply requests, by job ID.
     jobs: Mutex<HashMap<String, Job>>,
+    /// One lock per app: its versions are written one at a time, each
+    /// checked against the version the previous one wrote (report 20, B11:
+    /// two saves at once made the second fail as a GitHub problem).
+    app_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    /// All apps share one branch: commits go one at a time, each on the
+    /// head the previous one left, so two apps saving at once do not make
+    /// one of them a version conflict. Taken after the app's lock.
+    commit_lock: Mutex<()>,
 }
 
 impl M0Service {
@@ -567,6 +599,8 @@ impl M0Service {
             archive_retry: Mutex::new(HashMap::new()),
             me: std::sync::OnceLock::new(),
             jobs: Mutex::new(HashMap::new()),
+            app_locks: Mutex::new(HashMap::new()),
+            commit_lock: Mutex::new(()),
         })
     }
 
@@ -723,6 +757,12 @@ impl M0Service {
             return job.map(|job| job(self));
         }
         Some(job(self))
+    }
+
+    /// The lock for writing versions of `app` (see `app_locks`).
+    fn app_lock(&self, app: &str) -> Arc<Mutex<()>> {
+        let mut locks = self.app_locks.lock().unwrap_or_else(|e| e.into_inner());
+        Arc::clone(locks.entry(app.to_string()).or_default())
     }
 
     pub fn settings(&self) -> &M0Settings {
@@ -1062,11 +1102,6 @@ impl M0Service {
         if stored.base.is_some() {
             require_user(user)?;
         }
-        // A new app must still not exist (another plan may have been
-        // applied under the same name since).
-        if stored.base.is_none() && self.app_names()?.contains(&stored.app) {
-            return Err(M0Error::AppExists(stored.app.clone()));
-        }
         let plan_json = serde_json::to_string_pretty(&stored.plan.to_codegen_json(&stored.app))
             .map_err(|e| M0Error::Internal(e.to_string()))?;
         let mut blocks = vec![UntrustedBlock {
@@ -1107,6 +1142,15 @@ impl M0Service {
             max_tokens: Some(CODEGEN_MAX_TOKENS),
         })?;
         let generated = parse_generated(&completion.content).map_err(M0Error::AiInvalidOutput)?;
+        // From here on the app is read and written under its lock (not
+        // during the AI call above, which can take minutes).
+        let lock = self.app_lock(&stored.app);
+        let _one_at_a_time = lock.lock().unwrap_or_else(|e| e.into_inner());
+        // A new app must still not exist (another plan may have been
+        // applied under the same name since it was made).
+        if stored.base.is_none() && self.app_names()?.contains(&stored.app) {
+            return Err(M0Error::AppExists(stored.app.clone()));
+        }
         if let Some(base) = &stored.base {
             let lost = lost_edits(&edits, &base.files, &generated);
             if !lost.is_empty() {
@@ -1181,10 +1225,23 @@ impl M0Service {
             generated_at: &generated_at,
             meta_json: &meta_json,
         });
+        let commit = self.commit_lock.lock().unwrap_or_else(|e| e.into_inner());
         let sha = self
             .github
             .commit(&commit_files, &p.message)
-            .map_err(M0Error::Github)?;
+            .map_err(|e| match e {
+                // The branch moved since it was read: someone pushed to it
+                // outside laoban (laoban's own commits wait for each other
+                // on `commit_lock`). Not a GitHub or token problem.
+                GithubError::Status {
+                    stage: "update ref",
+                    status: 409 | 422,
+                    ..
+                } => M0Error::VersionConflict,
+                other => M0Error::Github(other),
+            });
+        drop(commit);
+        let sha = sha?;
 
         Ok(self.version_response(app, p.kind, &sha, p.files))
     }
@@ -1463,6 +1520,138 @@ impl M0Service {
         self.round(app, Some(user))
     }
 
+    /// `POST .../round/opinions/<id>/edit` `{text}`: the author changes it.
+    pub fn edit_opinion(
+        &self,
+        app: &str,
+        opinion: &str,
+        body: &OpinionRequest,
+        user: Option<&str>,
+    ) -> Result<Value, M0Error> {
+        let user = require_user(user)?;
+        let at = time::rfc3339(SystemTime::now());
+        self.change_round(app, |r| r.edit_opinion(user, opinion, &body.text, &at))?;
+        self.round(app, Some(user))
+    }
+
+    /// `POST .../round/opinions/<id>/withdraw`: the author takes it back.
+    pub fn withdraw_opinion(
+        &self,
+        app: &str,
+        opinion: &str,
+        user: Option<&str>,
+    ) -> Result<Value, M0Error> {
+        let user = require_user(user)?;
+        let at = time::rfc3339(SystemTime::now());
+        self.change_round(app, |r| r.withdraw_opinion(user, opinion, &at))?;
+        self.round(app, Some(user))
+    }
+
+    /// `POST .../round/deadline` `{minutes}`: the initiator moves the
+    /// deadline; 0 converges now.
+    pub fn set_round_deadline(
+        &self,
+        app: &str,
+        body: &DeadlineRequest,
+        user: Option<&str>,
+    ) -> Result<Value, M0Error> {
+        let user = require_user(user)?;
+        let now = SystemTime::now();
+        let at = time::rfc3339(now);
+        self.change_round(app, |r| r.set_deadline(user, body.minutes, unix(now), &at))?;
+        if body.minutes == 0 {
+            self.converge_if_due_soon(app, unix(now));
+        }
+        self.round(app, Some(user))
+    }
+
+    /// `POST .../round/drafts` `{items, shared}`: keep the caller's drafts
+    /// in the round, so they are there on another computer and (shared)
+    /// others see them.
+    pub fn save_drafts(
+        &self,
+        app: &str,
+        body: &DraftsRequest,
+        user: Option<&str>,
+    ) -> Result<Value, M0Error> {
+        let user = require_user(user)?;
+        self.require_rounds()?;
+        let items = if body.items.iter().any(|i| i.target.is_some()) {
+            let current = self.load_app(app)?;
+            self.new_opinions(app, &current, &body.items)?
+        } else {
+            body.items
+                .iter()
+                .map(|i| rounds::NewOpinion::general(&i.text))
+                .collect()
+        };
+        let shared = body.shared.unwrap_or(true);
+        let at = time::rfc3339(SystemTime::now());
+        self.change_round(app, |r| r.set_drafts(user, items.clone(), shared, &at))?;
+        self.round(app, Some(user))
+    }
+
+    /// `POST .../round/plan/steps/<n>/comments` `{text}`: comment on a step
+    /// of the converged plan while confirming.
+    pub fn comment_on_plan(
+        &self,
+        app: &str,
+        step: usize,
+        body: &OpinionRequest,
+        user: Option<&str>,
+    ) -> Result<Value, M0Error> {
+        let user = require_user(user)?;
+        let at = time::rfc3339(SystemTime::now());
+        self.change_round(app, |r| r.add_plan_comment(user, step, &body.text, &at))?;
+        self.round(app, Some(user))
+    }
+
+    /// `POST .../round/plan/comments/<id>/support`: +1 a comment, or take
+    /// it back.
+    pub fn support_plan_comment(
+        &self,
+        app: &str,
+        comment: &str,
+        user: Option<&str>,
+    ) -> Result<Value, M0Error> {
+        let user = require_user(user)?;
+        self.change_round(app, |r| r.toggle_comment_support(user, comment).map(|_| ()))?;
+        self.round(app, Some(user))
+    }
+
+    /// `GET /api/rounds/mine`: the rounds that wait for the caller, on any
+    /// app: to confirm, or (initiator) for others to confirm or to retry a
+    /// failed one. From memory only; no GitHub call.
+    pub fn rounds_waiting(&self, user: Option<&str>) -> Result<Value, M0Error> {
+        let user = require_user(user)?;
+        let mut items: Vec<Value> = Vec::new();
+        for (app, r) in self.rounds().iter() {
+            let pending: Vec<&str> = r
+                .confirmers
+                .iter()
+                .filter(|c| c.answer == rounds::Answer::Pending)
+                .map(|c| c.user.as_str())
+                .collect();
+            let reason = match r.state {
+                State::Confirming if pending.contains(&user) => "confirm",
+                State::Confirming if r.initiator == user && !pending.is_empty() => "othersConfirm",
+                State::Failed if r.initiator == user => "retry",
+                _ => continue,
+            };
+            items.push(json!({
+                "app": app,
+                "roundId": r.id,
+                "state": r.state,
+                "reason": reason,
+                "pending": pending.len(),
+            }));
+        }
+        items.sort_by(|a, b| a["app"].as_str().cmp(&b["app"].as_str()));
+        // What the caller must do comes first.
+        items.sort_by_key(|v| v["reason"] != "confirm");
+        Ok(json!({ "rounds": items, "roundsAvailable": self.rounds_ready() }))
+    }
+
     /// Opinions as sent, with each target checked against the app's
     /// architecture and named as the 3D view names it.
     fn new_opinions(
@@ -1616,8 +1805,15 @@ impl M0Service {
     /// Mark a due round converging (written before anything else).
     fn begin_converging(&self, app: &str, now_unix: u64) -> Option<String> {
         let mut rs = self.rounds();
-        let id = rs.get(app).filter(|r| r.due(now_unix))?.id.clone();
+        let r = rs.get(app).filter(|r| r.due(now_unix))?;
+        let id = r.id.clone();
+        let empty = r.active().count() == 0;
         let at = time::rfc3339(SystemTime::now());
+        if empty {
+            // Every opinion was withdrawn: nothing to converge.
+            self.update_round(&mut rs, app, &id, |r| r.cancel_empty(&at));
+            return None;
+        }
         self.update_round(&mut rs, app, &id, |r| r.start_converging(&at));
         Some(id)
     }
@@ -1641,11 +1837,12 @@ impl M0Service {
     /// The AI turns the round's opinions into one change plan, made from
     /// the app's latest commit; the round keeps what publishing it needs.
     fn converge(&self, app: &str, round_id: &str) {
-        let (request, label, initiator, start_commit) = {
+        let (request, overhead, label, initiator, start_commit) = {
             let rs = self.rounds();
             match rs.get(app) {
                 Some(r) if r.id == round_id && r.state == State::Converging => (
                     r.change_request(),
+                    r.comments_overhead(),
                     r.opinion_list(),
                     r.initiator.clone(),
                     r.start_commit.clone(),
@@ -1673,7 +1870,9 @@ impl M0Service {
                     start,
                     base_commit: Some(base_commit.clone()),
                 }),
-                rounds::MAX_ROUND_CHARS + 2_000,
+                // The round's text, its framing, and the plan steps the
+                // comments are on (not counted in the round's space).
+                rounds::MAX_ROUND_CHARS + 2_000 + overhead,
             )?;
             Ok((v, base_commit))
         });
@@ -1726,7 +1925,9 @@ impl M0Service {
                     .len();
                 if size > rounds::MAX_PLAN_BYTES {
                     self.update_round(&mut rs, app, round_id, |r| {
-                        r.fail(
+                        r.fail_coded(
+                            "planTooLarge",
+                            &[],
                             "AI 產生的修改計畫太大（超過 150 KB），請發起人縮小範圍或精簡意見後重新收斂。",
                             &at,
                         )
@@ -1740,7 +1941,7 @@ impl M0Service {
                 }
             }
             Err(e) => {
-                self.update_round(&mut rs, app, round_id, |r| r.fail(&e.user_message(), &at));
+                self.update_round(&mut rs, app, round_id, |r| fail_with(r, &e, &at));
             }
         }
     }
@@ -1795,8 +1996,13 @@ impl M0Service {
         let mut rs = self.rounds();
         self.update_round(&mut rs, app, round_id, |r| match &result {
             Ok(v) => r.done(v.clone(), &at),
-            Err(M0Error::PlanNotFound) => r.fail("找不到這一輪的修改計畫，請發起人重新收斂。", &at),
-            Err(e) => r.fail(&e.user_message(), &at),
+            Err(M0Error::PlanNotFound) => r.fail_coded(
+                "planMissing",
+                &[],
+                "找不到這一輪的修改計畫，請發起人重新收斂。",
+                &at,
+            ),
+            Err(e) => fail_with(r, e, &at),
         });
         result.ok()
     }
@@ -1851,6 +2057,8 @@ impl M0Service {
         require_user(user)?;
         let files = parse_generated(&body.files.to_string())
             .map_err(|e| M0Error::InvalidFiles(files_problem(&e.0)))?;
+        let lock = self.app_lock(app);
+        let _one_at_a_time = lock.lock().unwrap_or_else(|e| e.into_inner());
         let current = self.load_app(app)?;
         self.check_base(app, &body.base_commit)?;
         if files == current.files {
@@ -1909,6 +2117,8 @@ impl M0Service {
         if body.positions.is_empty() || body.positions.len() > meta::MAX_LAYOUT_ENTRIES {
             return Err(M0Error::BadRequest("版面資料不正確。"));
         }
+        let lock = self.app_lock(app);
+        let _one_at_a_time = lock.lock().unwrap_or_else(|e| e.into_inner());
         let current = self.load_app(app)?;
         self.check_base(app, &body.base_commit)?;
         let arch = architecture_with_layout(&current.plan, app, &Layout::new());
@@ -1954,6 +2164,8 @@ impl M0Service {
     ) -> Result<Value, M0Error> {
         let commit = body.commit.trim();
         let target = self.load_version(app, commit)?;
+        let lock = self.app_lock(app);
+        let _one_at_a_time = lock.lock().unwrap_or_else(|e| e.into_inner());
         let current = self.load_app(app)?;
         require_user(user)?;
         self.check_no_round(app)?;
@@ -2010,6 +2222,23 @@ struct Publish<'a> {
 }
 
 /// Changes need a verified caller.
+/// A round failed with `e`: its message, and a code the page translates
+/// when it has one (`laoban.round.failures.*`).
+fn fail_with(r: &mut Round, e: &M0Error, at: &str) {
+    let (code, args): (&str, Vec<(&str, String)>) = match e {
+        M0Error::MergeConflict(files) => ("mergeConflict", vec![("files", files.clone())]),
+        M0Error::ManualEditLost(files) => ("manualEditLost", vec![("files", files.clone())]),
+        M0Error::AiInvalidOutput(_) => ("aiInvalidOutput", vec![]),
+        M0Error::AiUnavailable(_) => ("aiUnavailable", vec![]),
+        M0Error::BudgetExceeded => ("budgetExceeded", vec![]),
+        M0Error::SpendLimit => ("spendLimit", vec![]),
+        M0Error::Github(_) => ("githubFailed", vec![]),
+        M0Error::VersionConflict => ("versionConflict", vec![]),
+        _ => ("", vec![]),
+    };
+    r.fail_coded(code, &args, &e.user_message(), at);
+}
+
 fn require_user(user: Option<&str>) -> Result<&str, M0Error> {
     user.filter(|u| !u.is_empty())
         .ok_or(M0Error::Unauthenticated)

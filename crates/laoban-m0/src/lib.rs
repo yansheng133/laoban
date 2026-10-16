@@ -28,9 +28,9 @@ pub use config::{from_env_with, AiEndpoint, ConfigError, EnvConfig, M0Settings, 
 pub use github::{CommitFile, CommitInfo, GithubCommitter, GithubConfig, GithubError, GithubToken};
 pub use rounds::Limits as RoundLimits;
 pub use service::{
-    AddOpinionsRequest, ApplyOptions, ApplyRequest, M0Error, M0Service, OpenRoundRequest,
-    OpinionItem, OpinionRequest, PlanRequestBody, RestoreRequest, SaveFilesRequest,
-    SaveLayoutRequest, SkipRequest,
+    AddOpinionsRequest, ApplyOptions, ApplyRequest, DeadlineRequest, DraftsRequest, M0Error,
+    M0Service, OpenRoundRequest, OpinionItem, OpinionRequest, PlanRequestBody, RestoreRequest,
+    SaveFilesRequest, SaveLayoutRequest, SkipRequest,
 };
 pub use state::{MemoryStore, StateError, StateStore};
 

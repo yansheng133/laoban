@@ -85,6 +85,10 @@ pub fn github_mock_versions(
     )]));
     // The archive branch: its head and the files written to it.
     let archive: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    // Blob contents by SHA, the last tree's entries, and the archive's files.
+    let blob_store: Arc<Mutex<std::collections::HashMap<String, String>>> = Arc::default();
+    let last_tree: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
+    let archive_files: Arc<Mutex<std::collections::BTreeMap<String, String>>> = Arc::default();
     MockServer::start(move |r: &Recorded| {
         let p = r.path.as_str();
         let repo = "/repos/example-owner/laoban-apps/";
@@ -132,6 +136,26 @@ pub fn github_mock_versions(
                 return Reply::json(405, r#"{"message":"no"}"#);
             }
             if let Some((path, git_ref)) = rest.split_once("?ref=") {
+                if git_ref == "laoban-rounds" {
+                    let files = archive_files.lock().unwrap();
+                    if let Some(content) = files.get(path) {
+                        if r.header("accept") != Some("application/vnd.github.raw+json") {
+                            return Reply::json(415, r#"{"message":"want raw"}"#);
+                        }
+                        return Reply::json(200, content.clone());
+                    }
+                    let prefix = format!("{path}/");
+                    let list: Vec<serde_json::Value> = files
+                        .keys()
+                        .filter_map(|k| k.strip_prefix(&prefix))
+                        .filter(|n| !n.contains('/'))
+                        .map(|n| json!({"name": n, "path": format!("{prefix}{n}"), "type": "file"}))
+                        .collect();
+                    if list.is_empty() {
+                        return Reply::json(404, r#"{"message":"Not Found"}"#);
+                    }
+                    return Reply::json(200, serde_json::Value::Array(list).to_string());
+                }
                 if git_ref != "main" {
                     if r.header("accept") != Some("application/vnd.github.raw+json") {
                         return Reply::json(415, r#"{"message":"want raw"}"#);
@@ -214,12 +238,24 @@ pub fn github_mock_versions(
                 assert_eq!(v["ref"], "refs/heads/laoban-rounds");
                 *archive.lock().unwrap() = Some(v["sha"].as_str().unwrap().to_string());
                 pending.lock().unwrap().clear();
+                let blobs = blob_store.lock().unwrap();
+                for (path, sha) in last_tree.lock().unwrap().drain(..) {
+                    if let Some(c) = blobs.get(&sha) {
+                        archive_files.lock().unwrap().insert(path, c.clone());
+                    }
+                }
                 Reply::json(201, json!({"ref": v["ref"]}).to_string())
             }
             ("PATCH", "/refs/heads/laoban-rounds") => {
                 let v: serde_json::Value = serde_json::from_str(&r.body_str()).unwrap();
                 *archive.lock().unwrap() = Some(v["sha"].as_str().unwrap().to_string());
                 pending.lock().unwrap().clear();
+                let blobs = blob_store.lock().unwrap();
+                for (path, sha) in last_tree.lock().unwrap().drain(..) {
+                    if let Some(c) = blobs.get(&sha) {
+                        archive_files.lock().unwrap().insert(path, c.clone());
+                    }
+                }
                 Reply::json(200, "{}")
             }
             ("GET", path) if path.starts_with("/commits/") => Reply::json(
@@ -231,6 +267,10 @@ pub fn github_mock_versions(
                 let n = blobs.fetch_add(1, Ordering::SeqCst) + 1;
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(&r.body_str()) {
                     let content = v["content"].as_str().unwrap_or_default();
+                    blob_store
+                        .lock()
+                        .unwrap()
+                        .insert(format!("{n:040x}"), content.to_string());
                     if let Ok(m) = serde_json::from_str::<serde_json::Value>(content) {
                         if let (Some(_), Some(app)) = (m.get("schema"), m["appName"].as_str()) {
                             pending
@@ -242,7 +282,25 @@ pub fn github_mock_versions(
                 }
                 Reply::json(201, json!({"sha": format!("{n:040x}")}).to_string())
             }
-            ("POST", "/trees") => Reply::json(201, json!({"sha": NEW_TREE}).to_string()),
+            ("POST", "/trees") => {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&r.body_str()) {
+                    let entries: Vec<(String, String)> = v["tree"]
+                        .as_array()
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|e| {
+                                    Some((
+                                        e["path"].as_str()?.to_string(),
+                                        e["sha"].as_str()?.to_string(),
+                                    ))
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    *last_tree.lock().unwrap() = entries;
+                }
+                Reply::json(201, json!({"sha": NEW_TREE}).to_string())
+            }
             ("POST", "/commits") => {
                 // The first commit is NEW_COMMIT, later ones count up.
                 let n = commits.fetch_add(1, Ordering::SeqCst);

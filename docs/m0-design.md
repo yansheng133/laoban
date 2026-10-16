@@ -6,13 +6,13 @@
 
 | 做 | 不做（延到第一階段） |
 |---|---|
-| 單一使用者（Sam），用自己的 Rancher 登入 | 身分模擬、多角色、審查流程 |
+| 多人用自己的 Rancher 登入，權限是 Kubernetes RBAC（內建 edit／view，或 Rancher Project 角色「laoban user／viewer」） | 身分模擬、審查流程 |
 | 單一目標：rke2 叢集的 namespace `laoban-dev` | 多環境層、正式層、預覽環境 |
 | 產生的應用固定兩個元件：網頁＋API | 資料庫、佇列、任意架構 |
 | 程式放 ConfigMap，跑在固定的 SUSE BCI Python 映像上 | 映像建置、cosign、SUSE Security 准入 |
 | 送 AI 前遮蔽、全域 token 上限、花費上限不重試 | 稽核紀錄外送（只寫後端自己的 log） |
-| 只有繁體中文介面 | 英文、日文 |
-| 版本就是 Git commit；退版用 `git revert` | 版本 CRD、3D 圖拖曳存版 |
+| 介面有繁體中文、英文、日文 | 其他語言 |
+| 版本就是 Git commit；還原是把舊版當成新的一版發布；3D 圖拖曳存版 | 版本 CRD |
 
 ## 流程
 
@@ -53,7 +53,7 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 - 後端只在 TLS 連線、且 client 憑證由 request-header CA 簽發、CN 在允許清單內時才採信這些 header；CA、允許的名稱與 header 名稱於啟動時從 `kube-system/extension-apiserver-authentication` 讀取（後端 ServiceAccount 唯一的權限：內建 Role `extension-apiserver-authentication-reader`）。其他人（例如直接連 Service 的 Pod）拿不出這張憑證，無法冒充別人。
 - 8080 port 只提供 `/healthz`、`/version`；API 只在 8443（TLS）。
 - 有請求本體的寫入要以 JSON 送出（`Content-Type: application/json`），用來擋跨站的表單送出。經 API server 轉來、身分已驗證的請求可以不帶 `Content-Type`（`kubectl create --raw` 不會送）；帶了其他類型照樣回 400。（v0.1.7，任務書 13 的 B6）
-- 使用者權限：chart 的 `laoban-api-edit`／`laoban-api-view` 帶有標準聚合標籤，所以在 `laoban-dev` 有內建 edit／admin 的人可以使用、有 view 的人可以看。Rancher 管理者有全部權限；Rancher 的 Project 成員角色是另外的 role template，要用 laoban 需加上這個 API group 的規則（第一階段的角色設計處理）。沒有權限時 API server 回 403，頁面顯示「你沒有這個操作的權限…」。
+- 使用者權限：chart 的 `laoban-api-edit`／`laoban-api-view` 帶有標準聚合標籤，所以在 `laoban-dev` 有內建 edit／admin 的人可以使用、有 view 的人可以看。Rancher 管理者有全部權限。Rancher Project 成員要用 laoban，在 Rancher local 叢集套用 `deploy/rancher/roletemplate.yaml`（v0.1.16），把成員設成 Project 角色「laoban user」或「laoban viewer」；規則與上面兩個 ClusterRole 相同，CI 會比對（見 `deploy/rancher/README.md`）。沒有權限時 API server 回 403，頁面顯示「你沒有這個操作的權限…」。
 - 使用者名稱是 API server 給的名稱，Rancher 使用者是 Rancher 的 user ID（例如 `u-abc12`）。這個名稱記進每一版的紀錄（`history[].by`、版本清單的 `by`）與後端 log（`user=`）。
 - 文件：https://kubernetes.io/docs/tasks/extend-kubernetes/configure-aggregation-layer/
 
@@ -174,6 +174,25 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 - **發布時逐檔合併**：AI 依計畫產生程式後，跟「現在的版本」逐檔比較。只有一邊改過的檔案取那一邊；AI 和手動都改了、內容又不同的檔案是衝突，回 `409 merge_conflict`，這一輪變成失敗，不發布。修改紀錄與版面也用現在的版本，期間的手動修改與版面調整都會留下。這個合併規則也適用於一般的修改計畫。
 - **保留這一輪期間的手動修改**：後端記下一輪開始時應用的 commit（v0.1.15 起；之前是記下四個檔的內容），收斂時從 GitHub 讀回那時的四個檔。收斂時，如果有檔案在這之後被手動改過，產生程式時會把手動加入與刪除的行（data block `manual_edits`）交給 AI，並要求保留。AI 產生的程式如果改了這個檔，卻少了手動加入的行、或帶回手動刪除的行，就回 `409 merge_conflict`，這一輪變成失敗，不發布；發起人可以重新收斂。比對以去掉前後空白的整行為單位，忽略空行。（v0.1.7，任務書 13 的 B7）
 - **修改紀錄**：一輪發布的版本，紀錄裡的「需求」是意見清單「（使用者）意見；…」，不是送給 AI 的完整指示。
+**v0.1.16 新增**：
+
+| 請求 | 誰 | 做什麼 |
+|---|---|---|
+| `POST .../round/opinions/<id>/edit` `{text}` | 意見作者 | 收集中改寫自己的意見（字數限制同提意見）。已有人附議時保留附議，意見標 `editedAfterSupport` |
+| `POST .../round/opinions/<id>/withdraw` | 意見作者 | 收集中撤回：原文、它的回覆與附議一起刪除（任何人都看不到，也不交給 AI），編號保留，標 `withdrawn`；不能再附議或回覆。撤回的也算進一輪最多意見數的兩倍（60 則），作者不再是確認人。所有意見都撤回時，截止後這一輪自動取消（紀錄 `emptyCancelled`），不呼叫 AI |
+| `POST .../round/deadline` `{minutes}` | 發起人 | 收集中把截止時間改成現在加幾分鐘，最晚是開始後 24 小時；0 表示立即收斂 |
+| `POST .../round/drafts` `{items: [{text, target}], shared}` | 任何人 | 收集中把自己的草稿（針對元件的與一般的）存在這一輪裡，取代先前存的；`shared` 預設 `true`（其他人看得到，不能改）。每人最多 10 則、每則 1000 字，全部草稿合計不超過一輪的 8000 字；不算進意見、不進紀錄、不寫進歸檔。頁面在最後一次變更 1.5 秒後儲存；還沒有一輪時草稿只在瀏覽器裡 |
+| `POST .../round/plan/steps/<n>/comments` `{text}` | 任何人 | 等待確認時針對計畫第 n 步留言（300 字，最多 50 則，算進一輪的 8000 字）。歸檔時留言也遮蔽 |
+| `POST .../round/plan/comments/<id>/support` | 留言者以外 | 附議留言或取消 |
+| `GET .../rounds/mine`（RBAC 資源 `rounds`） | 任何人 | 所有應用中等呼叫者處理的輪次：`confirm`（等他確認）、`othersConfirm`（他發起、還有人沒回覆）、`retry`（他發起、失敗）。只讀記憶體 |
+| `GET .../apps/<name>/rounds`、`.../rounds/<id>`（RBAC 子資源 `apps/rounds`） | 任何人 | 從 `laoban-rounds` 分支讀這個應用歸檔的輪次：清單（依日期由新到舊，最多 50 輪）與單一輪（遮蔽過的內容、`openedAt`、`archivedAt`） |
+
+- 一輪的 JSON 多了 `drafts`（`mine`：自己的；`shared`：其他人分享的）與 `planComments`；`you.canComment` 表示能不能對計畫留言。對計畫的留言在有人按「有意見」後跟著意見一起交給 AI（標出是哪一步、原本的步驟文字、附議），新的計畫產生後清空。留言不影響確認，確認的人仍然只有寫意見的人。
+- 紀錄新增 `edited`、`withdrawn`、`deadline`（`minutes`，0 是立即收斂）、`commented`（`step`）、`emptyCancelled`。
+- 失敗原因多了 `messageCode`／`messageArgs`（例如 `restartUnpublished`、`mergeConflict` 帶 `files`），頁面依語言顯示；沒有代碼的照舊顯示中文 `message`。發布完成的紀錄改成「新版本已寫入 GitHub，等待 Fleet 部署」。
+- 所有應用共用一個分支，laoban 的 commit 一次一個；同一個應用的版本一次只寫一個（手動存檔、版面、還原、發布），第二個請求等第一個寫完，再和它寫的版本比對，所以會收到 `409 version_conflict`（「有了新版本」）而不是 GitHub 錯誤。萬一分支被別人（不經過 laoban）先推了，也回 `409 version_conflict`（20 報告 B11）。
+- 頁面：應用清單標出等你確認、等其他人確認、失敗待處理的應用，上方寫出幾輪等你確認；左側選單的「應用」顯示等你確認的件數（每 60 秒更新）；詳細頁的意見收斂上方顯示「這一輪等你確認」。詳細頁有「過去的輪次」，打開才讀取。
+
 **保存與重啟**（v0.1.15）：
 - 每一輪存成一個 `Round` 資源（`laoban-crd` chart，group `laoban.yansheng133.github.io/v1alpha1`），放在後端自己的 namespace `laoban-system`，名稱 `<應用>-<輪次 ID>`，label `laoban.yansheng133.github.io/app`。`spec` 有 `schema`（目前 1）、`app`、`targetNamespace`、`state`、`deadline` 與 `round`（這一輪的全部內容，包括頁面看不到的開始時的 commit、收斂好的計畫要寫程式時需要的內容）。
 - 後端的權限只多一個 Role：在 `laoban-system` 對 `rounds` 做 get、list、create、update、delete。使用者沒有這個資源的權限，只能經過後端的 API。
@@ -219,7 +238,7 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 
 ### 錯誤
 
-一律 `{"error": {"code": "…", "message": "…"}}`，`message` 是給使用者看的繁中句子。代碼：`bad_request`（400）、`too_long`（400，意見或回覆太長）、`round_full`（400，這一輪的意見已滿）、`rounds_unavailable`（503，叢集裡沒有 Round CRD）、`round_conflict`（409）、`state_failed`（503，寫入 Round 資源失敗）、`plan_not_found`（404）、`already_applied`（409）、`app_exists`（409）、`app_not_found`（404）、`not_editable`（409）、`version_not_found`（404）、`unauthenticated`（401，請求沒有經過 API server、沒有驗證過的使用者）、`round_active`（409）、`round_scope`（409）、`merge_conflict`（409）、`round_state`（409，這一輪目前的狀態不能這樣做）、`not_initiator`（403）、`not_confirmer`（409）、`version_conflict`（409）、`invalid_files`（400）、`budget_exceeded`（429，laoban 自己的 token 上限）、`spend_limit`（402，Anthropic 花費上限，**不重試**）、`ai_invalid_output`（502，AI 回應不合格式或碰到禁止的資源）、`github_failed`（502）、`internal`（500）。
+一律 `{"error": {"code": "…", "message": "…"}}`，`message` 是給使用者看的繁中句子。代碼：`bad_request`（400）、`round_not_found`（404，沒有這個歸檔的輪次）、`too_long`（400，意見或回覆太長）、`round_full`（400，這一輪的意見已滿）、`rounds_unavailable`（503，叢集裡沒有 Round CRD）、`round_conflict`（409）、`state_failed`（503，寫入 Round 資源失敗）、`plan_not_found`（404）、`already_applied`（409）、`app_exists`（409）、`app_not_found`（404）、`not_editable`（409）、`version_not_found`（404）、`unauthenticated`（401，請求沒有經過 API server、沒有驗證過的使用者）、`round_active`（409）、`round_scope`（409）、`merge_conflict`（409）、`round_state`（409，這一輪目前的狀態不能這樣做）、`not_initiator`（403）、`not_confirmer`（409）、`version_conflict`（409）、`invalid_files`（400）、`budget_exceeded`（429，laoban 自己的 token 上限）、`spend_limit`（402，Anthropic 花費上限，**不重試**）、`ai_invalid_output`（502，AI 回應不合格式或碰到禁止的資源）、`github_failed`（502）、`internal`（500）。
 
 ### 其他
 

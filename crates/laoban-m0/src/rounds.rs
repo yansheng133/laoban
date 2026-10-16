@@ -47,6 +47,16 @@ pub const MAX_DEADLINE_MINUTES: u64 = 24 * 60;
 pub const OBJECTION_MINUTES: u64 = 10;
 /// Log entries kept per round.
 const MAX_LOG: usize = 100;
+/// Drafts one person keeps in a round (component drafts plus the general one).
+pub const MAX_DRAFTS: usize = 10;
+/// Comments on the steps of a converged plan.
+pub const MAX_PLAN_COMMENTS: usize = 50;
+/// How much of a step's text a comment's request quotes.
+const STEP_TEXT_IN_REQUEST: usize = 200;
+
+fn is_false(b: &bool) -> bool {
+    !*b
+}
 
 /// The size limits of a round. The administrator may lower them (chart
 /// values), never raise them above the constants: everything in a round
@@ -168,6 +178,7 @@ pub struct Reply {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Opinion {
     /// "o1", "o2", … within the round.
     pub id: String,
@@ -180,6 +191,51 @@ pub struct Opinion {
     /// People who +1'd it (not the author).
     pub supporters: Vec<String>,
     pub replies: Vec<Reply>,
+    /// When the author last changed the text.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub edited_at: String,
+    /// The author changed the text after someone +1'd it.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub edited_after_support: bool,
+    /// The author took it back: the text is gone, the number stays.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub withdrawn: bool,
+}
+
+/// A draft kept in the round: an opinion being written, for a component
+/// or (no target) the app in general.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Draft {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<Target>,
+    pub text: String,
+    pub at: String,
+}
+
+/// One person's drafts. Shared ones are seen (not changed) by everyone.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Drafts {
+    pub shared: bool,
+    pub items: Vec<Draft>,
+}
+
+/// A comment on one step of the converged plan, while confirming. Goes to
+/// the AI with the opinions when the round converges again.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanComment {
+    /// "c1", "c2", … within the round.
+    pub id: String,
+    /// 1-based step number.
+    pub step: usize,
+    /// The step as it read when commented.
+    pub step_text: String,
+    pub by: String,
+    pub at: String,
+    pub text: String,
+    pub supporters: Vec<String>,
 }
 
 /// An opinion as sent: text and, optionally, the component.
@@ -260,7 +316,15 @@ pub struct PlanRecipe {
 }
 
 /// Fields kept in the stored round but not shown to the page.
-const HIDDEN: [&str; 5] = ["lastOpinion", "startCommit", "recipe", "archived", "opened"];
+const HIDDEN: [&str; 7] = [
+    "lastOpinion",
+    "startCommit",
+    "recipe",
+    "archived",
+    "opened",
+    "drafts",
+    "lastComment",
+];
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -275,8 +339,14 @@ pub struct Round {
     pub opinions: Vec<Opinion>,
     pub confirmers: Vec<Confirmer>,
     pub plan: Option<RoundPlan>,
-    /// Why converging or applying failed.
+    /// Why converging or applying failed (Traditional Chinese).
     pub message: String,
+    /// The same as a code the page translates (`laoban.round.failures.*`),
+    /// with the values it refers to; empty when there is no translation.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub message_code: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub message_args: BTreeMap<String, String>,
     /// The apply response once published.
     pub result: Option<serde_json::Value>,
     pub log: Vec<LogEntry>,
@@ -296,6 +366,13 @@ pub struct Round {
     /// Unix seconds when opened (orders the rounds of an app).
     #[serde(default)]
     pub opened: u64,
+    /// Drafts by user (shown per caller, see `to_json_for`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub drafts: BTreeMap<String, Drafts>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub plan_comments: Vec<PlanComment>,
+    #[serde(default)]
+    last_comment: u32,
     /// The stored resource's version, for writes that must not overwrite
     /// someone else's (Kubernetes `resourceVersion`).
     #[serde(skip)]
@@ -368,6 +445,13 @@ impl Round {
             .max()
             .unwrap_or(0);
         r.last_opinion = r.last_opinion.max(highest);
+        let highest_comment = r
+            .plan_comments
+            .iter()
+            .filter_map(|c| c.id.trim_start_matches('c').parse::<u32>().ok())
+            .max()
+            .unwrap_or(0);
+        r.last_comment = r.last_comment.max(highest_comment);
         r.store_version = version;
         r.limits = limits;
         Ok(r)
@@ -450,6 +534,8 @@ impl Round {
             confirmers: Vec::new(),
             plan: None,
             message: String::new(),
+            message_code: String::new(),
+            message_args: BTreeMap::new(),
             result: None,
             log: Vec::new(),
             last_opinion: 0,
@@ -457,6 +543,9 @@ impl Round {
             recipe: None,
             archived: false,
             opened: now,
+            drafts: BTreeMap::new(),
+            plan_comments: Vec::new(),
+            last_comment: 0,
             store_version: None,
             limits,
         };
@@ -494,10 +583,12 @@ impl Round {
         }
     }
 
-    /// Opinions and replies together, in characters.
+    /// Opinions, their replies and the plan comments together, in
+    /// characters (all of it goes to the AI). Withdrawn opinions and their
+    /// replies do not count.
     pub fn total_chars(&self) -> usize {
-        self.opinions
-            .iter()
+        let opinions: usize = self
+            .active()
             .map(|o| {
                 o.text.chars().count()
                     + o.replies
@@ -505,7 +596,25 @@ impl Round {
                         .map(|r| r.text.chars().count())
                         .sum::<usize>()
             })
-            .sum()
+            .sum();
+        opinions
+            + self
+                .plan_comments
+                .iter()
+                .map(|c| c.text.chars().count())
+                .sum::<usize>()
+    }
+
+    /// The opinions not withdrawn.
+    pub fn active(&self) -> impl Iterator<Item = &Opinion> {
+        self.opinions.iter().filter(|o| !o.withdrawn)
+    }
+
+    fn opinion_mut(&mut self, id: &str) -> Result<&mut Opinion, RoundError> {
+        self.opinions
+            .iter_mut()
+            .find(|o| o.id == id)
+            .ok_or(RoundError::NoSuchOpinion)
     }
 
     /// Check and add opinions all together (none if one is refused).
@@ -529,7 +638,10 @@ impl Round {
             ));
         }
         let added: usize = cleaned.iter().map(|(t, _)| t.chars().count()).sum();
-        if self.opinions.len() + cleaned.len() > self.limits.opinions
+        // Withdrawn ones are kept (as numbers); a bound on all of them too,
+        // so add-and-withdraw cannot grow the round without end.
+        if self.active().count() + cleaned.len() > self.limits.opinions
+            || self.opinions.len() + cleaned.len() > 2 * self.limits.opinions
             || self.total_chars() + added > self.limits.round_chars
         {
             return Err(self.full());
@@ -545,6 +657,9 @@ impl Round {
                 target,
                 supporters: Vec::new(),
                 replies: Vec::new(),
+                edited_at: String::new(),
+                edited_after_support: false,
+                withdrawn: false,
             });
         }
         Ok(count)
@@ -598,6 +713,9 @@ impl Round {
             .iter_mut()
             .find(|o| o.id == opinion)
             .ok_or(RoundError::NoSuchOpinion)?;
+        if o.withdrawn {
+            return Err(RoundError::Invalid("這則意見已經撤回。"));
+        }
         if o.by == user {
             return Err(RoundError::Invalid("不能附議自己的意見。"));
         }
@@ -647,6 +765,9 @@ impl Round {
             .iter_mut()
             .find(|o| o.id == opinion)
             .ok_or(RoundError::NoSuchOpinion)?;
+        if o.withdrawn {
+            return Err(RoundError::Invalid("這則意見已經撤回。"));
+        }
         if o.replies.len() >= limits.replies || total + text.chars().count() > limits.round_chars {
             return Err(full);
         }
@@ -678,12 +799,14 @@ impl Round {
         self.plan = None;
         self.recipe = None;
         self.message.clear();
+        self.message_code.clear();
+        self.message_args.clear();
         self.note(
             at,
             "laoban",
             "converging",
-            &[("count", self.opinions.len().to_string())],
-            format!("AI 開始收斂 {} 則意見", self.opinions.len()),
+            &[("count", self.active().count().to_string())],
+            format!("AI 開始收斂 {} 則意見", self.active().count()),
         );
     }
 
@@ -693,10 +816,10 @@ impl Round {
     pub fn change_request(&self) -> String {
         let mut s = format!(
             "以下是 {} 則對這個應用的意見（可能重複或互相衝突），依針對的元件分組；附議越多的意見越多人同意：\n",
-            self.opinions.len()
+            self.active().count()
         );
         let mut groups: Vec<(Option<&Target>, Vec<&Opinion>)> = Vec::new();
-        for o in &self.opinions {
+        for o in self.active() {
             let key = o.target.as_ref();
             match groups
                 .iter_mut()
@@ -734,13 +857,63 @@ impl Round {
                 }
             }
         }
+        s.push_str(&self.comments_section());
         s
+    }
+
+    /// The plan comments for the change request, by step; each step's
+    /// text once, shortened.
+    fn comments_section(&self) -> String {
+        if self.plan_comments.is_empty() {
+            return String::new();
+        }
+        let mut s = String::from(
+            "\n【對上一版修改計畫各步驟的留言】（請一併考慮；步驟是上一版計畫的內容）\n",
+        );
+        let mut steps: Vec<usize> = self.plan_comments.iter().map(|c| c.step).collect();
+        steps.sort_unstable();
+        steps.dedup();
+        for step in steps {
+            let mut comments = self.plan_comments.iter().filter(|c| c.step == step);
+            let Some(first) = comments.clone().next() else {
+                continue;
+            };
+            let text: String = first.step_text.chars().take(STEP_TEXT_IN_REQUEST).collect();
+            let more = if first.step_text.chars().count() > STEP_TEXT_IN_REQUEST {
+                "…"
+            } else {
+                ""
+            };
+            s.push_str(&format!("第 {step} 步「{text}{more}」：\n"));
+            for c in comments.by_ref() {
+                s.push_str(&format!("- （{}）{}", c.by, c.text));
+                if !c.supporters.is_empty() {
+                    s.push_str(&format!(
+                        "　〔{} 人附議：{}〕",
+                        c.supporters.len(),
+                        c.supporters.join("、")
+                    ));
+                }
+                s.push('\n');
+            }
+        }
+        s
+    }
+
+    /// Characters the plan comments add to the change request beyond their
+    /// own text (counted in the round's space): step texts, names.
+    pub fn comments_overhead(&self) -> usize {
+        let own: usize = self
+            .plan_comments
+            .iter()
+            .map(|c| c.text.chars().count())
+            .sum();
+        self.comments_section().chars().count().saturating_sub(own)
     }
 
     /// The opinions as a short list for the history: "（user）text；…".
     pub fn opinion_list(&self) -> String {
-        self.opinions
-            .iter()
+        self.active()
             .map(|o| match &o.target {
                 Some(t) => format!("（{}）［{}］{}", o.by, t.name, o.text),
                 None => format!("（{}）{}", o.by, o.text),
@@ -752,7 +925,7 @@ impl Round {
     /// People who must confirm: everyone who gave an opinion, in order.
     fn opinion_givers(&self) -> Vec<String> {
         let mut users: Vec<String> = Vec::new();
-        for o in &self.opinions {
+        for o in self.active() {
             if !users.contains(&o.by) {
                 users.push(o.by.clone());
             }
@@ -763,6 +936,8 @@ impl Round {
     pub fn converged(&mut self, plan: RoundPlan, at: &str) {
         self.state = State::Confirming;
         self.plan = Some(plan);
+        // The comments were about the previous plan; the AI has them now.
+        self.plan_comments.clear();
         self.confirmers = self
             .opinion_givers()
             .into_iter()
@@ -782,13 +957,34 @@ impl Round {
     }
 
     pub fn fail(&mut self, message: &str, at: &str) {
+        self.fail_coded("", &[], message, at);
+    }
+
+    /// Fail with a code the page can show in its language (`message` is
+    /// the Traditional Chinese text, kept for clients without it).
+    pub fn fail_coded(&mut self, code: &str, args: &[(&str, String)], message: &str, at: &str) {
         self.state = State::Failed;
         self.message = message.to_string();
+        self.message_code = code.to_string();
+        self.message_args = args
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.clone()))
+            .collect();
+        let mut log_args: Vec<(&'static str, String)> = vec![("message", message.to_string())];
+        if !code.is_empty() {
+            log_args.push(("code", code.to_string()));
+            for (k, v) in args {
+                // Only the known argument names go into the log.
+                if *k == "files" {
+                    log_args.push(("files", v.clone()));
+                }
+            }
+        }
         self.note(
             at,
             "laoban",
             "failed",
-            &[("message", message.to_string())],
+            &log_args,
             format!("失敗：{message}"),
         );
     }
@@ -894,7 +1090,14 @@ impl Round {
     pub fn done(&mut self, result: serde_json::Value, at: &str) {
         self.state = State::Done;
         self.result = Some(result);
-        self.note(at, "laoban", "done", &[], "已部署新版本".into());
+        // Written to GitHub; Fleet deploys it shortly after (report 20, N6).
+        self.note(
+            at,
+            "laoban",
+            "done",
+            &[],
+            "新版本已寫入 GitHub，等待 Fleet 部署".into(),
+        );
     }
 
     /// The initiator converges again after a failure.
@@ -921,6 +1124,270 @@ impl Round {
         self.state = State::Cancelled;
         self.note(at, by, "cancelled", &[], "取消這一輪".into());
         Ok(())
+    }
+
+    /// The author changes an opinion while collecting. +1s stay; when
+    /// there are some, the opinion shows it changed after them.
+    pub fn edit_opinion(
+        &mut self,
+        user: &str,
+        opinion: &str,
+        text: &str,
+        at: &str,
+    ) -> Result<(), RoundError> {
+        if self.state != State::Collecting {
+            return Err(RoundError::WrongState(self.state));
+        }
+        let text = clean(text, Text::Opinion, self.limits.opinion_chars)?;
+        let total = self.total_chars();
+        let full = self.full();
+        let max = self.limits.round_chars;
+        let o = self.opinion_mut(opinion)?;
+        if o.by != user {
+            return Err(RoundError::Invalid("只能修改自己的意見。"));
+        }
+        if o.withdrawn {
+            return Err(RoundError::Invalid("這則意見已經撤回。"));
+        }
+        if o.text == text {
+            return Err(RoundError::Invalid("意見沒有任何變更。"));
+        }
+        if total - o.text.chars().count() + text.chars().count() > max {
+            return Err(full);
+        }
+        o.text = text;
+        o.edited_at = at.to_string();
+        if !o.supporters.is_empty() {
+            o.edited_after_support = true;
+        }
+        let id = o.id.clone();
+        self.note(
+            at,
+            user,
+            "edited",
+            &[("opinion", id.clone())],
+            format!("修改意見 {id}"),
+        );
+        Ok(())
+    }
+
+    /// The author takes an opinion back while collecting. Its text is
+    /// removed (nobody sees it, the AI does not get it); the number stays.
+    pub fn withdraw_opinion(
+        &mut self,
+        user: &str,
+        opinion: &str,
+        at: &str,
+    ) -> Result<(), RoundError> {
+        if self.state != State::Collecting {
+            return Err(RoundError::WrongState(self.state));
+        }
+        let o = self.opinion_mut(opinion)?;
+        if o.by != user {
+            return Err(RoundError::Invalid("只能撤回自己的意見。"));
+        }
+        if o.withdrawn {
+            return Err(RoundError::Invalid("這則意見已經撤回。"));
+        }
+        o.withdrawn = true;
+        o.text.clear();
+        // Replies and +1s go with it: they may quote it, and kept they
+        // would fill the round outside its limits.
+        o.replies.clear();
+        o.supporters.clear();
+        o.edited_after_support = false;
+        let id = o.id.clone();
+        self.note(
+            at,
+            user,
+            "withdrawn",
+            &[("opinion", id.clone())],
+            format!("撤回意見 {id}"),
+        );
+        Ok(())
+    }
+
+    /// The initiator moves the deadline while collecting: `minutes` from
+    /// now, at most [`MAX_DEADLINE_MINUTES`] after the round opened; 0
+    /// converges now.
+    pub fn set_deadline(
+        &mut self,
+        by: &str,
+        minutes: u64,
+        now: u64,
+        at: &str,
+    ) -> Result<(), RoundError> {
+        if by != self.initiator {
+            return Err(RoundError::NotInitiator);
+        }
+        if self.state != State::Collecting {
+            return Err(RoundError::WrongState(self.state));
+        }
+        let deadline = now.saturating_add(minutes.saturating_mul(60));
+        if self.opened > 0 && deadline > self.opened + MAX_DEADLINE_MINUTES * 60 {
+            return Err(RoundError::Invalid("截止時間最晚是開始後 24 小時。"));
+        }
+        self.deadline = deadline;
+        self.note(
+            at,
+            by,
+            "deadline",
+            &[("minutes", minutes.to_string())],
+            if minutes == 0 {
+                "改成立即收斂".to_string()
+            } else {
+                format!("截止時間改成 {minutes} 分鐘後")
+            },
+        );
+        Ok(())
+    }
+
+    /// Replace `user`'s drafts while collecting. Drafts are not opinions:
+    /// they do not go to the AI and are not in the log.
+    pub fn set_drafts(
+        &mut self,
+        user: &str,
+        items: Vec<NewOpinion>,
+        shared: bool,
+        at: &str,
+    ) -> Result<(), RoundError> {
+        if self.state != State::Collecting {
+            return Err(RoundError::WrongState(self.state));
+        }
+        if items.len() > MAX_DRAFTS {
+            return Err(RoundError::Invalid("草稿最多 10 則。"));
+        }
+        let mut cleaned = Vec::with_capacity(items.len());
+        for item in items {
+            let text = item.text.trim();
+            if text.is_empty() {
+                continue;
+            }
+            if text.chars().count() > self.limits.opinion_chars {
+                return Err(RoundError::TooLong {
+                    what: Text::Opinion,
+                    max: self.limits.opinion_chars,
+                });
+            }
+            cleaned.push(Draft {
+                target: item.target,
+                text: text.to_string(),
+                at: at.to_string(),
+            });
+        }
+        // All drafts of the round together stay within the round's size.
+        let others: usize = self
+            .drafts
+            .iter()
+            .filter(|(u, _)| u.as_str() != user)
+            .flat_map(|(_, d)| d.items.iter())
+            .map(|d| d.text.chars().count())
+            .sum();
+        let mine: usize = cleaned.iter().map(|d| d.text.chars().count()).sum();
+        if others + mine > self.limits.round_chars {
+            return Err(RoundError::Invalid(
+                "這一輪的草稿太多，請先送出或刪掉一些。",
+            ));
+        }
+        if cleaned.is_empty() {
+            self.drafts.remove(user);
+        } else {
+            self.drafts.insert(
+                user.to_string(),
+                Drafts {
+                    shared,
+                    items: cleaned,
+                },
+            );
+        }
+        Ok(())
+    }
+
+    /// Comment on step `step` (1-based) of the converged plan.
+    pub fn add_plan_comment(
+        &mut self,
+        user: &str,
+        step: usize,
+        text: &str,
+        at: &str,
+    ) -> Result<(), RoundError> {
+        if self.state != State::Confirming {
+            return Err(RoundError::WrongState(self.state));
+        }
+        let step_text = match self
+            .plan
+            .as_ref()
+            .and_then(|p| p.steps.get(step.wrapping_sub(1)))
+        {
+            Some(t) => t.clone(),
+            None => return Err(RoundError::Invalid("計畫沒有這一步。")),
+        };
+        let text = clean(text, Text::Reply, self.limits.reply_chars)?;
+        if self.plan_comments.len() >= MAX_PLAN_COMMENTS
+            || self.total_chars() + text.chars().count() > self.limits.round_chars
+        {
+            return Err(self.full());
+        }
+        self.last_comment += 1;
+        self.plan_comments.push(PlanComment {
+            id: format!("c{}", self.last_comment),
+            step,
+            step_text,
+            by: user.to_string(),
+            at: at.to_string(),
+            text,
+            supporters: Vec::new(),
+        });
+        self.note(
+            at,
+            user,
+            "commented",
+            &[("step", step.to_string())],
+            format!("對計畫第 {step} 步留言"),
+        );
+        Ok(())
+    }
+
+    /// +1 a comment on the plan, or take it back.
+    pub fn toggle_comment_support(
+        &mut self,
+        user: &str,
+        comment: &str,
+    ) -> Result<bool, RoundError> {
+        if self.state != State::Confirming {
+            return Err(RoundError::WrongState(self.state));
+        }
+        let c = self
+            .plan_comments
+            .iter_mut()
+            .find(|c| c.id == comment)
+            .ok_or(RoundError::Invalid("找不到這則留言，可能已經清除。"))?;
+        if c.by == user {
+            return Err(RoundError::Invalid("不能附議自己的留言。"));
+        }
+        Ok(match c.supporters.iter().position(|u| u == user) {
+            Some(i) => {
+                c.supporters.remove(i);
+                false
+            }
+            None => {
+                c.supporters.push(user.to_string());
+                true
+            }
+        })
+    }
+
+    /// Due with every opinion withdrawn: nothing to converge, the round
+    /// ends by itself.
+    pub fn cancel_empty(&mut self, at: &str) {
+        self.state = State::Cancelled;
+        self.note(
+            at,
+            "laoban",
+            "emptyCancelled",
+            &[],
+            "所有意見都撤回了，這一輪自動取消".into(),
+        );
     }
 
     /// Files a direct edit may not touch while this round is active.
@@ -962,9 +1429,19 @@ impl Round {
         v["limits"] = serde_json::json!(self.limits);
         v["used"] = serde_json::json!({
             "chars": self.total_chars(),
-            "opinions": self.opinions.len(),
+            "opinions": self.active().count(),
         });
         let me = user.unwrap_or("");
+        // The caller's own drafts, and the ones others share.
+        v["drafts"] = serde_json::json!({
+            "mine": self.drafts.get(me).filter(|_| !me.is_empty()),
+            "shared": self
+                .drafts
+                .iter()
+                .filter(|(u, d)| u.as_str() != me && d.shared)
+                .map(|(u, d)| serde_json::json!({ "user": u, "items": d.items }))
+                .collect::<Vec<_>>(),
+        });
         let pending: BTreeMap<&str, bool> = self
             .confirmers
             .iter()
@@ -976,6 +1453,7 @@ impl Round {
             "mustConfirm": pending.get(me).copied().unwrap_or(false),
             "canAddOpinion": self.state == State::Collecting && !me.is_empty(),
             "canDiscuss": matches!(self.state, State::Collecting | State::Confirming) && !me.is_empty(),
+            "canComment": self.state == State::Confirming && !me.is_empty(),
         });
         v
     }
@@ -1336,8 +1814,15 @@ mod tests {
         assert_eq!(stored["lastOpinion"], 2);
         assert!(stored["recipe"].is_object());
         let page = r.to_json_for(Some("u-a"));
+        // Drafts are shown per caller (see drafts_are_per_person…).
+        for k in HIDDEN.iter().filter(|k| **k != "drafts") {
+            assert!(page.get(*k).is_none(), "{k} shown to the page");
+        }
         for k in HIDDEN {
-            assert!(page.get(k).is_none(), "{k} shown to the page");
+            assert!(
+                r.to_public_json().get(k).is_none(),
+                "{k} in the public form"
+            );
         }
         let back = Round::from_stored(stored, Some("17".into()), Limits::default()).unwrap();
         assert_eq!(back.store_version.as_deref(), Some("17"));
@@ -1352,5 +1837,205 @@ mod tests {
         back.state = State::Collecting;
         back.add_opinion("u-c", "x", "t").unwrap();
         assert_eq!(back.opinions.last().unwrap().id, "o3");
+    }
+
+    #[test]
+    fn edit_and_withdraw_own_opinions() {
+        let mut r = open(10);
+        r.add_opinion("u-b", "也要能排序", "t1").unwrap();
+        r.toggle_support("u-c", "o2", "t2").unwrap();
+        // Only the author, only while collecting.
+        assert!(matches!(
+            r.edit_opinion("u-c", "o2", "x", "t"),
+            Err(RoundError::Invalid(_))
+        ));
+        r.edit_opinion("u-b", "o2", "依到期日排序", "t3").unwrap();
+        let o = &r.opinions[1];
+        assert_eq!(
+            (o.text.as_str(), o.edited_at.as_str()),
+            ("依到期日排序", "t3")
+        );
+        assert!(o.edited_after_support, "+1 came before the change");
+        assert_eq!(o.supporters, ["u-c"]);
+        assert!(matches!(
+            r.edit_opinion("u-b", "o2", &"x".repeat(1001), "t"),
+            Err(RoundError::TooLong { .. })
+        ));
+        assert_eq!(r.log.last().unwrap().code, "edited");
+
+        r.withdraw_opinion("u-b", "o2", "t4").unwrap();
+        let o = &r.opinions[1];
+        assert!(o.withdrawn && o.text.is_empty(), "the text is gone");
+        assert_eq!(r.log.last().unwrap().args["opinion"], "o2");
+        assert!(matches!(
+            r.toggle_support("u-c", "o2", "t"),
+            Err(RoundError::Invalid(_))
+        ));
+        assert!(matches!(
+            r.reply("u-c", "o2", "x", "t"),
+            Err(RoundError::Invalid(_))
+        ));
+        assert!(matches!(
+            r.withdraw_opinion("u-b", "o2", "t"),
+            Err(RoundError::Invalid(_))
+        ));
+        // Not sent to the AI, not counted, and u-b no longer confirms.
+        assert!(!r.change_request().contains("排序"));
+        assert_eq!(r.to_json_for(None)["used"]["opinions"], 1);
+        r.start_converging("t5");
+        r.converged(plan(), "t6");
+        let users: Vec<&str> = r.confirmers.iter().map(|c| c.user.as_str()).collect();
+        assert_eq!(users, ["u-a"]);
+        // The number is kept: the next one is o3.
+        let mut r2 = open(10);
+        r2.add_opinion("u-b", "x", "t").unwrap();
+        r2.withdraw_opinion("u-b", "o2", "t").unwrap();
+        r2.add_opinion("u-b", "y", "t").unwrap();
+        assert_eq!(r2.opinions.last().unwrap().id, "o3");
+    }
+
+    #[test]
+    fn initiator_moves_the_deadline() {
+        let mut r = open(10);
+        assert_eq!(
+            r.set_deadline("u-b", 30, T0, "t"),
+            Err(RoundError::NotInitiator)
+        );
+        r.set_deadline("u-a", 60, T0 + 60, "t").unwrap();
+        assert_eq!(r.deadline, T0 + 60 + 3600);
+        assert!(matches!(
+            r.set_deadline("u-a", 24 * 60, T0 + 60, "t"),
+            Err(RoundError::Invalid(_))
+        ));
+        r.set_deadline("u-a", 0, T0 + 120, "t").unwrap();
+        assert!(r.due(T0 + 120));
+        assert_eq!(r.log.last().unwrap().code, "deadline");
+    }
+
+    #[test]
+    fn drafts_are_per_person_and_shared_by_choice() {
+        let mut r = open(10);
+        r.set_drafts(
+            "u-b",
+            vec![on("app-web", "web", "加上搜尋"), NewOpinion::general("  ")],
+            true,
+            "t",
+        )
+        .unwrap();
+        r.set_drafts("u-c", vec![NewOpinion::general("我自己的")], false, "t")
+            .unwrap();
+        assert_eq!(r.drafts["u-b"].items.len(), 1, "empty ones are dropped");
+        // u-a sees u-b's shared drafts, not u-c's private ones.
+        let v = r.to_json_for(Some("u-a"));
+        assert!(v["drafts"]["mine"].is_null());
+        assert_eq!(v["drafts"]["shared"].as_array().unwrap().len(), 1);
+        assert_eq!(v["drafts"]["shared"][0]["user"], "u-b");
+        let v = r.to_json_for(Some("u-c"));
+        assert_eq!(v["drafts"]["mine"]["items"][0]["text"], "我自己的");
+        // Not in the stored public form (the archive), not in the log.
+        assert!(r.to_public_json().get("drafts").is_none());
+        assert!(r.log.iter().all(|l| !l.code.contains("draft")));
+        // Limits.
+        let many: Vec<NewOpinion> = (0..11)
+            .map(|i| NewOpinion::general(&i.to_string()))
+            .collect();
+        assert!(matches!(
+            r.set_drafts("u-b", many, true, "t"),
+            Err(RoundError::Invalid(_))
+        ));
+        assert!(matches!(
+            r.set_drafts(
+                "u-b",
+                vec![NewOpinion::general(&"x".repeat(1001))],
+                true,
+                "t"
+            ),
+            Err(RoundError::TooLong { .. })
+        ));
+        r.set_drafts("u-b", vec![], true, "t").unwrap();
+        assert!(!r.drafts.contains_key("u-b"));
+        // Not counted in the round's size.
+        assert_eq!(r.total_chars(), "加上到期日".chars().count());
+    }
+
+    #[test]
+    fn comments_on_plan_steps_go_back_to_the_ai() {
+        let mut r = open(0);
+        r.start_converging("t");
+        r.converged(plan(), "t");
+        assert!(matches!(
+            r.add_plan_comment("u-b", 2, "x", "t"),
+            Err(RoundError::Invalid(_))
+        ));
+        r.add_plan_comment("u-b", 1, "這一步太大，先做排序就好", "t1")
+            .unwrap();
+        assert!(r.toggle_comment_support("u-a", "c1").unwrap());
+        assert!(matches!(
+            r.toggle_comment_support("u-b", "c1"),
+            Err(RoundError::Invalid(_))
+        ));
+        assert!(matches!(
+            r.add_plan_comment("u-b", 1, &"x".repeat(301), "t"),
+            Err(RoundError::TooLong {
+                what: Text::Reply,
+                ..
+            })
+        ));
+        assert_eq!(r.plan_comments[0].step_text, "x");
+        assert_eq!(r.to_json_for(Some("u-b"))["you"]["canComment"], true);
+        // Commenting does not confirm and confirmers stay the authors.
+        assert_eq!(r.confirmers.len(), 1);
+        // An objection takes the comments along to the next convergence.
+        r.object("u-a", "改小一點", T0, "t2").unwrap();
+        r.start_converging("t3");
+        let req = r.change_request();
+        assert!(req.contains("第 1 步「x」：\n- （u-b）這一步太大"), "{req}");
+        assert!(req.contains("〔1 人附議：u-a〕"), "{req}");
+        r.converged(plan(), "t4");
+        assert!(r.plan_comments.is_empty(), "they were about the old plan");
+        // Restored rounds keep numbering comments.
+        r.add_plan_comment("u-b", 1, "y", "t5").unwrap();
+        let back = Round::from_stored(r.to_stored(), None, Limits::default()).unwrap();
+        let mut back = back;
+        back.add_plan_comment("u-a", 1, "z", "t").unwrap();
+        assert_eq!(back.plan_comments.last().unwrap().id, "c3");
+    }
+
+    #[test]
+    fn add_and_withdraw_cannot_grow_the_round_without_end() {
+        let mut r = open(30);
+        let limit = r.limits.opinions;
+        let mut n = 1;
+        let err = loop {
+            let id = format!("o{n}");
+            r.withdraw_opinion(if n == 1 { "u-a" } else { "u-b" }, &id, "t")
+                .unwrap();
+            match r.add_opinion("u-b", "再一則", "t") {
+                Ok(_) => n += 1,
+                Err(e) => break e,
+            }
+            assert!(n <= 2 * limit, "bounded");
+        };
+        assert!(matches!(err, RoundError::Full { .. }), "{err:?}");
+        assert_eq!(r.opinions.len(), 2 * limit);
+    }
+
+    #[test]
+    fn step_texts_in_the_request_are_quoted_once_and_allowed_for() {
+        let mut r = open(0);
+        r.start_converging("t");
+        let mut p = plan();
+        p.steps = vec!["步".repeat(400)];
+        r.converged(p, "t");
+        for i in 0..5 {
+            r.add_plan_comment("u-b", 1, &format!("留言{i}"), "t")
+                .unwrap();
+        }
+        let section = r.comments_section();
+        assert_eq!(section.matches("第 1 步").count(), 1, "{section}");
+        assert!(section.contains('…'));
+        let own: usize = r.plan_comments.iter().map(|c| c.text.chars().count()).sum();
+        assert_eq!(r.comments_overhead() + own, section.chars().count());
+        assert!(r.comments_overhead() < 400);
     }
 }

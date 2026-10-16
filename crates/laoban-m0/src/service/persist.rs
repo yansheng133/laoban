@@ -354,7 +354,9 @@ impl M0Service {
             }
             Ok(None) => {
                 self.update_round(&mut rs, app, round_id, |r| {
-                    r.fail(
+                    r.fail_coded(
+                        "restartUnpublished",
+                        &[],
                         "後端在發布途中重新啟動，這一輪的修改沒有發布。請發起人重新收斂。",
                         &at,
                     )
@@ -362,7 +364,9 @@ impl M0Service {
             }
             Err(_) => {
                 self.update_round(&mut rs, app, round_id, |r| {
-                    r.fail(
+                    r.fail_coded(
+                        "restartUnknown",
+                        &[],
                         "後端在發布途中重新啟動，無法確認這一輪的修改是否已發布。請到版本紀錄確認；沒有新版本時請發起人重新收斂。",
                         &at,
                     )
@@ -496,8 +500,9 @@ impl M0Service {
         );
     }
 
-    /// Write the finished round to the archive branch, with opinions and
-    /// replies masked like everything else laoban writes to GitHub.
+    /// Write the finished round to the archive branch, with opinions,
+    /// replies and plan comments masked like everything else laoban
+    /// writes to GitHub.
     fn archive_round(&self, r: &Round, now_unix: u64) -> Result<(), M0Error> {
         let mut masked = r.clone();
         for o in &mut masked.opinions {
@@ -506,11 +511,15 @@ impl M0Service {
                 reply.text = self.orchestrator.mask_for_ai(&reply.text).text;
             }
         }
+        for c in &mut masked.plan_comments {
+            c.text = self.orchestrator.mask_for_ai(&c.text).text;
+        }
         let doc = json!({
             "schema": SCHEMA,
             "app": r.app,
             "targetNamespace": self.settings.target_namespace,
             "archivedAt": time::rfc3339(std::time::UNIX_EPOCH + std::time::Duration::from_secs(now_unix)),
+            "openedAt": time::rfc3339(std::time::UNIX_EPOCH + std::time::Duration::from_secs(r.opened)),
             "round": masked.to_public_json(),
         });
         let content = serde_json::to_string_pretty(&doc)
@@ -531,6 +540,75 @@ impl M0Service {
             .unwrap_or_else(|e| e.into_inner())
             .remove(&r.id);
         Ok(())
+    }
+}
+
+/// Most past rounds listed per app.
+pub const MAX_PAST_ROUNDS: usize = 50;
+
+/// `r-YYYYMMDD-xxxxxx`, as round IDs are made.
+pub fn valid_round_id(id: &str) -> bool {
+    let b = id.as_bytes();
+    b.len() == 17
+        && id.starts_with("r-")
+        && b[2..10].iter().all(u8::is_ascii_digit)
+        && b[10] == b'-'
+        && b[11..]
+            .iter()
+            .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(c))
+}
+
+impl M0Service {
+    /// `GET .../apps/<name>/rounds`: the app's archived rounds, newest
+    /// first (by date; the archive has one file per round).
+    pub fn past_rounds(&self, app: &str) -> Result<Value, M0Error> {
+        if !crate::plan::valid_app_name(app) {
+            return Err(M0Error::BadRequest("應用名稱不正確。"));
+        }
+        let names = self
+            .github
+            .list_files_at(&format!("{ARCHIVE_DIR}/{app}"), ARCHIVE_BRANCH)
+            .map_err(M0Error::Github)?;
+        let mut ids: Vec<&str> = names
+            .iter()
+            .filter_map(|n| n.strip_suffix(".json"))
+            .filter(|id| valid_round_id(id))
+            .collect();
+        ids.sort_unstable_by(|a, b| b[2..10].cmp(&a[2..10]).then(b.cmp(a)));
+        let truncated = ids.len() > MAX_PAST_ROUNDS;
+        let rounds: Vec<Value> = ids
+            .into_iter()
+            .take(MAX_PAST_ROUNDS)
+            .map(|id| {
+                json!({
+                    "id": id,
+                    "date": format!("{}-{}-{}", &id[2..6], &id[6..8], &id[8..10]),
+                })
+            })
+            .collect();
+        Ok(json!({ "rounds": rounds, "truncated": truncated }))
+    }
+
+    /// `GET .../apps/<name>/rounds/<id>`: one archived round (masked, as
+    /// written to the archive).
+    pub fn past_round(&self, app: &str, id: &str) -> Result<Value, M0Error> {
+        if !crate::plan::valid_app_name(app) || !valid_round_id(id) {
+            return Err(M0Error::BadRequest("輪次代號不正確。"));
+        }
+        let text = self
+            .github
+            .read_file_at(&format!("{ARCHIVE_DIR}/{app}/{id}.json"), ARCHIVE_BRANCH)
+            .map_err(M0Error::Github)?
+            .ok_or(M0Error::PastRoundNotFound)?;
+        let doc: Value = serde_json::from_str(&text).map_err(|_| M0Error::PastRoundNotFound)?;
+        if doc["app"] != app || !doc["round"].is_object() {
+            return Err(M0Error::PastRoundNotFound);
+        }
+        Ok(json!({
+            "round": doc["round"],
+            "archivedAt": doc["archivedAt"],
+            "openedAt": doc["openedAt"],
+        }))
     }
 }
 

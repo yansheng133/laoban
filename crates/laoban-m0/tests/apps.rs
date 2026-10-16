@@ -645,3 +645,34 @@ fn layout_save_is_a_new_version_and_shows_in_the_architecture() {
         .clone();
     assert_eq!(node["pos"], json!({"x": 7.5, "z": -3.0}));
 }
+
+#[test]
+fn two_saves_at_once_give_one_version_and_a_version_conflict() {
+    // Report 20, B11: the second save failed as "GitHub failed, check the
+    // token". Saves of one app now wait for each other, so the second one
+    // is checked against the version the first one wrote.
+    let h = todo_harness();
+    let v = h.service.files("todo").unwrap();
+    let token = lock(&h, "todo");
+    let mut a = v["files"].clone();
+    a["web"]["style.css"] = json!("body { color: #111; } /* a */\n");
+    let mut b = v["files"].clone();
+    b["web"]["style.css"] = json!("body { color: #222; } /* b */\n");
+    let results: Vec<Result<Value, laoban_m0::M0Error>> = std::thread::scope(|s| {
+        let ta = s.spawn(|| save_files(&h, a.clone(), V2, Some(&token)));
+        let tb = s.spawn(|| save_files(&h, b.clone(), V2, Some(&token)));
+        vec![ta.join().unwrap(), tb.join().unwrap()]
+    });
+    let ok = results.iter().filter(|r| r.is_ok()).count();
+    assert_eq!(ok, 1, "{results:?}");
+    let err = results.into_iter().find_map(Result::err).unwrap();
+    assert_eq!((err.status(), err.code()), (409, "version_conflict"));
+    assert!(!err.user_message().contains("token"));
+    let patches = h
+        .github
+        .requests()
+        .iter()
+        .filter(|r| r.method == "PATCH")
+        .count();
+    assert_eq!(patches, 1, "only one version written");
+}

@@ -38,7 +38,7 @@ export function opinionCounts(opinions: RoundOpinion[] | null | undefined): Reco
   const out: Record<string, number> = {};
 
   for (const o of opinions || []) {
-    if (o.target) {
+    if (o.target && !o.withdrawn) {
       out[o.target.id] = (out[o.target.id] || 0) + 1;
     }
   }
