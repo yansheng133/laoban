@@ -238,11 +238,9 @@ export default defineComponent({
           </form>
           <div
             v-else
-            class="laoban-text"
+            class="laoban-text laoban-opinion-text"
             :class="{ 'laoban-folded': isLong(o.text) && !full[o.id] }"
-          >
-            {{ o.text }}
-          </div>
+          >{{ o.text }}</div>
           <p
             v-if="!o.withdrawn && (o.editedAt || o.editedAfterSupport)"
             class="text-muted laoban-edited"
@@ -456,6 +454,12 @@ export default defineComponent({
   margin: 0;
   font-size: 12px;
 }
+.laoban-opinion-text {
+  // Line breaks the writer typed are kept (report 21, N2).
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .laoban-folded {
   display: -webkit-box;
   -webkit-box-orient: vertical;

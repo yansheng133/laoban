@@ -318,6 +318,12 @@ jobs:
       # Rancher extension docs install Yarn 1 globally with npm; pin the
       # version @rancher/shell 3.0.13 itself depends on.
       - run: npm install -g yarn@1.22.22
+      - name: Extension version matches the release version
+        # The publish workflow tags the extension laoban-ext-<version>.
+        run: |
+          ext="$(node -p "require('./pkg/laoban-ext/package.json').version")"
+          cargo="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"$/\1/p' ../Cargo.toml)"
+          [ "$ext" = "$cargo" ] || { echo "::error::extension version $ext is not Cargo.toml's $cargo"; exit 1; }
       - run: yarn install --frozen-lockfile
       - run: yarn build-pkg laoban-ext
       - run: yarn test

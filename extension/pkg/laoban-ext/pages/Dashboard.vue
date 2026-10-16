@@ -9,12 +9,14 @@
 // never v-html. See extension/README.md.
 import { defineComponent, ref, computed, onMounted } from 'vue';
 import { useStore } from 'vuex';
+import NavToggle from '../components/NavToggle.vue';
 import { useText } from '../composables/useText';
 import ArchitectureView from '../components/ArchitectureView.vue';
 import PlanResult from '../components/PlanResult.vue';
 import StatusBar from '../components/StatusBar.vue';
 import { useDeployFlow } from '../composables/useDeployFlow';
 import { APP_NAME_PATTERN } from '../config/backend';
+import { canChangeApps } from '../utils/backend';
 import {
   APPS_ROUTE_NAME, PRODUCT_NAME, BLANK_CLUSTER, appDetailRoute
 } from '../config/laoban';
@@ -23,7 +25,7 @@ export default defineComponent({
   name: 'LaobanDashboard',
 
   components: {
-    ArchitectureView, PlanResult, StatusBar
+    ArchitectureView, PlanResult, StatusBar, NavToggle
   },
 
   setup() {
@@ -35,7 +37,13 @@ export default defineComponent({
     const appName = ref('');
 
     const appNameInvalid = computed(() => !!appName.value.trim() && !APP_NAME_PATTERN.test(appName.value.trim()));
-    const canPlan = computed(() => !flow.busy.value && !!prompt.value.trim() && !appNameInvalid.value);
+    // A viewer may look but not make apps (report 21, N9).
+    const mayChange = ref(true);
+
+    onMounted(async() => {
+      mayChange.value = await canChangeApps(store);
+    });
+    const canPlan = computed(() => mayChange.value && !flow.busy.value && !!prompt.value.trim() && !appNameInvalid.value);
     const appsRoute = { name: APPS_ROUTE_NAME, params: { product: PRODUCT_NAME, cluster: BLANK_CLUSTER } };
     const detailRoute = computed(() => (flow.applied.value?.appName ? appDetailRoute(flow.applied.value.appName) : null));
 
@@ -56,6 +64,7 @@ export default defineComponent({
       appName,
       appNameInvalid,
       canPlan,
+      mayChange,
       appsRoute,
       detailRoute,
       generatePlan,
@@ -69,6 +78,7 @@ export default defineComponent({
   <div class="laoban-m0">
     <header class="laoban-header">
       <div>
+        <NavToggle />
         <h1>{{ t('laoban.dashboard.title') }}</h1>
         <p class="text-muted">
           {{ t('laoban.dashboard.description') }}
@@ -105,6 +115,13 @@ export default defineComponent({
         :aria-label="t('laoban.dashboard.chat.title')"
       >
         <h2>{{ t('laoban.dashboard.chat.title') }}</h2>
+        <p
+          v-if="!mayChange"
+          class="banner info"
+          role="status"
+        >
+          {{ t('laoban.access.viewOnly') }}
+        </p>
         <form
           class="laoban-form"
           @submit.prevent="generatePlan"

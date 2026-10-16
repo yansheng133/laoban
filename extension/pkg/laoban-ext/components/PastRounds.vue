@@ -8,9 +8,10 @@ import {
   defineComponent, ref, PropType
 } from 'vue';
 import { useStore } from 'vuex';
+import { errorText } from '../utils/errors';
 import { useText } from '../composables/useText';
 import {
-  listPastRounds, getPastRound, PastRoundEntry, PastRound, RequestError
+  listPastRounds, getPastRound, PastRoundEntry, PastRound
 } from '../utils/backend';
 import { formatDateTime } from '../utils/time';
 import { userLabel } from '../utils/users';
@@ -46,11 +47,11 @@ export default defineComponent({
     const detailLoading = ref(false);
 
     function fail(e: unknown): string {
-      if (e instanceof RequestError && e.userMessage) {
-        return e.userMessage;
+      if (props.messageFor) {
+        return props.messageFor(e);
       }
 
-      return props.messageFor ? props.messageFor(e) : t('laoban.pastRounds.loadFailed');
+      return errorText(t, e, 'laoban.pastRounds.loadFailed');
     }
 
     async function load() {
@@ -108,7 +109,23 @@ export default defineComponent({
       }
     }
 
-    const who = (id: string) => (id === 'laoban' ? 'laoban' : userLabel(store, id));
+    // The signed-in Rancher user: their own opinions read "you" (report 21, N11).
+    const me = (() => {
+      try {
+        const u = (store.getters['auth/v3User'] || {}) as { id?: unknown };
+
+        return typeof u.id === 'string' ? u.id : '';
+      } catch {
+        return '';
+      }
+    })();
+    const who = (id: string) => {
+      if (id === 'laoban') {
+        return 'laoban';
+      }
+
+      return me && id === me ? t('laoban.round.you') : userLabel(store, id);
+    };
     // Log lines in the page's language when the code is known (as the
     // round panel shows them); the archived Chinese text otherwise.
     const KNOWN = ['opened', 'opinion', 'objected', 'converging', 'converged', 'failed', 'confirmed', 'skipped', 'applying', 'done', 'cancelled',
@@ -144,7 +161,7 @@ export default defineComponent({
     };
 
     return {
-      t, loaded, loading, error, entries, truncated, shown, detail, detailLoading, show, onToggle, who, logText, formatTime
+      t, loaded, loading, error, entries, truncated, shown, detail, detailLoading, show, onToggle, who, me, logText, formatTime
     };
   },
 });
@@ -213,6 +230,7 @@ export default defineComponent({
             </p>
             <OpinionList
               :opinions="detail.round.opinions"
+              :me="me"
               :can-discuss="false"
             />
             <div

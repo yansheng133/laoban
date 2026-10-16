@@ -59,6 +59,41 @@ pub fn plan_id(t: SystemTime) -> String {
     format!("p-{}-{:06x}", ymd(t), h.finish() & 0xff_ffff)
 }
 
+/// `r-YYYYMMDD-sssssx`: a round of opinions. `sssss` is the second of the
+/// (UTC) day in hex and `x` 4 random bits, so the IDs of one day sort by
+/// time (the archive lists rounds by ID; report 21, B15). IDs this process
+/// gives out only grow: one in the same second as the last takes the next
+/// value (rounds are named after their ID, objects and archive files alike).
+pub fn round_id(t: SystemTime) -> String {
+    let mut h = RandomState::new().build_hasher();
+    h.write_u64(COUNTER.fetch_add(1, Ordering::Relaxed));
+    let day = secs(t).div_euclid(86_400);
+    let drawn = (secs(t).rem_euclid(86_400) as u64) * 16 + (h.finish() & 0xf);
+    let v = {
+        let mut last = LAST_ROUND.lock().unwrap_or_else(|e| e.into_inner());
+        let v = next_round_value(*last, day, drawn);
+        *last = (day, v);
+        v
+    };
+    format!("r-{}-{:05x}{:x}", ymd(t), v / 16, v % 16)
+}
+
+/// The value after `last` (day, second * 16 + x) for a drawn one: the drawn
+/// value, or the next one when it is not above a recent last (the same
+/// second, or a few before it). A clock set back further starts again.
+fn next_round_value(last: (i64, u64), day: i64, drawn: u64) -> u64 {
+    const RECENT: u64 = 60 * 16;
+    let v = if last.0 == day && drawn <= last.1 && last.1 - drawn < RECENT {
+        last.1 + 1
+    } else {
+        drawn
+    };
+    // Stays in the day (the last second of a day holds up to 16).
+    v.min(86_400 * 16 - 1)
+}
+
+static LAST_ROUND: std::sync::Mutex<(i64, u64)> = std::sync::Mutex::new((i64::MIN, 0));
+
 /// `j-xxxxxxxxxxxxxxxx`: a background job (64 random bits). Not a
 /// secret either: a job is only shown to the user who started it.
 pub fn job_id(t: SystemTime) -> String {
@@ -97,5 +132,33 @@ mod tests {
         let b = plan_id(t);
         assert!(a.starts_with("p-20261013-") && a.len() == 17, "{a}");
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn round_ids_sort_by_time() {
+        let day = UNIX_EPOCH + Duration::from_secs(20_739 * 86_400);
+        let early = round_id(day + Duration::from_secs(9));
+        let late = round_id(day + Duration::from_secs(86_399));
+        assert!(early.starts_with("r-20261013-00009"), "{early}");
+        assert!(late.starts_with("r-20261013-1517f"), "{late}");
+        assert_eq!(early.len(), 17);
+        assert!(late > early);
+        assert!(crate::service::valid_round_id(&early));
+    }
+
+    #[test]
+    fn round_ids_of_one_second_differ_and_grow() {
+        let mut last = (5, 0);
+        let mut seen = Vec::new();
+        for drawn in [1600, 1603, 1601, 1600, 1615, 1602] {
+            let v = next_round_value(last, 5, drawn);
+            assert!(v > last.1 || seen.is_empty(), "{seen:?} {v}");
+            seen.push(v);
+            last = (5, v);
+        }
+        assert_eq!(seen, [1600, 1603, 1604, 1605, 1615, 1616]);
+        // Another day, or a clock set back by more than a minute: as drawn.
+        assert_eq!(next_round_value((5, 9000), 6, 10), 10);
+        assert_eq!(next_round_value((5, 9000), 5, 10), 10);
     }
 }

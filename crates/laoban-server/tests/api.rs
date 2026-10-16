@@ -380,8 +380,14 @@ fn apps_endpoints() {
     );
     assert_eq!(status, 404);
     assert_error(&serde_json::from_str(&body).unwrap(), "app_not_found");
-    let (status, _) = get(r.addr, &format!("{gv}/namespaces/other/apps"));
+    let (status, body) = get(r.addr, &format!("{gv}/namespaces/other/apps"));
     assert_eq!(status, 404);
+    // The page finds the namespace laoban serves from this answer.
+    let v: Value = serde_json::from_str(&body).unwrap();
+    assert_error(&v, "other_namespace");
+    assert_eq!(v["error"]["targetNamespace"], "laoban-dev");
+    let (status, _) = get(r.addr, &format!("{gv}/namespaces/laoban-dev/waitingrounds"));
+    assert_ne!(status, 404);
     let (status, v) = post(
         r.addr,
         &format!("{gv}/namespaces/laoban-dev/plans/p-20261013-abcdef/apply"),

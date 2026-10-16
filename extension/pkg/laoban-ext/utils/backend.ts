@@ -4,8 +4,11 @@
 // CSRF token the same way Rancher's own axios plugin does.
 
 import {
-  AI_REQUEST_MARGIN_MS, AI_REQUEST_TIMEOUT_MS, BACKEND_BASE_PATH, FLEET_BUNDLES_PATH, DEFAULT_REQUEST_TIMEOUT_MS
+  AI_REQUEST_MARGIN_MS, AI_REQUEST_TIMEOUT_MS, API_GROUP, FLEET_BUNDLES_PATH, DEFAULT_REQUEST_TIMEOUT_MS
 } from '../config/backend';
+import {
+  apiBase, findTarget, resetTarget, BackendNotFound, BackendUnavailable
+} from './target';
 import type { Architecture } from './layout';
 import type { RoundLimits } from './limits';
 import type { Deployment } from './rollout';
@@ -97,6 +100,8 @@ export interface RoundView {
   state: RoundState;
   // Unix seconds; when collecting ends.
   deadline: number;
+  // Unix seconds: the deadline can be moved up to this (24 h after opening).
+  latestDeadline?: number;
   opinions: RoundOpinion[];
   confirmers: { user: string; answer: 'pending' | 'confirmed' | 'skipped'; at?: string }[];
   plan: { planId: string; summary: string; steps: string[]; architecture: Architecture; notes?: string } | null;
@@ -138,14 +143,15 @@ export interface PlanComment {
   supporters: string[];
 }
 
-// A round waiting for the caller (GET .../rounds/mine).
+// A round waiting for the caller (GET .../waitingrounds).
 export interface WaitingRound {
   app: string;
   roundId: string;
   state: RoundState;
   // "confirm": the caller has to confirm; "othersConfirm": the caller
-  // started it and others have not answered; "retry": it failed.
-  reason: 'confirm' | 'othersConfirm' | 'retry';
+  // started it or answered, and others have not; "retry": it failed and the
+  // caller started it; "failed": it failed after the caller confirmed.
+  reason: 'confirm' | 'othersConfirm' | 'retry' | 'failed';
   pending: number;
 }
 
@@ -337,6 +343,20 @@ interface RequestOptions {
 }
 
 async function requestJson<T>(store: StoreLike, url: string, opts: RequestOptions = {}): Promise<T> {
+  try {
+    return await requestOnce<T>(store, url, opts);
+  } catch (e) {
+    // The backend moved (reinstalled elsewhere): look for it again, once.
+    if (url.startsWith(BACKEND) && e instanceof RequestError && e.code === 'other_namespace') {
+      resetTarget();
+
+      return requestOnce<T>(store, url, opts);
+    }
+    throw e;
+  }
+}
+
+async function requestOnce<T>(store: StoreLike, url: string, opts: RequestOptions = {}): Promise<T> {
   const method = opts.method || 'GET';
   const headers: Record<string, string> = { Accept: 'application/json' };
 
@@ -351,12 +371,13 @@ async function requestJson<T>(store: StoreLike, url: string, opts: RequestOption
     }
   }
 
+  const target = await resolveBackend(url);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs || DEFAULT_REQUEST_TIMEOUT_MS);
   let res: Response;
 
   try {
-    res = await fetch(url, {
+    res = await fetch(target, {
       method,
       headers,
       credentials: 'same-origin',
@@ -394,8 +415,68 @@ async function requestJson<T>(store: StoreLike, url: string, opts: RequestOption
   return data as T;
 }
 
+// Backend paths are written as BACKEND + path; the cluster and namespace
+// are put in when the request is made (utils/target.ts).
+export const BACKEND = 'laoban-backend:';
+
 export function backendUrl(path: string): string {
-  return `${ BACKEND_BASE_PATH }${ path }`;
+  return `${ BACKEND }${ path }`;
+}
+
+// Whether the signed-in user may change apps (create in laoban's API), as
+// the API server decides: a SelfSubjectAccessReview, which anyone may ask.
+// Read once; on any failure the page assumes yes and the backend decides.
+let mayChange: Promise<boolean> | null = null;
+
+export function canChangeApps(store: StoreLike): Promise<boolean> {
+  if (!mayChange) {
+    mayChange = (async() => {
+      try {
+        const target = await findTarget();
+        const res = await requestJson<{ status?: { allowed?: boolean } }>(store,
+          `/k8s/clusters/${ encodeURIComponent(target.clusterId) }/apis/authorization.k8s.io/v1/selfsubjectaccessreviews`, {
+            method: 'POST',
+            body:   {
+              apiVersion: 'authorization.k8s.io/v1',
+              kind:       'SelfSubjectAccessReview',
+              spec:       {
+                resourceAttributes: {
+                  namespace: target.namespace, verb: 'create', group: API_GROUP, resource: 'apps', subresource: 'files'
+                }
+              }
+            }
+          });
+
+        return res.status?.allowed !== false;
+      } catch {
+        return true;
+      }
+    })();
+  }
+
+  return mayChange;
+}
+
+/** Forget the answer (tests). */
+export function resetAccess() {
+  mayChange = null;
+}
+
+async function resolveBackend(url: string): Promise<string> {
+  if (!url.startsWith(BACKEND)) {
+    return url;
+  }
+  try {
+    return `${ apiBase(await findTarget()) }${ url.slice(BACKEND.length) }`;
+  } catch (e) {
+    if (e instanceof BackendNotFound) {
+      throw new RequestError('backend_not_found', null, 404);
+    }
+    if (e instanceof BackendUnavailable) {
+      throw new RequestError('unavailable', null, 503);
+    }
+    throw new RequestError('network', null);
+  }
 }
 
 export function getConfig(store: StoreLike): Promise<ConfigResponse> {
@@ -506,7 +587,7 @@ export function supportPlanComment(store: StoreLike, name: string, id: string): 
 
 /** Rounds on any app that wait for the caller. */
 export function getWaitingRounds(store: StoreLike): Promise<{ rounds: WaitingRound[]; roundsAvailable?: boolean }> {
-  return requestJson(store, backendUrl('/rounds/mine'));
+  return requestJson(store, backendUrl('/waitingrounds'));
 }
 
 /** The app's archived rounds, newest first. */

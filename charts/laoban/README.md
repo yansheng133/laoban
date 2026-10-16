@@ -2,6 +2,8 @@
 
 laoban 後端服務的 Helm chart。開發初期，尚未發行。
 
+> 從 Helm repo（`https://yansheng133.github.io/laoban`）安裝的步驟見 [docs/quickstart.md](../../docs/quickstart.md)；發布的 `laoban` chart 已填好該版本的 `image.digest`。下面是 chart 的完整說明，範例以 Sam 的環境為準。
+
 試吃版（M0，見 `docs/m0-design.md`）的部署位置是**下游叢集 `rke2`**（Rancher 叢集 ID `c-m-26kbxk5f`）的 namespace `laoban-system`，不是 Rancher local 叢集。M0 的後端以 aggregated API 提供服務（見下面的「Aggregated API」），自己的權限只有兩項：讀 `kube-system` 的 `extension-apiserver-authentication`，以及在 `laoban-system` 讀寫意見收斂的 `Round` 資源（v0.1.15 起，讓一輪在重啟後還在）。產生的應用由 Fleet 部署（`deploy/m0/`），後端不寫入其他任何東西。身分模擬（impersonation）、第一階段的 CRD、稽核紀錄暫存卷都留到第一階段，chart 裡保留對應的範本，預設關閉。
 
 ## 三個 chart 的分工
@@ -171,7 +173,7 @@ M0 預設 `persistence.enabled: false`：M0 不外送稽核紀錄（只寫後端
 | `github.repo` | `LAOBAN_GITHUB_REPO` | 必填，`<owner>/<repo>` |
 | `github.existingSecret`／`secretKey` | `LAOBAN_GITHUB_TOKEN` | 必填，從 Secret 注入 |
 | `config.targetNamespace` | `LAOBAN_TARGET_NAMESPACE` | 預設 `laoban-dev` |
-| `config.clusterId` | `LAOBAN_CLUSTER_ID` | 預設 `c-m-26kbxk5f`，用來組應用網址 |
+| `config.clusterId` | `LAOBAN_CLUSTER_ID` | 跑後端與應用的叢集在 Rancher 裡的 ID，用來組應用網址。預設 `c-m-26kbxk5f` 是 Sam 的環境，**自己安裝時一定要改**（`kubectl --context local get clusters.management.cattle.io`） |
 | `persistence.mountPath` | `LAOBAN_SPOOL_DIR` | 稽核暫存區路徑 |
 | `syslog.enabled`／`host`／`port` | `LAOBAN_SYSLOG_*` | 稽核紀錄送往的 syslog 伺服器，預設 port 6514（syslog over TLS）；M0 關閉 |
 | `syslog.tls.caConfigMap`／`caKey` | `LAOBAN_SYSLOG_CA_FILE` | 簽發 syslog 伺服器憑證的 CA（ConfigMap） |

@@ -7,10 +7,16 @@ import {
   runJob, getRound, openRound, roundAction, addOpinions, supportOpinion, replyToOpinion, getFiles, saveFiles, saveLayout, parseKubeStatus
 } from '../backend';
 import { AI_REQUEST_TIMEOUT_MS } from '../../config/backend';
+import { setTarget } from '../target';
+
+setTarget({ clusterId: 'c-m-26kbxk5f', namespace: 'laoban-dev' });
+
+// The URL a backend path is requested at, for the target above.
+const real = (path: string) => `/k8s/clusters/c-m-26kbxk5f/apis/api.laoban.yansheng133.github.io/v1alpha1/namespaces/laoban-dev${ path }`;
 
 describe('backendUrl', () => {
-  it('goes through Rancher to the aggregated API, under the target namespace', () => {
-    expect(backendUrl('/plans')).toBe('/k8s/clusters/c-m-26kbxk5f/apis/api.laoban.yansheng133.github.io/v1alpha1/namespaces/laoban-dev/plans');
+  it('marks a backend path; the target is put in when requesting', () => {
+    expect(backendUrl('/plans')).toBe('laoban-backend:/plans');
   });
 });
 
@@ -97,7 +103,7 @@ describe('apps and plan requests', () => {
     mockFetch(200, { planId: 'p-1', appName: 'todo' });
     await createPlan(store, '加上刪除', 'ignored', 1000, 'todo');
     expect(JSON.parse(String(calls[0].init.body))).toEqual({ prompt: '加上刪除', baseApp: 'todo', background: true });
-    expect(calls[0].url).toBe(backendUrl('/plans'));
+    expect(calls[0].url).toBe(real('/plans'));
   });
 
   it('sends appName for a new app', async() => {
@@ -109,12 +115,12 @@ describe('apps and plan requests', () => {
   it('reads the app list and one app', async() => {
     mockFetch(200, { apps: [] });
     expect(await listApps(store)).toEqual({ apps: [] });
-    expect(calls[0].url).toBe(backendUrl('/apps'));
+    expect(calls[0].url).toBe(real('/apps'));
     expect(calls[0].init.method).toBe('GET');
 
     mockFetch(200, { appName: 'a b' });
     await getApp(store, 'a b');
-    expect(calls[0].url).toBe(backendUrl('/apps/a%20b'));
+    expect(calls[0].url).toBe(real('/apps/a%20b'));
   });
 
   it('surfaces the backend message for app errors', async() => {
@@ -125,17 +131,17 @@ describe('apps and plan requests', () => {
   it('reads versions and restores with a POST', async() => {
     mockFetch(200, { appName: 'todo', versions: [] });
     await listVersions(store, 'todo');
-    expect(calls[0].url).toBe(backendUrl('/apps/todo/versions'));
+    expect(calls[0].url).toBe(real('/apps/todo/versions'));
 
     const sha = 'a'.repeat(40);
 
     mockFetch(200, { appName: 'todo', commit: sha });
     await getVersion(store, 'todo', sha);
-    expect(calls[0].url).toBe(backendUrl(`/apps/todo/versions/${ sha }`));
+    expect(calls[0].url).toBe(real(`/apps/todo/versions/${ sha }`));
 
     mockFetch(200, { mode: 'restore', commit: 'b'.repeat(40) });
     await restoreVersion(store, 'todo', sha, 1000);
-    expect(calls[0].url).toBe(backendUrl('/apps/todo/restore'));
+    expect(calls[0].url).toBe(real('/apps/todo/restore'));
     expect(calls[0].init.method).toBe('POST');
     expect(JSON.parse(String(calls[0].init.body))).toEqual({ commit: sha });
   });
@@ -143,7 +149,7 @@ describe('apps and plan requests', () => {
   it('reads and acts on a round of 意見收斂', async() => {
     mockFetch(200, { round: null });
     await getRound(store, 'todo');
-    expect(calls[0].url).toBe(backendUrl('/apps/todo/round'));
+    expect(calls[0].url).toBe(real('/apps/todo/round'));
     expect(calls[0].init.method).toBe('GET');
 
     mockFetch(200, { round: { state: 'collecting' } });
@@ -155,22 +161,22 @@ describe('apps and plan requests', () => {
 
     mockFetch(200, { round: { state: 'collecting' } });
     await addOpinions(store, 'todo', [{ text: 'a', target: 'app-api' }]);
-    expect(calls[0].url).toBe(backendUrl('/apps/todo/round/opinions'));
+    expect(calls[0].url).toBe(real('/apps/todo/round/opinions'));
     expect(JSON.parse(String(calls[0].init.body))).toEqual({ items: [{ text: 'a', target: 'app-api' }] });
 
     mockFetch(200, { round: { state: 'collecting' } });
     await supportOpinion(store, 'todo', 'o3');
-    expect(calls[0].url).toBe(backendUrl('/apps/todo/round/opinions/o3/support'));
+    expect(calls[0].url).toBe(real('/apps/todo/round/opinions/o3/support'));
     mockFetch(200, { round: { state: 'collecting' } });
     await replyToOpinion(store, 'todo', 'o3', '同意');
-    expect(calls[0].url).toBe(backendUrl('/apps/todo/round/opinions/o3/replies'));
+    expect(calls[0].url).toBe(real('/apps/todo/round/opinions/o3/replies'));
     expect(JSON.parse(String(calls[0].init.body))).toEqual({ text: '同意' });
     // Only IDs the backend gives out go into the path.
     expect(() => supportOpinion(store, 'todo', '../x')).toThrow();
 
     mockFetch(200, { round: { state: 'done' }, applied: { commit: 'c' } });
     const res = await roundAction(store, 'todo', 'skip', { user: 'u-b' }, 1000);
-    expect(calls[0].url).toBe(backendUrl('/apps/todo/round/skip'));
+    expect(calls[0].url).toBe(real('/apps/todo/round/skip'));
     expect(JSON.parse(String(calls[0].init.body))).toEqual({ user: 'u-b' });
     expect(res.applied?.commit).toBe('c');
   });
@@ -194,11 +200,11 @@ describe('apps and plan requests', () => {
       [200, { jobId: id, kind: 'plan', state: 'running' }],
       [200, { jobId: id, kind: 'plan', state: 'done', result: { planId: 'p-1', appName: 'shop' } }],
     ]);
-    const plan = await runJob(store, backendUrl('/plans'), { prompt: 'x' }, 5000, 1);
+    const plan = await runJob(store, real('/plans'), { prompt: 'x' }, 5000, 1);
 
     expect(plan).toEqual({ planId: 'p-1', appName: 'shop' });
     expect(calls.map((c) => c.init.method || 'GET')).toEqual(['POST', 'GET', 'GET']);
-    expect(calls[1].url).toBe(backendUrl(`/plans/${ id }`));
+    expect(calls[1].url).toBe(real(`/plans/${ id }`));
   });
 
   it('a failed job throws the error the request would have thrown', async() => {
@@ -208,7 +214,7 @@ describe('apps and plan requests', () => {
         jobId: 'j-0123456789abcdef', state: 'failed', error: { status: 429, code: 'budget_exceeded', message: '已達上限。' }
       }],
     ]);
-    await expect(runJob(store, backendUrl('/plans'), {}, 5000, 1)).rejects.toMatchObject({ code: 'budget_exceeded', userMessage: '已達上限。', status: 429 });
+    await expect(runJob(store, real('/plans'), {}, 5000, 1)).rejects.toMatchObject({ code: 'budget_exceeded', userMessage: '已達上限。', status: 429 });
   });
 
   it('keeps reading through a dropped poll, but not past the timeout', async() => {
@@ -217,10 +223,10 @@ describe('apps and plan requests', () => {
       [502, 'proxy error'],
       [200, { jobId: 'j-0123456789abcdef', state: 'done', result: { commit: 'c' } }],
     ]);
-    expect(await runJob(store, backendUrl('/plans/p-1/apply'), {}, 5000, 1)).toEqual({ commit: 'c' });
+    expect(await runJob(store, real('/plans/p-1/apply'), {}, 5000, 1)).toEqual({ commit: 'c' });
 
     mockFetchSeq([[200, { jobId: 'j-0123456789abcdef', state: 'running' }]]);
-    await expect(runJob(store, backendUrl('/plans'), {}, 30, 5)).rejects.toMatchObject({ code: 'timeout' });
+    await expect(runJob(store, real('/plans'), {}, 30, 5)).rejects.toMatchObject({ code: 'timeout' });
   });
 
   it('takes a direct answer from a backend without jobs', async() => {
@@ -232,7 +238,7 @@ describe('apps and plan requests', () => {
   it('applies a plan by its ID in the path', async() => {
     mockFetch(200, { commit: 'c' });
     await applyPlan(store, 'p-20261013-abcdef', 1000);
-    expect(calls[0].url).toBe(backendUrl('/plans/p-20261013-abcdef/apply'));
+    expect(calls[0].url).toBe(real('/plans/p-20261013-abcdef/apply'));
     expect(calls[0].init.method).toBe('POST');
   });
 
@@ -266,7 +272,7 @@ describe('apps and plan requests', () => {
 
     mockFetch(200, { appName: 'todo', commit: 'c', files });
     await getFiles(store, 'todo');
-    expect(calls[0].url).toBe(backendUrl('/apps/todo/files'));
+    expect(calls[0].url).toBe(real('/apps/todo/files'));
 
     mockFetch(200, { mode: 'manual', commit: 'd' });
     await saveFiles(store, 'todo', 'c', files, '', 1000);
@@ -275,7 +281,7 @@ describe('apps and plan requests', () => {
 
     mockFetch(200, { mode: 'layout', commit: 'e' });
     await saveLayout(store, 'todo', 'c', { 'mod-web-x': { x: 1, z: 2 } }, 1000);
-    expect(calls[0].url).toBe(backendUrl('/apps/todo/layout'));
+    expect(calls[0].url).toBe(real('/apps/todo/layout'));
     expect(JSON.parse(String(calls[0].init.body))).toEqual({ baseCommit: 'c', positions: { 'mod-web-x': { x: 1, z: 2 } } });
   });
 });

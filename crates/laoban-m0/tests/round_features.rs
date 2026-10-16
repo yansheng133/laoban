@@ -141,7 +141,8 @@ fn the_initiator_moves_the_deadline_or_converges_now() {
         .unwrap();
     let deadline = v["round"]["deadline"].as_u64().unwrap();
     assert!(deadline >= now() + 119 * 60, "{deadline}");
-    let err = h
+    // More than 24 hours after opening: moved to that limit.
+    let v = h
         .service
         .set_round_deadline(
             "todo",
@@ -150,8 +151,10 @@ fn the_initiator_moves_the_deadline_or_converges_now() {
             },
             Some("u-a"),
         )
-        .unwrap_err();
-    assert_eq!(err.code(), "bad_request");
+        .unwrap();
+    let deadline = v["round"]["deadline"].as_u64().unwrap();
+    assert!(deadline <= now() + 24 * 3600, "{deadline}");
+    assert!(deadline >= now() + 24 * 3600 - 120, "{deadline}");
     let v = h
         .service
         .set_round_deadline("todo", &DeadlineRequest { minutes: 0 }, Some("u-a"))

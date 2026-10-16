@@ -3,6 +3,8 @@ product:
 
 laoban:
   nav:
+    hideMenu: "メニューを隠す"
+    showMenu: "メニューを表示"
     dashboard: 概要
     apps: アプリ
   # M0: the dashboard strings below are English placeholders; Japanese
@@ -95,6 +97,7 @@ laoban:
     hintCompare: "第 {n} 版と現在の版の差分：第 {n} 版に戻すと追加・削除・変更される部分を示します。"
     hintVersion: "第 {n} 版の構成です。"
   round:
+    deadlineLatest: "{minutes} 分後（いちばん遅い時刻）"
     you: あなた
     opinionLabel: 全体への意見（アプリ全体）
     deadlineLabel: 収束
@@ -223,6 +226,8 @@ laoban:
       removed: 削除
       changed: 変更
   opinions:
+    sharedHint: "このラウンドのほかの人は、あなたの送信前の下書きを見られます（変更はできません）。見せたくない場合は、上のチェックを外してください。"
+    sharedShort: "ほかの人も見られます"
     pick: コンポーネント
     pickNone: （コンポーネントを選択）
     draftSaved: "下書きに追加しました（全 {count} 件）"
@@ -260,11 +265,33 @@ laoban:
     draftHint: "下書きが {count} 件あります。左の意見の収束でまとめて送信します。"
     sideTitle: 意見
     sideOpenHint: 拡大を閉じて左でラウンドを開始すると、下書きも一緒に送信されます。
+  errors:
+    forbidden: "この操作の権限がありません。アプリの namespace（Rancher Project）で「laoban user」ロールまたは編集権限が必要です。管理者に確認してください。"
+    unauthenticated: "ログインの有効期限が切れました。Rancher にもう一度ログインしてください。"
+    unavailable: "laoban バックエンドに接続できません（APIService が準備できていません）。しばらくしてから再試行するか、管理者に確認してください。"
+    backend_not_found: "表示できるクラスターに laoban バックエンドが見つかりません。インストール済みなら、その Project の「laoban user」または「laoban viewer」ロールを管理者に依頼してください。未インストールの場合は Quickstart を参照してください。"
+    version_conflict: "編集中にこのアプリの新しい版ができました。再読み込みしてから変更してください。"
+    not_initiator: "このラウンドを開始した人だけが操作できます。"
+    not_confirmer: "このラウンドで意見を出した人だけが確認します。"
+    round_state: "このラウンドの状態が変わりました。ページを再読み込みしてください。"
+    budget_exceeded: "この期間の laoban の AI トークン上限に達しました。次の期間まで待つか、管理者に上限の引き上げを依頼してください。"
+    spend_limit: "Anthropic アカウントが支出上限に達しました。管理者に Anthropic Console の確認を依頼してください。"
+    github_failed: "GitHub への書き込みに失敗しました。しばらくしてから再試行してください。続く場合は、管理者にトークンとリポジトリの設定を確認してもらってください。"
+    round_not_found: "このラウンドの記録が見つかりません。"
+    busy: "バックエンドが混み合っています。しばらくしてから再試行してください。"
+    app_not_found: "このアプリが見つかりません。削除された可能性があります。"
+    version_not_found: "この版が見つかりません。"
+    round_active: "このアプリではすでに意見のラウンドが進行中です。"
+  access:
+    viewOnly: "アプリを見ることはできますが、作成や変更はできません（ロールは laoban viewer）。変更するには管理者に laoban user ロールを依頼してください。"
   waiting:
+    youConfirmed: "確認済みです。ほかの人の回答を待っています。"
+    failed: "あなたが確認した後、このラウンドは失敗しました。開始した人がもう一度収束できます。"
     confirm: このラウンドはあなたの確認を待っています。
     retry: このラウンドは失敗しました。開始した人として、もう一度収束するか取り消せます。
     count: "{count} 件のラウンドがあなたの確認を待っています。"
     badge:
+      failed: "失敗"
       confirm: あなたの確認待ち
       othersConfirm: ほかの人の確認待ち
       retry: 失敗（対応待ち）
@@ -275,6 +302,7 @@ laoban:
     loadFailed: 過去のラウンドを読み込めませんでした。
     commit: "公開したバージョン：{commit}"
   limits:
+    roundOverDrafts: "ほかの下書き（{reserved} 文字）を差し引くと、このラウンドの残りは {left} 文字です。短くしてから送信してください。"
     count: "{count} / {max}"
     tooLong: "{max} 文字を超えています（{over} 文字超過）。短くしてから送信してください。"
     draftTooLong: "{max} 文字を超えるコンポーネントの下書きがあります。先に短くしてください。"
@@ -285,6 +313,7 @@ laoban:
     repliesFull: "この意見への返信は上限（{max} 件）に達しました。"
     spaceLabel: このラウンドの意見の容量
   editor:
+    reloadConfirm: "変更を破棄して再読み込みしますか？"
     hint: 4 つのファイルを直接編集します。保存すると新しいバージョン（「手動修正」）になり Fleet がデプロイします。AI は呼び出しません。AI が生成したコードと同じチェックを行います。
     hintReadOnly: 閲覧のみです。
     blocked: "進行中の収束が {files} を扱っています。終わるまで閲覧のみで、ほかのファイルは編集できます。"

@@ -3,6 +3,8 @@ product:
 
 laoban:
   nav:
+    hideMenu: "收合選單"
+    showMenu: "展開選單"
     dashboard: 總覽
     apps: 應用
   apps:
@@ -93,6 +95,7 @@ laoban:
     hintCompare: "第 {n} 版與目前版本的差異：標示的是還原到第 {n} 版後會新增、刪除、修改的部分。"
     hintVersion: "第 {n} 版的架構。"
   round:
+    deadlineLatest: "{minutes} 分鐘後（最晚）"
     you: 你
     opinionLabel: 一般意見（針對整個應用）
     deadlineLabel: 收斂時間
@@ -221,6 +224,8 @@ laoban:
       removed: 刪除
       changed: 修改
   opinions:
+    sharedHint: "這一輪的其他人看得到你還沒送出的草稿（不能修改）。不想讓別人看，請取消勾選上面的選項。"
+    sharedShort: "其他人看得到"
     pick: 元件
     pickNone: （選一個元件）
     draftSaved: "已加入草稿（共 {count} 則）"
@@ -258,11 +263,33 @@ laoban:
     draftHint: "目前有 {count} 則草稿，到左邊的意見收斂一起送出。"
     sideTitle: 意見
     sideOpenHint: 關閉放大後，在左邊的意見收斂開一輪，草稿會一起送出。
+  errors:
+    forbidden: "你沒有這個操作的權限：需要應用所在 namespace（Rancher Project）的「laoban user」角色或編輯權限，請洽管理者。"
+    unauthenticated: "登入已失效，請重新登入 Rancher。"
+    unavailable: "laoban 後端目前無法連線（APIService 尚未就緒），請稍後再試或請管理者查看。"
+    backend_not_found: "在你看得到的叢集裡找不到 laoban 後端。如果已經安裝，請管理者在它的 Project 給你「laoban user」或「laoban viewer」角色；還沒安裝的話，請參考 Quickstart。"
+    version_conflict: "這個應用在你編輯期間有了新版本，請重新讀取後再改。"
+    not_initiator: "只有發起這一輪的人可以這樣做。"
+    not_confirmer: "只有在這一輪提過意見的人需要確認。"
+    round_state: "這一輪的狀態已經改變，請重新整理頁面。"
+    budget_exceeded: "laoban 這段期間的 AI token 已用完，請等下一期，或請管理者調高上限。"
+    spend_limit: "Anthropic 帳號已達到花費上限，請管理者到 Anthropic Console 查看。"
+    github_failed: "寫入 GitHub 失敗，請稍後再試；若持續失敗，請管理者檢查 token 與 repo 設定。"
+    round_not_found: "找不到這一輪的紀錄。"
+    busy: "後端目前有太多工作在進行，請稍後再試。"
+    app_not_found: "找不到這個應用，可能已經被刪除。"
+    version_not_found: "找不到這個版本。"
+    round_active: "這個應用已經有一輪意見收斂正在進行。"
+  access:
+    viewOnly: "你可以看應用，但不能新增或修改（你的角色是 laoban viewer）。需要修改請管理者給你 laoban user 角色。"
   waiting:
+    youConfirmed: "你已經確認，等其他人回覆。"
+    failed: "你確認後這一輪失敗了，發起人可以重新收斂。"
     confirm: 這一輪等你確認。
     retry: 這一輪失敗了，你是發起人，可以重新收斂或取消。
     count: "有 {count} 輪意見收斂等你確認。"
     badge:
+      failed: "失敗"
       confirm: 等你確認
       othersConfirm: 等其他人確認
       retry: 失敗，等你處理
@@ -273,6 +300,7 @@ laoban:
     loadFailed: 讀不到過去的輪次。
     commit: "發布的版本：{commit}"
   limits:
+    roundOverDrafts: "扣掉你其他草稿的 {reserved} 字，這一輪只剩 {left} 字，請先刪減再送出。"
     count: "{count} / {max}"
     tooLong: "超過 {max} 字（多 {over} 字），請精簡後再送出。"
     draftTooLong: "有元件的草稿超過 {max} 字，請先精簡。"
@@ -283,6 +311,7 @@ laoban:
     repliesFull: "這則意見的回覆已達上限（{max} 則）。"
     spaceLabel: 這一輪的意見空間
   editor:
+    reloadConfirm: "放棄修改並重新讀取？"
     hint: 直接修改這四個檔案。儲存後會成為新的一版（標記「手動修改」）並由 Fleet 部署，不呼叫 AI；儲存前會做和 AI 產生的程式一樣的檢查。
     hintReadOnly: 目前只能看。
     blocked: "這一輪意見收斂正在處理 {files}，結束前這些檔案只能看；其他檔案可以照常修改。"

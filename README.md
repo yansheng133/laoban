@@ -1,12 +1,26 @@
 # laoban
 
-laoban（老闆）是一個 Rancher UI extension：用自然語言描述想要的應用，AI 先提出計畫與 3D 架構圖，確認後才寫程式，程式寫進 GitHub，再由 Fleet 部署到 Rancher 管理的叢集。應用做好之後，團隊可以一起在 3D 架構圖上針對元件提意見，由 AI 收斂成一份修改計畫，提意見的人都確認後才發布新版。
+繁體中文 · [English](README.en.md) · [日本語](README.ja.md)
+
+laoban（老闆）是一個 Rancher UI extension：用一句話描述想要的應用，AI 先提出計畫與 3D 架構圖，你確認後才寫程式；程式寫進 GitHub，再由 Fleet 部署到 Rancher 管理的叢集。應用做好之後，團隊可以一起在 3D 架構圖上針對元件提意見，由 AI 收斂成一份修改計畫，提意見的人都確認後才發布新版。
 
 > 專案暱稱「鐵板麵加雞塊」。名稱的由來：對系統說需求，就像在早餐店跟老闆點餐。
 
+## 試用
+
+照 **[快速上手](docs/quickstart.md)** 做，大約 30 分鐘：
+
+1. 在 Rancher 的 Extensions 加入 Helm repo `https://yansheng133.github.io/laoban`，安裝 **laoban**。
+2. 用 Helm 安裝後端（`laoban/laoban-crd`、`laoban/laoban`）。
+3. 建一個 Fleet GitRepo 指向放應用的 GitHub repo。
+
+需要 Rancher 2.15、一個 GitHub repo 與 token、Anthropic API key（或相容的本機模型）。每個版本的變更見 [Releases](https://github.com/yansheng133/laoban/releases)。
+
 ## 狀態
 
-試吃版（M0），版本 0.1.x，還在密集修改，尚未正式發行。以 Rancher Prime 2.15.2 為基準，只在 ARM64 上實際驗證。M0 的範圍與規格見 [docs/m0-design.md](docs/m0-design.md)。
+試吃版（M0），版本 0.1.x，還在密集修改，尚未正式發行。以 Rancher Prime 2.15.2 為基準，目前只在 ARM64 上完整驗證過。M0 的範圍與規格見 [docs/m0-design.md](docs/m0-design.md)。
+
+laoban 是社群開源專案，**不在 SUSE 的支援範圍內**。
 
 ## 現在能做什麼
 
@@ -25,7 +39,7 @@ laoban（老闆）是一個 Rancher UI extension：用自然語言描述想要�
 - 時間到了，AI 把所有意見（依元件分組、附上附議與回覆）收斂成一份修改計畫，在 3D 圖上標出會新增、修改、刪除哪些部分。
 - 提意見的人都確認後，AI 寫程式並發布新版。有異議可以退回重新收斂；發起人可以略過沒有回覆的人。
 - 一輪存在叢集裡，後端重啟或升級後照常進行；結束的一輪歸檔到應用 repo 的 `laoban-rounds` 分支，詳細頁可以看過去每一輪。
-- 等你確認的輪次會標在應用清單上，左側選單也顯示件數。
+- 等你確認的輪次會標在應用清單上，左側選單也顯示件數；確認過的人看得到還在等誰、失敗了沒。
 - 意見、回覆有字數上限，頁面上即時顯示字數與這一輪還剩多少空間；貼上太長的文字不會被截斷，但要精簡後才能送出。
 
 **看懂架構和版本**
@@ -45,10 +59,11 @@ laoban（老闆）是一個 Rancher UI extension：用自然語言描述想要�
 
 **其他**
 - 介面有繁體中文、英文、日文，跟著 Rancher 的語言設定。
+- Rancher 的側邊選單可以收合，把空間留給工作區。
 - AI 的工作（計畫、寫程式、收斂）在後端背景執行，頁面查進度，不受 API server 約 60 秒的請求上限影響。
 - 送給 AI 前先遮蔽敏感資料；有全域的 token 用量上限。
 - AI 可以接 Anthropic API，也可以接相容 Anthropic Messages API 的本機模型（例如 Ollama）。
-- 錯誤回應同時是 Kubernetes 的 `Status`，`kubectl create --raw` 也看得到中文原因。
+- 錯誤回應同時是 Kubernetes 的 `Status`，`kubectl create --raw` 也看得到原因（後端寫的訊息是繁體中文；頁面上常見的錯誤依介面語言顯示）。
 
 ## 運作方式
 
@@ -66,13 +81,22 @@ GitHub repo ──► Fleet ──► 目標 namespace 裡的應用
 
 後端只寫入自己在 `laoban-system` 的狀態資源（意見收斂的 `Round`，讓一輪在後端重啟或升級後還在），應用的部署全部由 Fleet 負責。
 
-## 安裝
+## 限制
 
-- CRD：先裝 `laoban-crd` chart（意見收斂需要其中的 `Round`）。
-- 後端：Helm chart，見 [charts/laoban/README.md](charts/laoban/README.md)。
-- 事先要建立的 namespace 與 Fleet 物件：見 [deploy/m0/README.md](deploy/m0/README.md)。
-- UI extension：見 [extension/README.md](extension/README.md)。
-- 容器映像檔的建置與簽章：見 [build/README.md](build/README.md)。
+- 一個 Rancher 只用一套後端：頁面在使用者看得到的叢集裡找第一個裝了 laoban 的。
+- 產生的應用固定是網頁加 API 兩個元件（Python），部署在一個 namespace（預設 `laoban-dev`），以 Pod Security restricted 執行。
+- 後端只有一個副本；計畫存在記憶體，意見收斂存在 `Round` 資源裡。
+- AI 的費用由你的 Anthropic 帳號支付；後端有每月 token 上限（預設 2,000,000）。
+
+## 安裝（細節）
+
+- 一般使用：見 [docs/quickstart.md](docs/quickstart.md)。
+- 後端 chart 的所有設定：[charts/laoban/README.md](charts/laoban/README.md)。
+- 事先建立的 namespace 與 Fleet 物件：[deploy/m0/README.md](deploy/m0/README.md)。
+- Rancher Project 角色：[deploy/rancher/README.md](deploy/rancher/README.md)。
+- UI extension 的開發與建置：[extension/README.md](extension/README.md)。
+- 容器映像檔的建置與簽章：[build/README.md](build/README.md)。
+- 發布流程：打 `vX.Y.Z` tag 後，`image` workflow 建映像檔，`publish` workflow 把 extension 與兩個 chart 加進 `gh-pages` 分支的 Helm repo，並建立 GitHub Release。
 
 ## 目錄
 
@@ -112,22 +136,8 @@ node --test web/viewer-prototype/*.test.mjs
 
 ## 支援
 
-laoban 是社群開源專案，不在 SUSE 的支援範圍內。問題請開 GitHub issue。
+laoban 是社群開源專案，不在 SUSE 的支援範圍內。問題請開 [GitHub issue](https://github.com/yansheng133/laoban/issues)。
 
 ## 授權
 
 Apache License 2.0，見 [LICENSE](LICENSE)。
-
----
-
-## English
-
-laoban is a Rancher UI extension for building small applications by describing them in natural language. An AI agent proposes a plan and a 3D architecture view first; code is written only after you confirm, committed to GitHub, and deployed by Fleet to a cluster managed by Rancher.
-
-Once an application exists, a team can improve it together: anyone can comment on the application or on individual components in the 3D view, +1 and reply to each other's opinions, and the AI converges the opinions into one change plan. The new version is published only after everyone who gave an opinion confirms it.
-
-Rounds are stored as `Round` resources in the backend's namespace, so a round survives a backend restart or upgrade; finished rounds are archived to the `laoban-rounds` branch of the apps repository. Every version is a Git commit. Versions can be compared (with the previous one or with the current one) and restored, and the code can also be edited by hand. The backend is a Kubernetes aggregated API, so every call is made with the user's own Rancher login and authorized by the user's own RBAC. Apps are deployed by Fleet only; the backend writes nothing in the cluster except its own Round resources. The UI is available in Traditional Chinese, English and Japanese.
-
-laoban is an early trial (M0, 0.1.x). It is a community open source project and is not supported by SUSE. Please file issues on GitHub.
-
-Licensed under the Apache License 2.0.

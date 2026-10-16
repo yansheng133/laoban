@@ -21,7 +21,7 @@ laoban 沒有在 npm 上發佈任何套件，`laoban`、`@laoban` 都不是本�
 npm init @rancher/extension@3.0.12 laoban-ext -- --app-name extension
 ```
 
-`npm init @rancher/extension` 實際執行的是 npm 上的 `@rancher/create-extension`（目前 `latest` 為 3.0.12），產生的根目錄 `package.json` 相依 `@rancher/shell ^3.0.13`，之後改成固定的 `3.0.13`。產生器預設會一併建立三個 GitHub workflow（`build-extension-charts.yml`、`build-extension-catalog.yml`、`build-extensions-test.yml`），但它們放在 `extension/.github/` 底下，GitHub 不會執行，而且發佈流程還沒有規劃，所以沒有收進來；建置改由專案根目錄的 `.github/workflows/ci.yml` 的 `extension` job 負責。
+`npm init @rancher/extension` 實際執行的是 npm 上的 `@rancher/create-extension`（目前 `latest` 為 3.0.12），產生的根目錄 `package.json` 相依 `@rancher/shell ^3.0.13`，之後改成固定的 `3.0.13`。產生器預設會一併建立三個 GitHub workflow（`build-extension-charts.yml`、`build-extension-catalog.yml`、`build-extensions-test.yml`），但它們放在 `extension/.github/` 底下，GitHub 不會執行，所以沒有收進來；建置與測試由專案根目錄的 `.github/workflows/ci.yml` 的 `extension` job 負責。發布（v0.1.17 起）由 `.github/workflows/publish.yml` 負責：Rancher 官方的 reusable workflow 假設 extension 在 repo 根目錄，這裡在 `extension/` 執行同一支 `yarn publish-pkgs`，結果寫進 `gh-pages` 分支。版本：`pkg/laoban-ext/package.json` 的 `version` 跟 Cargo 的版本一致（CI 檢查），發布的 extension chart 是 `laoban-ext-<version>`。
 
 ```
 extension/
@@ -34,7 +34,8 @@ extension/
     ├── index.ts              進入點：註冊產品、路由與額外語系
     ├── product.ts            頂層產品與側邊選單
     ├── config/laoban.ts      產品、頁面、路由名稱與額外語系
-    ├── config/backend.ts     後端叢集 ID、namespace、Service 名稱、Fleet workspace、輪詢間隔
+    ├── config/backend.ts     API group、預設 namespace、Fleet workspace、輪詢間隔
+    ├── utils/target.ts       執行時找出後端所在的叢集與 namespace
     ├── routing/extension-routing.ts
     ├── pages/Dashboard.vue   總覽頁（M0：需求、計畫、部署狀態）
     ├── components/ArchitectureView.vue  3D 架構圖（three.js）
@@ -65,7 +66,7 @@ extension/
 
 API server 先驗證使用者並檢查這個 namespace 的權限，再把使用者轉給後端（docs/m0-design.md 的「身分」）。沒有權限時 API server 回 Kubernetes 的 `Status`，頁面顯示「你沒有這個操作的權限…」。
 
-叢集 ID、API group 與 namespace 都集中在 `pkg/laoban-ext/config/backend.ts`，換環境只改這個檔案。
+叢集 ID 與 namespace 在執行時找出（`utils/target.ts`，見 `docs/m0-design.md` 的「頁面找後端」），記在瀏覽器；換環境不用重新建置。上面的 `c-m-26kbxk5f`、`laoban-dev` 是 Sam 的環境。
 
 - **等候時間**：產生計畫與部署都要呼叫 AI，通常 30～60 秒。請求進行中按鈕會停用，狀態列顯示已等候的秒數；超過 3 分鐘視為逾時。
 - **錯誤**：後端回 `{"error": {"code", "message"}}` 時，直接顯示 `message`（後端負責寫成繁體中文）。連不到後端、Rancher 代理回的錯誤或格式不對的回應，顯示頁面自己的通用訊息。

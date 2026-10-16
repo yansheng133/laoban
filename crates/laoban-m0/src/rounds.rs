@@ -1223,10 +1223,15 @@ impl Round {
         if self.state != State::Collecting {
             return Err(RoundError::WrongState(self.state));
         }
-        let deadline = now.saturating_add(minutes.saturating_mul(60));
-        if self.opened > 0 && deadline > self.opened + MAX_DEADLINE_MINUTES * 60 {
-            return Err(RoundError::Invalid("截止時間最晚是開始後 24 小時。"));
+        // At most 24 hours after the round opened: a later time is moved to
+        // that limit (the page offers "in 24 hours" also after the start;
+        // report 21, B14).
+        let mut deadline = now.saturating_add(minutes.saturating_mul(60));
+        let latest = self.opened + MAX_DEADLINE_MINUTES * 60;
+        if self.opened > 0 && deadline > latest {
+            deadline = latest.max(now);
         }
+        let minutes = deadline.saturating_sub(now) / 60;
         self.deadline = deadline;
         self.note(
             at,
@@ -1431,6 +1436,11 @@ impl Round {
             "chars": self.total_chars(),
             "opinions": self.active().count(),
         });
+        // The latest the deadline can be moved to (the page offers only
+        // the choices before it).
+        if self.opened > 0 {
+            v["latestDeadline"] = serde_json::json!(self.opened + MAX_DEADLINE_MINUTES * 60);
+        }
         let me = user.unwrap_or("");
         // The caller's own drafts, and the ones others share.
         v["drafts"] = serde_json::json!({
@@ -1903,10 +1913,10 @@ mod tests {
         );
         r.set_deadline("u-a", 60, T0 + 60, "t").unwrap();
         assert_eq!(r.deadline, T0 + 60 + 3600);
-        assert!(matches!(
-            r.set_deadline("u-a", 24 * 60, T0 + 60, "t"),
-            Err(RoundError::Invalid(_))
-        ));
+        // Past the 24 hours after opening: moved to that limit.
+        r.set_deadline("u-a", 24 * 60, T0 + 60, "t").unwrap();
+        assert_eq!(r.deadline, T0 + 24 * 3600);
+        assert_eq!(r.log.last().unwrap().args["minutes"], "1439");
         r.set_deadline("u-a", 0, T0 + 120, "t").unwrap();
         assert!(r.due(T0 + 120));
         assert_eq!(r.log.last().unwrap().code, "deadline");

@@ -6,7 +6,7 @@
 //
 // Opinions and plans are user and AI text: rendered with {{ }} only.
 import {
-  defineComponent, ref, computed, onBeforeUnmount, PropType
+  defineComponent, ref, computed, watch, onBeforeUnmount, PropType
 } from 'vue';
 import { useStore } from 'vuex';
 import { useText } from '../composables/useText';
@@ -229,17 +229,43 @@ export default defineComponent({
       }
     }
 
-    // The initiator moves the deadline while collecting.
+    // The initiator moves the deadline while collecting: only to choices
+    // before the latest allowed, plus that latest time itself (report 21,
+    // B14). Minutes from now.
+    const minutesLeftToLatest = computed(() => {
+      const latest = props.round?.latestDeadline;
+
+      return latest ? Math.floor((latest - now.value / 1000) / 60) : 24 * 60;
+    });
+    const deadlineChoices = computed(() => {
+      const max = minutesLeftToLatest.value;
+      const list = DEADLINES.filter((m) => m > 0 && m <= max);
+
+      return max > 0 && !list.includes(max) && max < 24 * 60 ? [...list, max] : list;
+    });
     const newDeadline = ref(30);
+
+    watch(deadlineChoices, (list) => {
+      if (list.length && !list.includes(newDeadline.value)) {
+        newDeadline.value = list[list.length - 1];
+      }
+    }, { immediate: true });
+
+    // An error from these buttons is shown next to them, not at the end of
+    // the panel where it would go unseen (report 21, B14).
+    let deadlineAt = 0;
+    const errorNearDeadline = computed(() => !!props.error && now.value - deadlineAt < 30 * 1000);
 
     function moveDeadline() {
       if (!busy.value) {
+        deadlineAt = Date.now();
         emit('deadline', newDeadline.value);
       }
     }
 
     function convergeNow() {
       if (!busy.value) {
+        deadlineAt = Date.now();
         emit('deadline', 0);
       }
     }
@@ -279,6 +305,8 @@ export default defineComponent({
       minutes,
       scope,
       deadlines: DEADLINES,
+      deadlineChoices,
+      errorNearDeadline,
       objecting,
       objection,
       state,
@@ -544,18 +572,18 @@ export default defineComponent({
             :disabled="busy"
           >
             <option
-              v-for="m in deadlines.filter((d) => d > 0)"
+              v-for="m in deadlineChoices"
               :key="m"
               :value="m"
             >
-              {{ t(`laoban.round.deadlines.m${ m }`) }}
+              {{ deadlines.includes(m) ? t(`laoban.round.deadlines.m${ m }`) : t('laoban.round.deadlineLatest', { minutes: m }) }}
             </option>
           </select>
         </label>
         <button
           type="button"
           class="btn btn-sm role-secondary"
-          :disabled="busy"
+          :disabled="busy || !deadlineChoices.length"
           @click="moveDeadline"
         >
           {{ t('laoban.round.moveDeadlineApply') }}
@@ -568,6 +596,13 @@ export default defineComponent({
         >
           {{ t('laoban.round.convergeNow') }}
         </button>
+        <p
+          v-if="errorNearDeadline"
+          class="text-error laoban-deadline-error"
+          role="alert"
+        >
+          {{ error }}
+        </p>
       </div>
 
       <OpinionList
@@ -684,6 +719,14 @@ export default defineComponent({
           >
           {{ t('laoban.opinions.shareDrafts') }}
         </label>
+        <!-- Drafts are shared by default: say so once there is one. -->
+        <p
+          v-if="draftsShared && count > 0"
+          class="text-muted laoban-hint laoban-shared-hint"
+          data-testid="laoban-shared-hint"
+        >
+          {{ t('laoban.opinions.sharedHint') }}
+        </p>
         <div
           v-if="space.shown"
           class="laoban-space"
@@ -720,8 +763,8 @@ export default defineComponent({
           id="laoban-opinion"
           :value="draft"
           rows="3"
-          :class="{ 'laoban-over': draftState.over }"
-          :aria-invalid="draftState.over ? 'true' : 'false'"
+          :class="{ 'laoban-over': draftState.over || (space.over && !space.full) }"
+          :aria-invalid="draftState.over || space.over ? 'true' : 'false'"
           :disabled="busy || !you || !you.canAddOpinion || space.full"
           @input="$emit('update:draft', $event.target.value)"
         />
@@ -729,6 +772,8 @@ export default defineComponent({
           :text="draft"
           :max="limits.opinionChars"
           :left="draftLeft"
+          :reserved="roundLeft - draftLeft"
+          :quiet="space.full"
         />
         <p
           v-if="draftsTooLong"
@@ -753,7 +798,7 @@ export default defineComponent({
           class="icon icon-spinner icon-spin"
           aria-hidden="true"
         />
-        {{ t('laoban.round.convergingCount', { count: round.opinions.length, seconds: pending === 'converge' ? elapsed : stateSeconds }) }}
+        {{ t('laoban.round.convergingCount', { count: round.opinions.filter((o) => !o.withdrawn).length, seconds: pending === 'converge' ? elapsed : stateSeconds }) }}
       </p>
 
       <!-- Confirming: the plan and who still has to answer. -->
@@ -789,15 +834,21 @@ export default defineComponent({
               >
                 <span class="text-muted">{{ who(c.by) }}</span>
                 <span class="laoban-text">{{ c.text }}</span>
+                <!-- Not on one's own comment (report 21, B17); the count still shows. -->
                 <button
+                  v-if="!you || c.by !== you.user"
                   type="button"
                   class="btn btn-sm"
                   :class="you && c.supporters.includes(you.user) ? 'role-primary' : 'role-secondary'"
-                  :disabled="busy || !you || !you.canComment || c.by === you.user"
+                  :disabled="busy || !you || !you.canComment"
                   @click="$emit('support-comment', c.id)"
                 >
                   +1 {{ c.supporters.length || '' }}
                 </button>
+                <span
+                  v-else-if="c.supporters.length"
+                  class="text-muted"
+                >+1 {{ c.supporters.length }}</span>
               </p>
               <form
                 v-if="you && you.canComment"
@@ -980,7 +1031,7 @@ export default defineComponent({
     </template>
 
     <p
-      v-if="error"
+      v-if="error && !errorNearDeadline"
       class="laoban-error text-error"
       role="alert"
     >
@@ -1168,6 +1219,11 @@ export default defineComponent({
 
 .laoban-deadline {
   font-size: 13px;
+}
+
+.laoban-deadline-error {
+  flex-basis: 100%;
+  margin: 4px 0 0;
 }
 
 .laoban-shared-drafts {
