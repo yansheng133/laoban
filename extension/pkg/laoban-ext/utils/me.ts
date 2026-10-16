@@ -17,10 +17,16 @@ export function currentUserId(store: StoreLike): Promise<string> {
     mine = (async() => {
       try {
         const res = await fetch('/v3/users?me=true', { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
-        const body = await res.json() as { data?: { id?: unknown }[] };
+        const body = res.ok ? await res.json() as { data?: { id?: unknown }[] } : null;
         const id = body?.data?.[0]?.id;
 
-        return typeof id === 'string' ? id : '';
+        if (typeof id === 'string' && id) {
+          return id;
+        }
+        // Not known this time: ask again next time.
+        mine = null;
+
+        return '';
       } catch {
         mine = null;
 
