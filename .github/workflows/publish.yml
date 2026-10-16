@@ -1,0 +1,125 @@
+name: publish
+
+# On a release tag (vX.Y.Z, the same tag that builds the image):
+#
+# 1. The UI extension and the two Helm charts (laoban, laoban-crd) are added
+#    to the gh-pages branch, a Helm repository:
+#      https://yansheng133.github.io/laoban   (GitHub Pages from gh-pages)
+#      https://raw.githubusercontent.com/yansheng133/laoban/gh-pages
+#    In Rancher: Extensions -> Manage Repositories (or Apps -> Repositories)
+#    -> add the URL; laoban then shows on the Extensions page. The extension
+#    is built and packaged by @rancher/shell's own publish script, as the
+#    Rancher extension docs describe ("Publishing an Extension"), only from
+#    extension/ instead of the repository root.
+# 2. A GitHub release is created with the notes in docs/releases/<tag>.md.
+#
+# The versions must agree: the tag, Cargo.toml, both charts and the
+# extension's package.json.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish again (for example v0.1.17)
+        required: true
+
+permissions: {}
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Versions agree
+        id: ver
+        run: |
+          fail() { echo "::error::$1"; exit 1; }
+          v="${TAG#v}"
+          cargo="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"$/\1/p' Cargo.toml)"
+          ext="$(jq -r .version extension/pkg/laoban-ext/package.json)"
+          for c in laoban laoban-crd; do
+            [ "$(sed -n 's/^version: //p' charts/$c/Chart.yaml)" = "$v" ] || fail "charts/$c version is not $v"
+            [ "$(sed -n 's/^appVersion: "\(.*\)"$/\1/p' charts/$c/Chart.yaml)" = "$v" ] || fail "charts/$c appVersion is not $v"
+          done
+          [ "$cargo" = "$v" ] || fail "Cargo.toml version $cargo is not $v"
+          [ "$ext" = "$v" ] || fail "extension version $ext is not $v"
+          [ -f "docs/releases/${TAG}.md" ] || fail "docs/releases/${TAG}.md (the release notes) is missing"
+          git show-ref -q gh-pages || fail "the gh-pages branch must exist"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: 24
+
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v3.17.3
+
+      - name: Build the extension and its chart
+        working-directory: extension
+        run: |
+          npm install -g yarn@1.22.22
+          yarn install --frozen-lockfile
+          yarn test
+          # Writes tmp/{assets,charts,extensions,index.yaml}; the index is
+          # merged with the one already on gh-pages.
+          yarn publish-pkgs -s "${GITHUB_REPOSITORY}" -b gh-pages -t "laoban-ext-${{ steps.ver.outputs.version }}"
+          test -f tmp/index.yaml
+
+      - name: Add the backend charts to the index
+        run: |
+          out=extension/tmp
+          for c in laoban laoban-crd; do
+            mkdir -p "$out/assets/$c"
+            helm package "charts/$c" -d "$out/assets/$c"
+          done
+          helm repo index "$out/assets" --url assets --merge "$out/index.yaml"
+          mv "$out/assets/index.yaml" "$out/index.yaml"
+          for c in laoban laoban-crd laoban-ext; do
+            grep -q "^  $c:$" "$out/index.yaml" || { echo "::error::$c missing from index.yaml"; exit 1; }
+          done
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: gh-pages
+          path: gh-pages
+
+      - name: Commit to gh-pages
+        run: |
+          cp -R extension/tmp/assets extension/tmp/charts extension/tmp/extensions gh-pages/
+          cp extension/tmp/index.yaml gh-pages/index.yaml
+          touch gh-pages/.nojekyll
+          cd gh-pages
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add -A
+          if git diff --cached --quiet; then
+            echo "nothing new to publish"
+          else
+            git commit -m "Publish ${TAG}"
+            git push origin gh-pages
+          fi
+
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --notes-file "docs/releases/${TAG}.md"
+          else
+            gh release create "$TAG" --verify-tag --title "laoban ${TAG}" --notes-file "docs/releases/${TAG}.md"
+          fi

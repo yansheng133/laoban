@@ -560,7 +560,8 @@ pub fn valid_round_id(id: &str) -> bool {
 
 impl M0Service {
     /// `GET .../apps/<name>/rounds`: the app's archived rounds, newest
-    /// first (by date; the archive has one file per round).
+    /// first (by ID: date, then the second of the day; rounds from before
+    /// v0.1.17 have a random part instead and sort among their day).
     pub fn past_rounds(&self, app: &str) -> Result<Value, M0Error> {
         if !crate::plan::valid_app_name(app) {
             return Err(M0Error::BadRequest("應用名稱不正確。"));

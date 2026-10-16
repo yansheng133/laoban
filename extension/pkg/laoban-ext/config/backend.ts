@@ -2,21 +2,17 @@
 // Values follow docs/m0-design.md. The page runs inside the Rancher UI and
 // every request uses the signed-in user's own Rancher session.
 
-// Downstream cluster (rke2) that runs the laoban backend.
-export const BACKEND_CLUSTER_ID = 'c-m-26kbxk5f';
-
-// The backend is a Kubernetes aggregated API on that cluster: the API server
-// verifies the signed-in user and checks RBAC before a request reaches it.
+// The backend is a Kubernetes aggregated API on one of the clusters Rancher
+// manages: the API server verifies the signed-in user and checks RBAC before
+// a request reaches it. Which cluster and namespace is found at run time
+// (utils/target.ts).
 export const API_GROUP = 'api.laoban.yansheng133.github.io';
 
 export const API_VERSION = 'v1alpha1';
 
-// Namespace the apps are deployed to; the API is served under it, so access
-// follows that namespace's (Rancher Project's) permissions.
-export const TARGET_NAMESPACE = 'laoban-dev';
-
-// Paths ("/config", "/apps", "/plans", ...) are appended to this.
-export const BACKEND_BASE_PATH = `/k8s/clusters/${ BACKEND_CLUSTER_ID }/apis/${ API_GROUP }/${ API_VERSION }/namespaces/${ TARGET_NAMESPACE }`;
+// The chart's default namespace for the apps; asked first when looking for
+// the backend.
+export const DEFAULT_TARGET_NAMESPACE = 'laoban-dev';
 
 // Fleet runs on the Rancher local cluster; bundles are read through Steve.
 export const FLEET_BUNDLE_TYPE = 'fleet.cattle.io.bundle';

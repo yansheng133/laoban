@@ -1,3 +1,12 @@
 // Global (unscoped) styles every laoban page imports once, in a
 // <style lang="scss"> block without `scoped`.
 @import './palettes.scss';
+
+// Rancher's side menu hidden on laoban's pages (utils/nav.ts).
+body.laoban-nav-collapsed .dashboard-content {
+  --nav-width: 0px;
+
+  .default-side-nav {
+    display: none;
+  }
+}

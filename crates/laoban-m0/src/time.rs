@@ -59,6 +59,21 @@ pub fn plan_id(t: SystemTime) -> String {
     format!("p-{}-{:06x}", ymd(t), h.finish() & 0xff_ffff)
 }
 
+/// `r-YYYYMMDD-sssssx`: a round of opinions. `sssss` is the second of the
+/// (UTC) day in hex and `x` 4 random bits, so the IDs of one day sort by
+/// time (the archive lists rounds by ID; report 21, B15). One app has one
+/// round at a time, so two rounds of an app never share a second.
+pub fn round_id(t: SystemTime) -> String {
+    let mut h = RandomState::new().build_hasher();
+    h.write_u64(COUNTER.fetch_add(1, Ordering::Relaxed));
+    format!(
+        "r-{}-{:05x}{:x}",
+        ymd(t),
+        secs(t).rem_euclid(86_400),
+        h.finish() & 0xf
+    )
+}
+
 /// `j-xxxxxxxxxxxxxxxx`: a background job (64 random bits). Not a
 /// secret either: a job is only shown to the user who started it.
 pub fn job_id(t: SystemTime) -> String {
@@ -97,5 +112,17 @@ mod tests {
         let b = plan_id(t);
         assert!(a.starts_with("p-20261013-") && a.len() == 17, "{a}");
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn round_ids_sort_by_time() {
+        let day = UNIX_EPOCH + Duration::from_secs(20_739 * 86_400);
+        let early = round_id(day + Duration::from_secs(9));
+        let late = round_id(day + Duration::from_secs(86_399));
+        assert!(early.starts_with("r-20261013-00009"), "{early}");
+        assert!(late.starts_with("r-20261013-1517f"), "{late}");
+        assert_eq!(early.len(), 17);
+        assert!(late > early);
+        assert!(crate::service::valid_round_id(&early));
     }
 }

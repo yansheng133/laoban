@@ -670,7 +670,10 @@ impl M0Service {
             j.state = match result {
                 Ok(v) => JobState::Done(v),
                 Err(e) => JobState::Failed {
-                    status: e.status(),
+                    status: {
+                        log_failure("job", id, &e);
+                        e.status()
+                    },
                     code: e.code(),
                     message: e.user_message(),
                 },
@@ -1428,7 +1431,7 @@ impl M0Service {
         let opinions = self.new_opinions(app, &current, &items)?;
         let now = SystemTime::now();
         let at = time::rfc3339(now);
-        let id = time::plan_id(now).replacen("p-", "r-", 1);
+        let id = time::round_id(now);
         {
             let mut rs = self.rounds();
             if rs.get(app).is_some_and(|r| r.state.active()) {
@@ -1632,10 +1635,16 @@ impl M0Service {
                 .filter(|c| c.answer == rounds::Answer::Pending)
                 .map(|c| c.user.as_str())
                 .collect();
+            let confirmer = r.confirmers.iter().any(|c| c.user == user);
             let reason = match r.state {
                 State::Confirming if pending.contains(&user) => "confirm",
-                State::Confirming if r.initiator == user && !pending.is_empty() => "othersConfirm",
+                // Answered (or started it): waiting for the rest.
+                State::Confirming if (confirmer || r.initiator == user) && !pending.is_empty() => {
+                    "othersConfirm"
+                }
                 State::Failed if r.initiator == user => "retry",
+                // Those who confirmed see that it failed too (report 21).
+                State::Failed if confirmer => "failed",
                 _ => continue,
             };
             items.push(json!({
@@ -1941,6 +1950,7 @@ impl M0Service {
                 }
             }
             Err(e) => {
+                log_failure("converge", &format!("{app} {round_id}"), &e);
                 self.update_round(&mut rs, app, round_id, |r| fail_with(r, &e, &at));
             }
         }
@@ -2002,7 +2012,10 @@ impl M0Service {
                 "找不到這一輪的修改計畫，請發起人重新收斂。",
                 &at,
             ),
-            Err(e) => fail_with(r, e, &at),
+            Err(e) => {
+                log_failure("publish", &format!("{app} {round_id}"), e);
+                fail_with(r, e, &at)
+            }
         });
         result.ok()
     }
@@ -2224,6 +2237,15 @@ struct Publish<'a> {
 /// Changes need a verified caller.
 /// A round failed with `e`: its message, and a code the page translates
 /// when it has one (`laoban.round.failures.*`).
+/// Background work has no request log line: say what failed and why, as
+/// that line would (report 21, B16). Never the token, key or user text.
+fn log_failure(what: &str, subject: &str, e: &M0Error) {
+    match e.log_detail() {
+        Some(d) => eprintln!("laoban-m0: {what} {subject} failed: {} ({d})", e.code()),
+        None => eprintln!("laoban-m0: {what} {subject} failed: {}", e.code()),
+    }
+}
+
 fn fail_with(r: &mut Round, e: &M0Error, at: &str) {
     let (code, args): (&str, Vec<(&str, String)>) = match e {
         M0Error::MergeConflict(files) => ("mergeConflict", vec![("files", files.clone())]),

@@ -32,7 +32,7 @@ rules:
       - apps/restore
       - apps/round
       - apps/rounds
-      - rounds
+      - waitingrounds
       - plans
       - plans/apply
     verbs: ["get", "list", "create"]
@@ -49,5 +49,5 @@ external: false
 hidden: false
 rules:
   - apiGroups: ["api.laoban.yansheng133.github.io"]
-    resources: ["config", "apps", "apps/versions", "apps/files", "apps/round", "apps/rounds", "rounds"]
+    resources: ["config", "apps", "apps/versions", "apps/files", "apps/round", "apps/rounds", "waitingrounds"]
     verbs: ["get", "list"]

@@ -921,6 +921,19 @@ fn route_api(api: &ApiState, head: &RequestHead, body: &[u8], caller: Option<&Ca
                 internal = p;
                 internal.as_str()
             }
+            None if identity::other_namespace(&head.path, &ns) => {
+                // The page looks for the namespace laoban serves: whoever
+                // may call this API in some namespace learns its name.
+                let mut r = Response::api_error(
+                    404,
+                    "other_namespace",
+                    &format!("laoban 服務的是 namespace {ns}。"),
+                );
+                let mut v: serde_json::Value = serde_json::from_str(&r.body).unwrap_or_default();
+                v["error"]["targetNamespace"] = json!(ns);
+                r.body = v.to_string();
+                return r;
+            }
             None => return Response::api_error(404, "bad_request", "找不到這個 API。"),
         }
     } else {

@@ -25,6 +25,18 @@ export default defineComponent({
       type:    Number,
       default: Number.POSITIVE_INFINITY,
     },
+    // Of the round's room, what this person's other drafts take: said in
+    // the message, so the two numbers on the page agree (report 21, N3).
+    reserved: {
+      type:    Number,
+      default: 0,
+    },
+    // Nothing to say: the round is full and the field says so already
+    // (report 21, N5).
+    quiet: {
+      type:    Boolean,
+      default: false,
+    },
   },
 
   setup(props) {
@@ -40,12 +52,14 @@ export default defineComponent({
 
 <template>
   <p
+    v-if="!quiet"
     class="laoban-counter"
     :class="{ near: s.near && !s.over, over: s.over }"
     aria-live="polite"
     data-testid="laoban-counter"
   >
-    <span v-if="s.over && byRound">{{ t('laoban.limits.roundOver', { left: s.max }) }}</span>
+    <span v-if="s.over && byRound && reserved > 0">{{ t('laoban.limits.roundOverDrafts', { left: s.max, reserved }) }}</span>
+    <span v-else-if="s.over && byRound">{{ t('laoban.limits.roundOver', { left: s.max }) }}</span>
     <span v-else-if="s.over">{{ t('laoban.limits.tooLong', { max: s.max, over: s.count - s.max }) }}</span>
     <span class="laoban-counter-count">{{ t('laoban.limits.count', { count: s.count, max: s.max }) }}</span>
   </p>

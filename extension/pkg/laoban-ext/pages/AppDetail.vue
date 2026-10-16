@@ -17,6 +17,7 @@ import {
 } from 'vue';
 import { useStore } from 'vuex';
 import { useRoute } from 'vue-router';
+import NavToggle from '../components/NavToggle.vue';
 import { useText } from '../composables/useText';
 import ArchitectureView from '../components/ArchitectureView.vue';
 import RoundPanel from '../components/RoundPanel.vue';
@@ -32,7 +33,7 @@ import StructureEdit from '../components/StructureEdit.vue';
 import { useDeployFlow } from '../composables/useDeployFlow';
 import { useRound } from '../composables/useRound';
 import {
-  getApp, listVersions, getVersion, resolveAppUrl, safeHttpsUrl, saveFiles, saveLayout, aiRequestTimeoutMs,
+  getApp, canChangeApps, listVersions, getVersion, resolveAppUrl, safeHttpsUrl, saveFiles, saveLayout, aiRequestTimeoutMs,
   AppDetail, VersionEntry, VersionDetail, AppFiles, Position, RoundAction
 } from '../utils/backend';
 import { appendLine } from '../utils/structure';
@@ -50,7 +51,7 @@ export default defineComponent({
   name: 'LaobanAppDetail',
 
   components: {
-    ArchitectureView, RoundPanel, OpinionList, StatusBar, VersionList, CodeEditor, StructureEdit, CharCounter, PastRounds
+    ArchitectureView, RoundPanel, OpinionList, StatusBar, VersionList, CodeEditor, StructureEdit, CharCounter, PastRounds, NavToggle
   },
 
   setup() {
@@ -265,7 +266,14 @@ export default defineComponent({
 
     // Permissions are checked by the Kubernetes API server; the page lets
     // everyone try and shows its answer.
-    const canEdit = computed(() => !!detail.value);
+    // A viewer can look but not change (report 21, N9); the backend checks
+    // again either way.
+    const mayChange = ref(true);
+
+    canChangeApps(store).then((v) => {
+      mayChange.value = v;
+    });
+    const canEdit = computed(() => !!detail.value && mayChange.value);
     const busy = computed(() => flow.busy.value || loading.value || !!round.pending.value);
     const deploying = computed(() => flow.phase.value === 'deploying');
     const currentCommit = computed(() => versions.value.find((v) => v.current)?.commit || '');
@@ -462,6 +470,8 @@ export default defineComponent({
     const roundsAvailable = computed(() => round.available.value);
     const componentTooLong = computed(() => textState(componentText.value, roundLimits.value.opinionChars).over);
     const roundLeft = computed(() => roundSpace(round.round.value, roundLimits.value, { chars: 0, opinions: 0 }).left);
+    // More than the running round has room for (red, as when too long).
+    const componentOverRound = computed(() => round.active.value && textState(componentText.value, Math.max(0, roundLeft.value)).over);
     // A collecting round that is full takes no more drafts either: they
     // could not be sent (report 20, N4).
     const roundFull = computed(() => round.round.value?.state === 'collecting' &&
@@ -665,6 +675,15 @@ export default defineComponent({
       if (r?.state === 'failed' && r.you?.isInitiator) {
         return 'retry';
       }
+      // Those who answered see where things stand too (report 21).
+      const answered = !!r?.you?.user && (r.confirmers || []).some((c) => c.user === r.you!.user);
+
+      if (r?.state === 'confirming' && answered) {
+        return 'youConfirmed';
+      }
+      if (r?.state === 'failed' && answered) {
+        return 'failed';
+      }
 
       return '';
     });
@@ -805,6 +824,7 @@ export default defineComponent({
       roundLeft,
       componentTooLong,
       roundFull,
+      componentOverRound,
       detailStatus,
       expanded,
       archPanel,
@@ -871,6 +891,7 @@ export default defineComponent({
   <div class="laoban-m0">
     <header class="laoban-header">
       <div>
+        <NavToggle />
         <router-link :to="appsRoute">
           {{ t('laoban.detail.back') }}
         </router-link>
@@ -932,15 +953,17 @@ export default defineComponent({
         class="laoban-panel"
         :aria-label="t('laoban.edit.promptLabel')"
       >
+        <h2>{{ t('laoban.detail.changeTitle') }}</h2>
+        <!-- Under the title, next to the round it is about (report 21, N10). -->
         <div
           v-if="waitingReason"
-          class="laoban-waiting banner warning"
+          class="laoban-waiting banner"
+          :class="waitingReason === 'youConfirmed' ? 'info' : 'warning'"
           role="status"
           data-testid="laoban-waiting"
         >
           <span>{{ t(`laoban.waiting.${ waitingReason }`) }}</span>
         </div>
-        <h2>{{ t('laoban.detail.changeTitle') }}</h2>
         <RoundPanel
           v-model:draft="opinionDraft"
           v-model:drafts-shared="draftsShared"
@@ -1091,8 +1114,9 @@ export default defineComponent({
               >{{ o.label }}</option>
             </select>
           </label>
+          <!-- Enlarged, the side panel has it (report 21, N6). -->
           <label
-            v-if="selectedVersion"
+            v-if="selectedVersion && !expanded"
             class="laoban-compare"
           >
             {{ t('laoban.versions.compareWith') }}
@@ -1202,14 +1226,15 @@ export default defineComponent({
             v-model="componentText"
             rows="2"
             :disabled="roundFull"
-            :class="{ 'laoban-over': componentTooLong }"
-            :aria-invalid="componentTooLong ? 'true' : 'false'"
+            :class="{ 'laoban-over': componentTooLong || componentOverRound }"
+            :aria-invalid="componentTooLong || componentOverRound ? 'true' : 'false'"
             :placeholder="t('laoban.opinions.componentPlaceholder')"
           />
           <CharCounter
             :text="componentText"
             :max="roundLimits.opinionChars"
             :left="roundState && roundActive ? roundLeft : undefined"
+            :quiet="roundFull"
           />
           <div class="laoban-component-opinion-actions">
             <button
@@ -1231,7 +1256,7 @@ export default defineComponent({
               v-if="draftSaved"
               class="laoban-draft-saved"
               role="status"
-            >✓ {{ t('laoban.opinions.draftSaved', { count: drafts.length }) }}</span>
+            >✓ {{ t('laoban.opinions.draftSaved', { count: drafts.length }) }}<template v-if="draftsShared && roundState && roundState.state === 'collecting'"> · {{ t('laoban.opinions.sharedShort') }}</template></span>
             <span
               v-else
               class="text-muted laoban-hint"
@@ -1636,6 +1661,19 @@ export default defineComponent({
   @media (max-width: 900px) {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr) 40vh;
+
+    // Too little height to share: the 3D view keeps its own height and the
+    // column scrolls, rather than the view covering the opinion box
+    // (report 21, B12).
+    :deep(.laoban-arch) {
+      flex: none;
+      min-height: auto;
+    }
+
+    :deep(.laoban-arch-stage) {
+      flex: none;
+      height: 300px;
+    }
   }
 }
 
@@ -1690,6 +1728,9 @@ export default defineComponent({
 // of wrapping or being cut off (report 20, N5).
 .laoban-timeline-item {
   flex-direction: column;
+  // A wrapping column makes each line as wide as its text, so "…" never
+  // applied (report 21, A8).
+  flex-wrap: nowrap;
   align-items: stretch;
   min-width: 0;
   padding: 4px 8px;
@@ -1755,11 +1796,13 @@ export default defineComponent({
 
 // Room between the tabs and the description (report 20, N10).
 .laoban-side-hint {
-  margin-top: 8px;
+  margin: 8px 0 12px;
   line-height: 1.5;
 }
 
+// Space between the explanation above and this heading (report 21, A9).
 .laoban-file-changes {
+  margin-top: 8px;
   margin-bottom: 8px;
   font-size: 13px;
 

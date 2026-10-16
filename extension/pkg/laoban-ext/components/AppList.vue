@@ -8,9 +8,10 @@ import {
   defineComponent, ref, computed, onMounted, onBeforeUnmount
 } from 'vue';
 import { useStore } from 'vuex';
+import { errorText as errorFor } from '../utils/errors';
 import { useText } from '../composables/useText';
 import {
-  listApps, listBundles, resolveAppUrl, RequestError, AppSummary, WaitingRound
+  listApps, listBundles, resolveAppUrl, AppSummary, WaitingRound
 } from '../utils/backend';
 import { refreshWaiting } from '../utils/waiting';
 import { bundleReadiness, Bundle, ReadinessState } from '../utils/bundle';
@@ -55,7 +56,7 @@ export default defineComponent({
         errorText.value = '';
         loaded.value = true;
       } catch (e) {
-        errorText.value = e instanceof RequestError && e.userMessage ? e.userMessage : t('laoban.apps.loadFailed');
+        errorText.value = errorFor(t, e, 'laoban.apps.loadFailed');
       } finally {
         loading.value = false;
       }

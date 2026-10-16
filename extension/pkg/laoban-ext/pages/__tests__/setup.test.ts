@@ -14,6 +14,9 @@ import {
 import { readFileSync } from 'fs';
 import { dirname, join, resolve } from 'path';
 import { createApp, h, reactive } from 'vue';
+import { setTarget } from '../../utils/target';
+
+setTarget({ clusterId: 'c-m-26kbxk5f', namespace: 'laoban-dev' });
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { parse, compileScript } = require('@vue/compiler-sfc');
@@ -342,5 +345,40 @@ describe('v0.1.16 pieces mount and act', () => {
     expect((b.logText as (l: unknown) => string)({ event: '截止', code: 'deadline', args: { minutes: '0' } })).toBe('laoban.round.events.deadlineNow');
     app.unmount();
     global.fetch = realFetch;
+  });
+
+  // v0.1.17
+  it('offers only deadlines before the latest allowed, and the latest itself', () => {
+    const now = Math.floor(Date.now() / 1000);
+    const round = {
+      id: 'r1', app: 'todo', initiator: 'u-a', scope: ['web'], state: 'collecting', deadline: now + 600, latestDeadline: now + 100 * 60 + 30, opinions: [], confirmers: [], plan: null, message: '', result: null, log: [],
+      you: {
+        user: 'u-a', isInitiator: true, mustConfirm: false, canAddOpinion: true, canDiscuss: true
+      },
+    };
+    const { b, app } = mount('../components/RoundPanel.vue', {
+      round, draft: 'x', pending: null, elapsed: 0, error: '', disabled: false, drafts: [], removedDraft: null, selectedTarget: null, notice: '', limits: LIMITS, available: true, draftsShared: true
+    });
+
+    expect((b.deadlineChoices as { value: number[] }).value).toStrictEqual([10, 30, 60, 100]);
+    // A draft is shared by default: the panel says so.
+    expect((b.count as { value: number }).value).toBe(1);
+    app.unmount();
+  });
+
+  it('hides and shows Rancher\'s side menu, only while on laoban\'s pages', () => {
+    const { b, app } = mount('../components/NavToggle.vue', {});
+
+    expect(document.body.classList.contains('laoban-nav-collapsed')).toBe(false);
+    (b.toggle as () => void)();
+    expect(document.body.classList.contains('laoban-nav-collapsed')).toBe(true);
+    app.unmount();
+    expect(document.body.classList.contains('laoban-nav-collapsed')).toBe(false);
+    // The choice is kept for the next laoban page.
+    const again = mount('../components/NavToggle.vue', {});
+
+    expect(document.body.classList.contains('laoban-nav-collapsed')).toBe(true);
+    (again.b.toggle as () => void)();
+    again.app.unmount();
   });
 });

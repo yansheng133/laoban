@@ -16,6 +16,8 @@ import { bundleReadiness, Readiness } from '../utils/bundle';
 import { deploymentRolledOut, rolloutTargets } from '../utils/rollout';
 import { BUNDLE_POLL_INTERVAL_MS, BUNDLE_POLL_TIMEOUT_MS, FLEET_WORKSPACE } from '../config/backend';
 
+import { TRANSLATED_ERRORS } from '../utils/errors';
+
 export type Phase = 'idle' | 'planning' | 'planned' | 'applying' | 'deploying' | 'ready' | 'timeout';
 
 type Translate = (key: string, args?: Record<string, unknown>) => string;
@@ -110,6 +112,11 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
     // Codes with a message in the UI language.
     if (e instanceof RequestError && e.code === 'not_editable') {
       return t('laoban.apps.legacy');
+    }
+    // The backend writes its messages in Chinese: these common ones are
+    // shown in the page's language instead (report 21, N8).
+    if (e instanceof RequestError && TRANSLATED_ERRORS.includes(e.code)) {
+      return t(`laoban.errors.${ e.code }`);
     }
     if (e instanceof RequestError && e.userMessage) {
       return e.userMessage;

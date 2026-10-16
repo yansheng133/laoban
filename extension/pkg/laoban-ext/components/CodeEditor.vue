@@ -10,11 +10,12 @@ import {
   defineComponent, ref, computed, watch, onMounted, PropType
 } from 'vue';
 import { useStore } from 'vuex';
+import { errorText } from '../utils/errors';
 import { useText } from '../composables/useText';
 import CodeMirror from '@shell/components/CodeMirror.vue';
 import { _EDIT, _VIEW } from '@shell/config/query-params';
 import {
-  getFiles, AppFiles, AppFilesResponse, RequestError
+  getFiles, AppFiles, AppFilesResponse
 } from '../utils/backend';
 
 interface FileEntry {
@@ -116,7 +117,7 @@ export default defineComponent({
         note.value = '';
         error.value = '';
       } catch (e) {
-        error.value = e instanceof RequestError && e.userMessage ? e.userMessage : t('laoban.dashboard.errors.generic');
+        error.value = errorText(t, e, 'laoban.dashboard.errors.generic');
       } finally {
         loading.value = false;
       }
@@ -156,6 +157,24 @@ export default defineComponent({
     watch(() => [props.appName, props.reloadKey], load);
     onMounted(load);
 
+    // With unsaved changes, Reload asks first: the first press turns the
+    // button into "Discard changes and reload?" (report 21, N1).
+    const reloadAsk = ref(false);
+
+    watch(changed, () => {
+      reloadAsk.value = false;
+    });
+
+    function reload() {
+      if (changed.value.length && !reloadAsk.value) {
+        reloadAsk.value = true;
+
+        return;
+      }
+      reloadAsk.value = false;
+      load();
+    }
+
     return {
       t,
       files: FILES,
@@ -170,6 +189,8 @@ export default defineComponent({
       editMode: computed(() => (props.editable && !props.busy && !props.blockedFiles.includes(active.value) ? _EDIT : _VIEW)),
       activeFile: computed(() => FILES.find((f) => f.key === active.value) || null),
       onInput,
+      reloadAsk,
+      reload,
       discard,
       save,
       load,
@@ -280,11 +301,13 @@ export default defineComponent({
           </button>
           <button
             type="button"
-            class="btn role-secondary"
+            class="btn"
+            :class="reloadAsk ? 'role-primary bg-error' : 'role-secondary'"
             :disabled="busy || loading"
-            @click="load"
+            @click="reload"
+            @blur="reloadAsk = false"
           >
-            {{ t('laoban.editor.reload') }}
+            {{ reloadAsk ? t('laoban.editor.reloadConfirm') : t('laoban.editor.reload') }}
           </button>
           <button
             type="submit"
