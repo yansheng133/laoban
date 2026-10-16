@@ -18,11 +18,13 @@ use serde_json::{json, Value};
 
 use super::{commit_message, unix, M0Error, M0Service};
 use crate::github::CommitFile;
+use crate::lang::tr;
 use crate::plan::carry_layout;
 use crate::rounds::{PlanRecipe, Round, RoundError, State};
 use crate::state::{StateError, APP_LABEL, ROUNDS};
 use crate::store::{BaseApp, StoredPlan};
 use crate::time;
+use crate::trf;
 
 /// The branch of the apps repository finished rounds are archived to.
 pub const ARCHIVE_BRANCH: &str = "laoban-rounds";
@@ -357,7 +359,7 @@ impl M0Service {
                     r.fail_coded(
                         "restartUnpublished",
                         &[],
-                        "後端在發布途中重新啟動，這一輪的修改沒有發布。請發起人重新收斂。",
+                        tr("The backend restarted while publishing; this round's change was not published. The initiator can converge again.", "後端在發布途中重新啟動，這一輪的修改沒有發布。請發起人重新收斂。"),
                         &at,
                     )
                 });
@@ -367,7 +369,7 @@ impl M0Service {
                     r.fail_coded(
                         "restartUnknown",
                         &[],
-                        "後端在發布途中重新啟動，無法確認這一輪的修改是否已發布。請到版本紀錄確認；沒有新版本時請發起人重新收斂。",
+                        tr("The backend restarted while publishing and could not tell whether this round's change was published. Check the versions; if there is no new version, the initiator can converge again.", "後端在發布途中重新啟動，無法確認這一輪的修改是否已發布。請到版本紀錄確認；沒有新版本時請發起人重新收斂。"),
                         &at,
                     )
                 });
@@ -532,7 +534,10 @@ impl M0Service {
                     path: format!("{ARCHIVE_DIR}/{}/{}.json", r.app, r.id),
                     content,
                 }],
-                &commit_message(&r.app, &format!("意見收斂紀錄 {}", r.id)),
+                &commit_message(
+                    &r.app,
+                    &trf!(en: "Record of round {}", zh: "意見收斂紀錄 {}", r.id),
+                ),
             )
             .map_err(M0Error::Github)?;
         self.archive_retry
@@ -564,7 +569,10 @@ impl M0Service {
     /// v0.1.17 have a random part instead and sort among their day).
     pub fn past_rounds(&self, app: &str) -> Result<Value, M0Error> {
         if !crate::plan::valid_app_name(app) {
-            return Err(M0Error::BadRequest("應用名稱不正確。"));
+            return Err(M0Error::BadRequest(tr(
+                "The app name is not valid.",
+                "應用名稱不正確。",
+            )));
         }
         let names = self
             .github
@@ -594,7 +602,10 @@ impl M0Service {
     /// written to the archive).
     pub fn past_round(&self, app: &str, id: &str) -> Result<Value, M0Error> {
         if !crate::plan::valid_app_name(app) || !valid_round_id(id) {
-            return Err(M0Error::BadRequest("輪次代號不正確。"));
+            return Err(M0Error::BadRequest(tr(
+                "The round ID is not valid.",
+                "輪次代號不正確。",
+            )));
         }
         let text = self
             .github

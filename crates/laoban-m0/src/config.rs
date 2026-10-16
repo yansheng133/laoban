@@ -7,6 +7,8 @@ use std::sync::OnceLock;
 use regex::Regex;
 use thiserror::Error;
 
+use crate::trf;
+
 pub const ENV_ANTHROPIC_API_KEY: &str = "ANTHROPIC_API_KEY";
 pub const ENV_MODEL: &str = "LAOBAN_MODEL";
 pub const ENV_TOKEN_CAP: &str = "LAOBAN_TOKEN_CAP";
@@ -98,13 +100,20 @@ pub enum ConfigError {
 }
 
 impl ConfigError {
-    /// Traditional Chinese message for the UI. Names variables only.
+    /// Message for the UI, in the configured language. Names variables only.
     pub fn user_message(&self) -> String {
         match self {
-            ConfigError::Missing(vars) => {
-                format!("後端設定不完整：缺少環境變數 {}。", vars.join("、"))
+            ConfigError::Missing(vars) => crate::lang::pick(
+                crate::lang::current(),
+                format!(
+                    "Backend configuration is incomplete: missing environment variables {}.",
+                    vars.join(", ")
+                ),
+                format!("後端設定不完整：缺少環境變數 {}。", vars.join("、")),
+            ),
+            ConfigError::Invalid(var) => {
+                trf!(en: "Backend configuration error: environment variable {var} has an invalid value.", zh: "後端設定錯誤：環境變數 {var} 的值不正確。")
             }
-            ConfigError::Invalid(var) => format!("後端設定錯誤：環境變數 {var} 的值不正確。"),
         }
     }
 }

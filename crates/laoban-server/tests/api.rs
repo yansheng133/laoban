@@ -162,9 +162,9 @@ fn assert_error(v: &Value, code: &str) {
     assert_eq!(v["error"]["code"], code, "{v}");
     let msg = v["error"]["message"].as_str().unwrap();
     assert!(!msg.is_empty());
-    // Traditional Chinese message: at least one CJK character.
+    // English message by default (LAOBAN_LANGUAGE unset): no CJK character.
     assert!(
-        msg.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)),
+        !msg.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)),
         "{msg}"
     );
     // Also a Kubernetes Status, so kubectl prints the message.
@@ -532,6 +532,8 @@ fn binary_without_config_names_missing_variables_and_logs_requests() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_laoban-server"))
         .env("LAOBAN_LISTEN_ADDR", "127.0.0.1:0")
         .env("ANTHROPIC_API_KEY", secret)
+        // Messages for people follow LAOBAN_LANGUAGE (English by default).
+        .env("LAOBAN_LANGUAGE", "zh-Hant")
         .env_remove("LAOBAN_MODEL")
         .env_remove("LAOBAN_GITHUB_REPO")
         .env_remove("LAOBAN_GITHUB_TOKEN")

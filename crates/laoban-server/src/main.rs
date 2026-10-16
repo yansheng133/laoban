@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use laoban_ai::anthropic::{AnthropicConfig, AnthropicProvider, ApiKey, DEFAULT_BASE_URL};
-use laoban_m0::{GithubCommitter, GithubConfig, GithubToken, M0Service};
+use laoban_m0::{tr, trf, GithubCommitter, GithubConfig, GithubToken, M0Service};
 use laoban_server::{git_sha, ApiState, Server, NAME, VERSION};
 use signal_hook::consts::{SIGINT, SIGTERM};
 use signal_hook::iterator::Signals;
@@ -37,7 +37,9 @@ fn api_from_env() -> (ApiState, String) {
     };
     let invalid = |var: &str| {
         (
-            ApiState::Unconfigured(format!("後端設定錯誤：環境變數 {var} 的值不正確。")),
+            ApiState::Unconfigured(
+                trf!(en: "Backend configuration error: environment variable {var} has an invalid value.", zh: "後端設定錯誤：環境變數 {var} 的值不正確。"),
+            ),
             format!("/api disabled: environment variable {var} has an invalid value"),
         )
     };
@@ -101,7 +103,7 @@ fn api_from_env() -> (ApiState, String) {
             (ApiState::Ready(service), status)
         }
         Err(e) => (
-            ApiState::Unconfigured("後端初始化失敗。".into()),
+            ApiState::Unconfigured(tr("The backend failed to start.", "後端初始化失敗。").into()),
             format!("/api disabled: {e}"),
         ),
     }

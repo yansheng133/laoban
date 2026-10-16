@@ -195,7 +195,7 @@ fn edit_plan_then_apply() {
     assert!(body["message"]
         .as_str()
         .unwrap()
-        .starts_with("laoban: breakfast — 修改：加上飲料"));
+        .starts_with("laoban: breakfast — Change: 加上飲料"));
 }
 
 #[test]
@@ -446,7 +446,7 @@ fn restore_publishes_an_old_version_without_ai() {
     assert!(body["message"]
         .as_str()
         .unwrap()
-        .starts_with("laoban: todo — 還原："));
+        .starts_with("laoban: todo — Restore: "));
 }
 
 #[test]
@@ -583,7 +583,7 @@ fn manual_save_checks() {
     let mut big = current.clone();
     big["web"]["app.js"] = json!("a".repeat(70 * 1024));
     let err = save_files(&h, big, V2, Some(&token)).unwrap_err();
-    assert!(err.user_message().contains("太大"));
+    assert!(err.user_message().contains("too large"));
     let mut extra = current;
     extra["web"]["x.js"] = json!("");
     assert_eq!(
