@@ -245,7 +245,11 @@ impl M0Service {
         {
             let mut rs = self.rounds();
             for (app, mut list) in by_app {
-                list.sort_by(|a, b| (a.opened, &a.id).cmp(&(b.opened, &b.id)));
+                // The app's round is the active one (there is at most one),
+                // else the newest; the others are replaced ones.
+                list.sort_by(|a, b| {
+                    (a.state.active(), a.opened, &a.id).cmp(&(b.state.active(), b.opened, &b.id))
+                });
                 let Some(current) = list.pop() else { continue };
                 for old in list {
                     self.retire_round(old);
