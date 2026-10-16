@@ -71,10 +71,20 @@ pub fn github_mock_versions(
     versions: Vec<Version>,
 ) -> MockServer {
     let blobs = Arc::new(AtomicUsize::new(0));
+    let commits = Arc::new(AtomicUsize::new(0));
     // An app's laoban.json as committed: a blob holding an app's metadata
     // becomes what later reads return once the branch moves.
     let apps = Arc::new(Mutex::new(apps));
     let pending: Arc<Mutex<Vec<(String, String)>>> = Arc::new(Mutex::new(Vec::new()));
+    // The main branch's commits, oldest first: (SHA, apps at that commit).
+    // Apps given without explicit versions are at BASE_COMMIT.
+    type Snapshot = (String, Vec<(String, Option<String>)>);
+    let history: Arc<Mutex<Vec<Snapshot>>> = Arc::new(Mutex::new(vec![(
+        BASE_COMMIT.to_string(),
+        apps.lock().unwrap().clone(),
+    )]));
+    // The archive branch: its head and the files written to it.
+    let archive: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     MockServer::start(move |r: &Recorded| {
         let p = r.path.as_str();
         let repo = "/repos/example-owner/laoban-apps/";
@@ -85,13 +95,35 @@ pub fn github_mock_versions(
             if !rest.starts_with("sha=main&per_page=") {
                 return Reply::json(400, r#"{"message":"bad query"}"#);
             }
-            let list: Vec<serde_json::Value> = versions
+            let mut list: Vec<serde_json::Value> = versions
                 .iter()
                 .filter(|(app, _, _, _)| path == format!("apps/{app}/laoban.json"))
                 .map(|(app, sha, _, date)| {
                     json!({"sha": sha, "commit": {"message": format!("laoban: {app} — x\n\nGenerated-by: laoban\n"), "committer": {"date": date}}})
                 })
                 .collect();
+            // Commits made here that changed this app's laoban.json, newest
+            // first, before the given versions (or BASE_COMMIT without any).
+            {
+                let history = history.lock().unwrap();
+                let skip_base = !list.is_empty();
+                let mut last: Option<Option<String>> = None;
+                let mut found = Vec::new();
+                for (sha, snap) in history.iter() {
+                    let meta = snap
+                        .iter()
+                        .find(|(n, _)| path == format!("apps/{n}/laoban.json"))
+                        .and_then(|(_, m)| m.clone());
+                    let changed = meta.is_some() && last.as_ref() != Some(&meta);
+                    if changed && !(skip_base && sha == BASE_COMMIT) {
+                        found.push(json!({"sha": sha, "commit": {"message": "laoban: x\n", "committer": {"date": "2026-10-16T00:00:00Z"}}}));
+                    }
+                    last = Some(meta);
+                }
+                found.reverse();
+                found.extend(list);
+                list = found;
+            }
             return Reply::json(200, serde_json::Value::Array(list).to_string());
         }
         let contents = "/repos/example-owner/laoban-apps/contents/";
@@ -104,10 +136,23 @@ pub fn github_mock_versions(
                     if r.header("accept") != Some("application/vnd.github.raw+json") {
                         return Reply::json(415, r#"{"message":"want raw"}"#);
                     }
-                    return match versions.iter().find(|(app, sha, _, _)| {
+                    if let Some((_, _, meta, _)) = versions.iter().find(|(app, sha, _, _)| {
                         sha == git_ref && path == format!("apps/{app}/laoban.json")
                     }) {
-                        Some((_, _, meta, _)) => Reply::json(200, meta.clone()),
+                        return Reply::json(200, meta.clone());
+                    }
+                    let history = history.lock().unwrap();
+                    let meta =
+                        history
+                            .iter()
+                            .find(|(sha, _)| sha == git_ref)
+                            .and_then(|(_, snap)| {
+                                snap.iter()
+                                    .find(|(n, _)| path == format!("apps/{n}/laoban.json"))
+                                    .and_then(|(_, m)| m.clone())
+                            });
+                    return match meta {
+                        Some(m) => Reply::json(200, m),
                         None => Reply::json(404, r#"{"message":"Not Found"}"#),
                     };
                 }
@@ -142,14 +187,45 @@ pub fn github_mock_versions(
         }
         let base = "/repos/example-owner/laoban-apps/git";
         match (r.method.as_str(), p.strip_prefix(base).unwrap_or("")) {
-            ("GET", "/ref/heads/main") => Reply::json(
+            ("GET", "/ref/heads/main") => {
+                let head = history.lock().unwrap().last().unwrap().0.clone();
+                Reply::json(
+                    200,
+                    json!({"ref": "refs/heads/main", "object": {"type": "commit", "sha": head}})
+                        .to_string(),
+                )
+            }
+            ("GET", "/ref/heads/laoban-rounds") => match archive.lock().unwrap().clone() {
+                Some(head) => Reply::json(
+                    200,
+                    json!({"ref": "refs/heads/laoban-rounds", "object": {"sha": head}}).to_string(),
+                ),
+                None => Reply::json(404, r#"{"message":"Not Found"}"#),
+            },
+            // A GitHub that refuses moving main refuses the archive too.
+            ("POST", "/refs") | ("PATCH", "/refs/heads/laoban-rounds")
+                if matches!(update, RefUpdate::Status(_)) =>
+            {
+                pending.lock().unwrap().clear();
+                Reply::json(422, r#"{"message":"refused"}"#)
+            }
+            ("POST", "/refs") => {
+                let v: serde_json::Value = serde_json::from_str(&r.body_str()).unwrap();
+                assert_eq!(v["ref"], "refs/heads/laoban-rounds");
+                *archive.lock().unwrap() = Some(v["sha"].as_str().unwrap().to_string());
+                pending.lock().unwrap().clear();
+                Reply::json(201, json!({"ref": v["ref"]}).to_string())
+            }
+            ("PATCH", "/refs/heads/laoban-rounds") => {
+                let v: serde_json::Value = serde_json::from_str(&r.body_str()).unwrap();
+                *archive.lock().unwrap() = Some(v["sha"].as_str().unwrap().to_string());
+                pending.lock().unwrap().clear();
+                Reply::json(200, "{}")
+            }
+            ("GET", path) if path.starts_with("/commits/") => Reply::json(
                 200,
-                json!({"ref": "refs/heads/main", "object": {"type": "commit", "sha": BASE_COMMIT}})
+                json!({"sha": path.trim_start_matches("/commits/"), "tree": {"sha": BASE_TREE}})
                     .to_string(),
-            ),
-            ("GET", path) if path == format!("/commits/{BASE_COMMIT}") => Reply::json(
-                200,
-                json!({"sha": BASE_COMMIT, "tree": {"sha": BASE_TREE}}).to_string(),
             ),
             ("POST", "/blobs") => {
                 let n = blobs.fetch_add(1, Ordering::SeqCst) + 1;
@@ -167,9 +243,20 @@ pub fn github_mock_versions(
                 Reply::json(201, json!({"sha": format!("{n:040x}")}).to_string())
             }
             ("POST", "/trees") => Reply::json(201, json!({"sha": NEW_TREE}).to_string()),
-            ("POST", "/commits") => Reply::json(201, json!({"sha": NEW_COMMIT}).to_string()),
+            ("POST", "/commits") => {
+                // The first commit is NEW_COMMIT, later ones count up.
+                let n = commits.fetch_add(1, Ordering::SeqCst);
+                let sha = if n == 0 {
+                    NEW_COMMIT.to_string()
+                } else {
+                    format!("5{:039x}", n)
+                };
+                Reply::json(201, json!({ "sha": sha }).to_string())
+            }
             ("PATCH", "/refs/heads/main") => match update {
                 RefUpdate::Ok => {
+                    let v: serde_json::Value = serde_json::from_str(&r.body_str()).unwrap();
+                    let sha = v["sha"].as_str().unwrap_or(NEW_COMMIT).to_string();
                     let mut apps = apps.lock().unwrap();
                     for (app, meta) in pending.lock().unwrap().drain(..) {
                         match apps.iter_mut().find(|(n, _)| *n == app) {
@@ -177,10 +264,10 @@ pub fn github_mock_versions(
                             None => apps.push((app, Some(meta))),
                         }
                     }
+                    history.lock().unwrap().push((sha.clone(), apps.clone()));
                     Reply::json(
                         200,
-                        json!({"ref": "refs/heads/main", "object": {"sha": NEW_COMMIT}})
-                            .to_string(),
+                        json!({"ref": "refs/heads/main", "object": {"sha": sha}}).to_string(),
                     )
                 }
                 RefUpdate::Status(s) => {

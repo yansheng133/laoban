@@ -74,3 +74,29 @@ spec:
   nodes:
     - { id: app-web, layer: code, kind: app, name: web, detail: 1, pos: { x: -4, z: -1 } }
   edges: []
+---
+apiVersion: laoban.yansheng133.github.io/v1alpha1
+kind: Round
+metadata:
+  name: shop-r-20261016-0a1b2c
+  namespace: laoban-system
+  labels:
+    laoban.yansheng133.github.io/app: shop
+spec:
+  schema: 1
+  app: shop
+  targetNamespace: laoban-dev
+  state: collecting
+  deadline: 1800000000
+  round:
+    id: r-20261016-0a1b2c
+    app: shop
+    initiator: u-dev
+    state: collecting
+    opinions:
+      - id: o1
+        by: u-dev
+        at: "2026-10-16T06:00:00Z"
+        text: 清單要能排序
+        supporters: []
+        replies: []

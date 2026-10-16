@@ -67,3 +67,38 @@ spec:
   nodes:
     - { id: a, layer: code, kind: app, name: a, detail: 4, pos: { x: 0, z: 0 } }
   edges: []
+---
+# Round: unknown state.
+apiVersion: laoban.yansheng133.github.io/v1alpha1
+kind: Round
+metadata:
+  name: bad-round-state
+  namespace: laoban-system
+spec:
+  schema: 1
+  app: shop
+  state: paused
+  round: {}
+---
+# Round: app name not usable as a directory.
+apiVersion: laoban.yansheng133.github.io/v1alpha1
+kind: Round
+metadata:
+  name: bad-round-app
+  namespace: laoban-system
+spec:
+  schema: 1
+  app: Shop_1
+  state: collecting
+  round: {}
+---
+# Round: no round data.
+apiVersion: laoban.yansheng133.github.io/v1alpha1
+kind: Round
+metadata:
+  name: bad-round-missing
+  namespace: laoban-system
+spec:
+  schema: 1
+  app: shop
+  state: collecting

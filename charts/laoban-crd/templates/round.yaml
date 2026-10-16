@@ -1,0 +1,89 @@
+# Round: one round of 意見收斂 (opinions → AI plan → confirmations → publish),
+# written only by the laoban backend (its Role allows rounds in its own
+# namespace and nothing else). Users never write it; they go through the
+# backend's API. spec.round is the backend's own data (see
+# crates/laoban-m0/src/rounds.rs, Round); it is versioned by spec.schema.
+# Finished rounds are archived to the laoban-rounds branch of the apps
+# repository, then deleted when the app's next round starts.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: rounds.laoban.yansheng133.github.io
+  {{- include "laoban-crd.metadata" . | nindent 2 }}
+spec:
+  group: laoban.yansheng133.github.io
+  scope: Namespaced
+  names:
+    kind: Round
+    listKind: RoundList
+    plural: rounds
+    singular: round
+    shortNames:
+      - lbround
+    categories:
+      - laoban
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      additionalPrinterColumns:
+        - name: App
+          type: string
+          jsonPath: .spec.app
+        - name: State
+          type: string
+          jsonPath: .spec.state
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          description: One round of opinions on an app, kept by the laoban backend across restarts.
+          type: object
+          required:
+            - spec
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              required:
+                - schema
+                - app
+                - state
+                - round
+              properties:
+                schema:
+                  description: Shape of spec.round. The backend reads the shapes it knows.
+                  type: integer
+                  minimum: 1
+                app:
+                  description: The app (directory under apps/ in the apps repository).
+                  type: string
+                  pattern: '^[a-z][a-z0-9-]{1,30}$'
+                targetNamespace:
+                  description: Namespace the app is deployed to.
+                  type: string
+                  maxLength: 63
+                state:
+                  type: string
+                  enum:
+                    - collecting
+                    - converging
+                    - confirming
+                    - applying
+                    - done
+                    - failed
+                    - cancelled
+                deadline:
+                  description: Unix seconds; when collecting ends.
+                  type: integer
+                  minimum: 0
+                round:
+                  description: The round itself (opinions, +1s, replies, log, confirmations, plan). Written by the backend only.
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true

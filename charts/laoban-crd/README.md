@@ -1,8 +1,11 @@
 # laoban-crd
 
-laoban 的 CustomResourceDefinition：`ProjectPolicy`、`ChangeRequest`、`ArchitectureVersion`，API group `laoban.yansheng133.github.io`，版本 `v1alpha1`。
+laoban 的 CustomResourceDefinition，API group `laoban.yansheng133.github.io`，版本 `v1alpha1`：
 
-必須比 `laoban` chart 先裝；從 Rancher Apps 安裝 `laoban` 時，`catalog.cattle.io/auto-install` 會自動先裝相同版本的本 chart。
+- `Round`：意見收斂的一輪，由後端寫入（試吃版 v0.1.15 起就要裝）。
+- `ProjectPolicy`、`ChangeRequest`、`ArchitectureVersion`：第一階段用。
+
+要比 `laoban` chart 先裝、先升級。沒裝時後端仍會啟動，但意見收斂不能使用。
 
 `keepOnUninstall`（預設 `true`）會在 CRD 加上 `helm.sh/resource-policy: keep`，`helm uninstall` 不會刪 CRD，也就不會連帶刪掉所有 laoban 物件。
 

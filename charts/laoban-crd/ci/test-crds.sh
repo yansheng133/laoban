@@ -17,7 +17,8 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 "${K[@]}" wait --for condition=established --timeout=60s \
   crd/projectpolicies.laoban.yansheng133.github.io \
   crd/changerequests.laoban.yansheng133.github.io \
-  crd/architectureversions.laoban.yansheng133.github.io
+  crd/architectureversions.laoban.yansheng133.github.io \
+  crd/rounds.laoban.yansheng133.github.io
 "${K[@]}" create namespace "$NS" --dry-run=client -o yaml | "${K[@]}" apply -f -
 
 echo "== valid examples are accepted"
@@ -28,6 +29,10 @@ got=$("${K[@]}" -n "$NS" get projectpolicy shop -o jsonpath='{.spec.productionAl
 [ "$got" = "true/true" ] || fail "ProjectPolicy defaults: got $got"
 got=$("${K[@]}" -n "$NS" get changerequest shop-v3 -o jsonpath='{.spec.risk.permissionChange}')
 [ "$got" = "false" ] || fail "ChangeRequest risk default: got $got"
+
+echo "== a Round keeps the backend's data as written"
+got=$("${K[@]}" -n "$NS" get round shop-r-20261016-0a1b2c -o jsonpath='{.spec.round.opinions[0].text}')
+[ "$got" = "清單要能排序" ] || fail "Round spec.round not kept: got $got"
 
 echo "== invalid examples are rejected"
 tmp=$(mktemp -d)

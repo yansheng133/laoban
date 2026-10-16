@@ -15,25 +15,32 @@
 //!    it is published like any change.
 //!
 //! This module is the state machine only (pure, no I/O, time passed in);
-//! `service` runs the AI and GitHub steps. Rounds live in memory like plans:
-//! a backend restart drops a round in progress.
+//! `service` runs the AI and GitHub steps and keeps every round in a
+//! `Round` resource (see `state`), so a round survives a backend restart.
 //!
 //! Users are the names the Kubernetes API server verified.
 
 use std::collections::BTreeMap;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+
+use crate::plan::AppPlan;
 
 /// Longest single opinion, in characters.
 pub const MAX_OPINION_CHARS: usize = 1_000;
-/// All opinions of a round together, in characters (they go to the AI as
-/// one change request).
+/// Longest reply, in characters.
+pub const MAX_REPLY_CHARS: usize = 300;
+/// All opinions and replies of a round together, in characters (they go to
+/// the AI as one change request).
 pub const MAX_ROUND_CHARS: usize = 8_000;
 pub const MAX_OPINIONS: usize = 30;
 /// Opinions sent together (one per component, for example).
 pub const MAX_BATCH: usize = 10;
 /// Replies under one opinion.
 pub const MAX_REPLIES: usize = 20;
+/// The converged plan as stored with the round (summary, steps,
+/// architecture and what is needed to write the code), in bytes of JSON.
+pub const MAX_PLAN_BYTES: usize = 150 * 1024;
 /// Longest deadline when opening a round.
 pub const MAX_DEADLINE_MINUTES: u64 = 24 * 60;
 /// After an objection, opinions are collected again for this long.
@@ -41,9 +48,50 @@ pub const OBJECTION_MINUTES: u64 = 10;
 /// Log entries kept per round.
 const MAX_LOG: usize = 100;
 
+/// The size limits of a round. The administrator may lower them (chart
+/// values), never raise them above the constants: everything in a round
+/// goes to the AI and is stored in one Kubernetes resource.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Limits {
+    pub opinion_chars: usize,
+    pub reply_chars: usize,
+    pub round_chars: usize,
+    pub opinions: usize,
+    pub replies: usize,
+    pub batch: usize,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Limits {
+            opinion_chars: MAX_OPINION_CHARS,
+            reply_chars: MAX_REPLY_CHARS,
+            round_chars: MAX_ROUND_CHARS,
+            opinions: MAX_OPINIONS,
+            replies: MAX_REPLIES,
+            batch: MAX_BATCH,
+        }
+    }
+}
+
+impl Limits {
+    /// The defaults are the highest values allowed.
+    pub fn within_maximum(&self) -> bool {
+        let max = Limits::default();
+        let ok = |v: usize, m: usize| (1..=m).contains(&v);
+        ok(self.opinion_chars, max.opinion_chars)
+            && ok(self.reply_chars, max.reply_chars)
+            && ok(self.round_chars, max.round_chars)
+            && ok(self.opinions, max.opinions)
+            && ok(self.replies, max.replies)
+            && ok(self.batch, max.batch)
+    }
+}
+
 /// Which part of the app a round is about. Direct edits (the code editor)
 /// to files outside it are not blocked while the round runs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Part {
     Web,
@@ -70,7 +118,7 @@ pub fn parse_scope(s: &str) -> Option<Vec<Part>> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum State {
     /// Taking opinions until the deadline.
@@ -104,7 +152,7 @@ impl State {
 }
 
 /// The component of the app's architecture an opinion is about.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Target {
     /// Node id in the architecture (as the 3D view uses it).
     pub id: String,
@@ -112,14 +160,14 @@ pub struct Target {
     pub name: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Reply {
     pub by: String,
     pub at: String,
     pub text: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Opinion {
     /// "o1", "o2", … within the round.
     pub id: String,
@@ -127,7 +175,7 @@ pub struct Opinion {
     pub at: String,
     pub text: String,
     /// None: about the app in general.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<Target>,
     /// People who +1'd it (not the author).
     pub supporters: Vec<String>,
@@ -150,7 +198,7 @@ impl NewOpinion {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Answer {
     Pending,
@@ -158,16 +206,16 @@ pub enum Answer {
     Skipped,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Confirmer {
     pub user: String,
     pub answer: Answer,
     /// When answered or skipped.
-    #[serde(skip_serializing_if = "String::is_empty")]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub at: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LogEntry {
     pub at: String,
     pub by: String,
@@ -176,14 +224,14 @@ pub struct LogEntry {
     /// What happened, for the page to show in its language: `opened`,
     /// `opinion`, `objected`, `converging`, `converged`, `failed`,
     /// `confirmed`, `skipped`, `applying`, `done`, `cancelled`.
-    pub code: &'static str,
+    pub code: String,
     /// Values the event refers to (`minutes`, `count`, `user`, `message`).
-    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
-    pub args: std::collections::BTreeMap<&'static str, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub args: BTreeMap<String, String>,
 }
 
 /// The plan a round converged to.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RoundPlan {
     pub plan_id: String,
@@ -191,11 +239,30 @@ pub struct RoundPlan {
     pub steps: Vec<String>,
     pub architecture: serde_json::Value,
     /// The AI's notes: opinions not followed, or why nothing changes.
-    #[serde(skip_serializing_if = "String::is_empty")]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub notes: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+/// What writing the code for a round's plan needs, kept with the round so
+/// the plan can still be published after a backend restart (the plan
+/// store itself is in memory). Holds only masked text.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanRecipe {
+    pub plan: AppPlan,
+    pub masked_prompt: String,
+    pub model: String,
+    /// The opinions as shown in the history (masked).
+    #[serde(default)]
+    pub label: Option<String>,
+    /// The app's commit the plan was made from.
+    pub base_commit: String,
+}
+
+/// Fields kept in the stored round but not shown to the page.
+const HIDDEN: [&str; 5] = ["lastOpinion", "startCommit", "recipe", "archived", "opened"];
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Round {
     pub id: String,
@@ -214,41 +281,149 @@ pub struct Round {
     pub result: Option<serde_json::Value>,
     pub log: Vec<LogEntry>,
     /// Number of the last opinion ID given out.
-    #[serde(skip)]
+    #[serde(default)]
     last_opinion: u32,
+    /// The app's commit when the round opened: its files are the starting
+    /// point for telling hand edits made during the round.
+    #[serde(default)]
+    pub start_commit: String,
+    /// Set once converged (see [`PlanRecipe`]).
+    #[serde(default)]
+    pub recipe: Option<PlanRecipe>,
+    /// Finished and written to the archive branch in GitHub.
+    #[serde(default)]
+    pub archived: bool,
+    /// Unix seconds when opened (orders the rounds of an app).
+    #[serde(default)]
+    pub opened: u64,
+    /// The stored resource's version, for writes that must not overwrite
+    /// someone else's (Kubernetes `resourceVersion`).
+    #[serde(skip)]
+    pub store_version: Option<String>,
+    #[serde(skip)]
+    limits: Limits,
+}
+
+/// What a length limit is about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Text {
+    Opinion,
+    Reply,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RoundError {
-    /// Opinion empty or too long, bad deadline or scope.
+    /// Opinion empty, bad deadline or scope.
     Invalid(&'static str),
+    /// An opinion or reply is longer than `max` characters.
+    TooLong { what: Text, max: usize },
     /// Not allowed in the current state.
     WrongState(State),
     /// Only the initiator may do this.
     NotInitiator,
     /// The caller has no answer to give in this round.
     NotConfirmer,
-    /// The round has too many opinions or characters.
-    Full,
+    /// The round has too many opinions, replies or characters.
+    Full {
+        opinions: usize,
+        replies: usize,
+        chars: usize,
+    },
     /// No opinion with that ID in this round.
     NoSuchOpinion,
 }
 
-fn clean(text: &str) -> Result<String, RoundError> {
+/// Characters as the page counts them (Unicode scalar values).
+pub fn char_count(text: &str) -> usize {
+    text.trim().chars().count()
+}
+
+fn clean(text: &str, what: Text, max: usize) -> Result<String, RoundError> {
     let t = text.trim();
     if t.is_empty() {
-        return Err(RoundError::Invalid("請輸入意見。"));
+        return Err(RoundError::Invalid(match what {
+            Text::Opinion => "請輸入意見。",
+            Text::Reply => "請輸入回覆。",
+        }));
     }
-    if t.chars().count() > MAX_OPINION_CHARS {
-        return Err(RoundError::Invalid("一則意見最多 1000 字。"));
+    if t.chars().count() > max {
+        return Err(RoundError::TooLong { what, max });
     }
     Ok(t.to_string())
 }
 
 impl Round {
-    /// Open a round. `now` is unix seconds, `at` its RFC 3339 form.
+    /// Read a stored round back. `version` is the resource's version.
+    pub fn from_stored(
+        v: serde_json::Value,
+        version: Option<String>,
+        limits: Limits,
+    ) -> Result<Self, serde_json::Error> {
+        let mut r: Round = serde_json::from_value(v)?;
+        // IDs are never reused within a round, even if the counter was lost.
+        let highest = r
+            .opinions
+            .iter()
+            .filter_map(|o| o.id.trim_start_matches('o').parse::<u32>().ok())
+            .max()
+            .unwrap_or(0);
+        r.last_opinion = r.last_opinion.max(highest);
+        r.store_version = version;
+        r.limits = limits;
+        Ok(r)
+    }
+
+    /// The round as stored (everything, including the hidden fields).
+    pub fn to_stored(&self) -> serde_json::Value {
+        serde_json::to_value(self).unwrap_or_default()
+    }
+
+    pub fn set_limits(&mut self, limits: Limits) {
+        self.limits = limits;
+    }
+
+    pub fn limits(&self) -> Limits {
+        self.limits
+    }
+
+    fn full(&self) -> RoundError {
+        RoundError::Full {
+            opinions: self.limits.opinions,
+            replies: self.limits.replies,
+            chars: self.limits.round_chars,
+        }
+    }
+
+    /// Open a round with the default limits. `now` is unix seconds, `at`
+    /// its RFC 3339 form.
     #[allow(clippy::too_many_arguments)] // plain data, all required
     pub fn open(
+        id: String,
+        app: &str,
+        user: &str,
+        opinions: Vec<NewOpinion>,
+        deadline_minutes: u64,
+        scope: Vec<Part>,
+        now: u64,
+        at: &str,
+    ) -> Result<Self, RoundError> {
+        Self::open_with(
+            Limits::default(),
+            id,
+            app,
+            user,
+            opinions,
+            deadline_minutes,
+            scope,
+            now,
+            at,
+        )
+    }
+
+    /// [`Round::open`] with the given limits.
+    #[allow(clippy::too_many_arguments)] // plain data, all required
+    pub fn open_with(
+        limits: Limits,
         id: String,
         app: &str,
         user: &str,
@@ -278,6 +453,12 @@ impl Round {
             result: None,
             log: Vec::new(),
             last_opinion: 0,
+            start_commit: String::new(),
+            recipe: None,
+            archived: false,
+            opened: now,
+            store_version: None,
+            limits,
         };
         r.push_opinions(user, opinions, at)?;
         r.note(
@@ -302,8 +483,11 @@ impl Round {
             at: at.to_string(),
             by: by.to_string(),
             event,
-            code,
-            args: args.iter().cloned().collect(),
+            code: code.to_string(),
+            args: args
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.clone()))
+                .collect(),
         });
         if self.log.len() > MAX_LOG {
             self.log.remove(0);
@@ -311,7 +495,7 @@ impl Round {
     }
 
     /// Opinions and replies together, in characters.
-    fn total_chars(&self) -> usize {
+    pub fn total_chars(&self) -> usize {
         self.opinions
             .iter()
             .map(|o| {
@@ -334,18 +518,21 @@ impl Round {
         if items.is_empty() {
             return Err(RoundError::Invalid("請輸入意見。"));
         }
-        if items.len() > MAX_BATCH {
-            return Err(RoundError::Invalid("一次最多送出 10 則意見。"));
+        if items.len() > self.limits.batch {
+            return Err(RoundError::Invalid("一次送出的意見太多。"));
         }
         let mut cleaned = Vec::with_capacity(items.len());
         for item in items {
-            cleaned.push((clean(&item.text)?, item.target));
+            cleaned.push((
+                clean(&item.text, Text::Opinion, self.limits.opinion_chars)?,
+                item.target,
+            ));
         }
         let added: usize = cleaned.iter().map(|(t, _)| t.chars().count()).sum();
-        if self.opinions.len() + cleaned.len() > MAX_OPINIONS
-            || self.total_chars() + added > MAX_ROUND_CHARS
+        if self.opinions.len() + cleaned.len() > self.limits.opinions
+            || self.total_chars() + added > self.limits.round_chars
         {
-            return Err(RoundError::Full);
+            return Err(self.full());
         }
         let count = cleaned.len();
         for (text, target) in cleaned {
@@ -451,15 +638,17 @@ impl Round {
         at: &str,
     ) -> Result<(), RoundError> {
         self.discussable()?;
-        let text = clean(text)?;
+        let text = clean(text, Text::Reply, self.limits.reply_chars)?;
         let total = self.total_chars();
+        let full = self.full();
+        let limits = self.limits;
         let o = self
             .opinions
             .iter_mut()
             .find(|o| o.id == opinion)
             .ok_or(RoundError::NoSuchOpinion)?;
-        if o.replies.len() >= MAX_REPLIES || total + text.chars().count() > MAX_ROUND_CHARS {
-            return Err(RoundError::Full);
+        if o.replies.len() >= limits.replies || total + text.chars().count() > limits.round_chars {
+            return Err(full);
         }
         o.replies.push(Reply {
             by: user.to_string(),
@@ -487,6 +676,7 @@ impl Round {
     pub fn start_converging(&mut self, at: &str) {
         self.state = State::Converging;
         self.plan = None;
+        self.recipe = None;
         self.message.clear();
         self.note(
             at,
@@ -642,12 +832,13 @@ impl Round {
     /// A confirmer disagrees: the comment becomes an opinion and opinions
     /// are collected again for [`OBJECTION_MINUTES`].
     pub fn object(&mut self, user: &str, text: &str, now: u64, at: &str) -> Result<(), RoundError> {
-        clean(text)?;
+        clean(text, Text::Opinion, self.limits.opinion_chars)?;
         self.confirmer_mut(user)?;
         self.push_opinions(user, vec![NewOpinion::general(text)], at)?;
         self.state = State::Collecting;
         self.deadline = now + OBJECTION_MINUTES * 60;
         self.plan = None;
+        self.recipe = None;
         self.confirmers.clear();
         self.note(
             at,
@@ -666,6 +857,18 @@ impl Round {
             && self.confirmers.iter().all(|c| c.answer != Answer::Pending)
     }
 
+    /// After an answer: if everyone has answered, start applying (in the
+    /// same change as the answer, so no state has everyone answered but
+    /// nothing going on). Returns whether it started.
+    pub fn begin_applying_if_answered(&mut self, at: &str) -> bool {
+        if self.all_answered() {
+            self.start_applying(at);
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn start_applying(&mut self, at: &str) {
         self.state = State::Applying;
         self.note(
@@ -674,6 +877,17 @@ impl Round {
             "applying",
             &[],
             "全部確認，AI 開始修改程式".into(),
+        );
+    }
+
+    /// The backend restarted while the AI was converging: it starts again.
+    pub fn note_restarted(&mut self, at: &str) {
+        self.note(
+            at,
+            "laoban",
+            "restarted",
+            &[],
+            "後端重新啟動，AI 重新開始收斂".into(),
         );
     }
 
@@ -730,9 +944,26 @@ impl Round {
         self.scope.sort();
     }
 
-    /// The round as JSON for `user`, with what that user may do.
-    pub fn to_json_for(&self, user: Option<&str>) -> serde_json::Value {
+    /// The round as shown: without the stored-only fields.
+    pub fn to_public_json(&self) -> serde_json::Value {
         let mut v = serde_json::to_value(self).unwrap_or_default();
+        if let Some(o) = v.as_object_mut() {
+            for k in HIDDEN {
+                o.remove(k);
+            }
+        }
+        v
+    }
+
+    /// The round as JSON for `user`, with what that user may do, the
+    /// limits and how much of them is used.
+    pub fn to_json_for(&self, user: Option<&str>) -> serde_json::Value {
+        let mut v = self.to_public_json();
+        v["limits"] = serde_json::json!(self.limits);
+        v["used"] = serde_json::json!({
+            "chars": self.total_chars(),
+            "opinions": self.opinions.len(),
+        });
         let me = user.unwrap_or("");
         let pending: BTreeMap<&str, bool> = self
             .confirmers
@@ -857,10 +1088,10 @@ mod tests {
         for _ in 0..7 {
             r.add_opinion("u", &"x".repeat(1000), "t").unwrap();
         }
-        assert_eq!(
+        assert!(matches!(
             r.add_opinion("u", &"x".repeat(1000), "t"),
-            Err(RoundError::Full)
-        );
+            Err(RoundError::Full { chars: 8_000, .. })
+        ));
         assert_eq!(r.cancel("u-b", "t"), Err(RoundError::NotInitiator));
         r.cancel("u-a", "t").unwrap();
         assert!(!r.state.active());
@@ -968,5 +1199,158 @@ mod tests {
         let bad = vec![NewOpinion::general("ok"), NewOpinion::general(" ")];
         assert!(r.add_opinions("u", bad, "t").is_err());
         assert_eq!(r.opinions.len(), 1, "nothing added");
+    }
+
+    #[test]
+    fn text_limits_at_the_boundary() {
+        let mut r = open(10);
+        // 1000 characters is fine, 1001 is not; CJK and emoji count as one.
+        r.add_opinion("u-b", &"字".repeat(1000), "t").unwrap();
+        assert_eq!(
+            r.add_opinion("u-b", &"😀".repeat(1001), "t"),
+            Err(RoundError::TooLong {
+                what: Text::Opinion,
+                max: 1000
+            })
+        );
+        // Surrounding spaces do not count.
+        r.add_opinion("u-b", &format!("  {}  ", "x".repeat(1000)), "t")
+            .unwrap();
+        // Replies: 300.
+        r.reply("u-c", "o1", &"回".repeat(300), "t").unwrap();
+        assert_eq!(
+            r.reply("u-c", "o1", &"回".repeat(301), "t"),
+            Err(RoundError::TooLong {
+                what: Text::Reply,
+                max: 300
+            })
+        );
+        assert!(matches!(
+            r.reply("u-c", "o1", "  ", "t"),
+            Err(RoundError::Invalid(_))
+        ));
+        // The total counts replies too: 4 + 1000 + 1000 + 300 used.
+        assert_eq!(r.total_chars(), "加上到期日".chars().count() + 2300);
+        let v = r.to_json_for(Some("u-b"));
+        assert_eq!(v["used"]["chars"], r.total_chars());
+        assert_eq!(v["used"]["opinions"], 3);
+        assert_eq!(v["limits"]["replyChars"], 300);
+        assert_eq!(v["limits"]["roundChars"], 8000);
+    }
+
+    #[test]
+    fn replies_per_opinion_and_lower_limits() {
+        let mut r = open(10);
+        for i in 0..MAX_REPLIES {
+            r.reply("u-b", "o1", &format!("r{i}"), "t").unwrap();
+        }
+        assert!(matches!(
+            r.reply("u-b", "o1", "one more", "t"),
+            Err(RoundError::Full { .. })
+        ));
+
+        let lower = Limits {
+            opinion_chars: 10,
+            reply_chars: 5,
+            round_chars: 30,
+            opinions: 3,
+            replies: 1,
+            batch: 2,
+        };
+        assert!(lower.within_maximum());
+        assert!(!Limits {
+            opinion_chars: 1001,
+            ..Limits::default()
+        }
+        .within_maximum());
+        assert!(!Limits {
+            opinions: 0,
+            ..Limits::default()
+        }
+        .within_maximum());
+        let mut r = Round::open_with(
+            lower,
+            "r2".into(),
+            "todo",
+            "u-a",
+            vec![NewOpinion::general("0123456789")],
+            10,
+            vec![Part::Web],
+            T0,
+            "t",
+        )
+        .unwrap();
+        assert!(matches!(
+            r.add_opinion("u-b", "01234567890", "t"),
+            Err(RoundError::TooLong { max: 10, .. })
+        ));
+        assert!(matches!(
+            r.add_opinions(
+                "u-b",
+                (0..3)
+                    .map(|i| NewOpinion::general(&i.to_string()))
+                    .collect(),
+                "t"
+            ),
+            Err(RoundError::Invalid(_))
+        ));
+        r.add_opinion("u-b", "0123456789", "t").unwrap();
+        r.add_opinion("u-b", "0123456789", "t").unwrap();
+        assert_eq!(
+            r.add_opinion("u-b", "x", "t"),
+            Err(RoundError::Full {
+                opinions: 3,
+                replies: 1,
+                chars: 30
+            })
+        );
+    }
+
+    #[test]
+    fn stored_round_reads_back() {
+        let mut r = open(0);
+        r.add_opinions("u-b", vec![on("app-api", "todo-api", "API 回傳總數")], "t1")
+            .unwrap();
+        r.toggle_support("u-a", "o2", "t2").unwrap();
+        r.reply("u-a", "o2", "好", "t3").unwrap();
+        r.start_commit = "a".repeat(40);
+        r.start_converging("t4");
+        r.converged(plan(), "t5");
+        r.recipe = Some(PlanRecipe {
+            plan: crate::plan::AppPlan {
+                app_name: None,
+                summary: "s".into(),
+                steps: vec!["x".into()],
+                web_modules: vec![],
+                api_modules: vec![],
+                endpoints: vec![],
+                notes: String::new(),
+            },
+            masked_prompt: "m".into(),
+            model: "model-a-test".into(),
+            label: Some("（u-a）加上到期日".into()),
+            base_commit: "b".repeat(40),
+        });
+        let stored = r.to_stored();
+        // The stored form keeps what the page does not see.
+        assert_eq!(stored["lastOpinion"], 2);
+        assert!(stored["recipe"].is_object());
+        let page = r.to_json_for(Some("u-a"));
+        for k in HIDDEN {
+            assert!(page.get(k).is_none(), "{k} shown to the page");
+        }
+        let back = Round::from_stored(stored, Some("17".into()), Limits::default()).unwrap();
+        assert_eq!(back.store_version.as_deref(), Some("17"));
+        let mut expected = r.clone();
+        expected.store_version = Some("17".into());
+        assert_eq!(back, expected);
+
+        // A lost counter never reuses an ID.
+        let mut stored = r.to_stored();
+        stored["lastOpinion"] = serde_json::json!(0);
+        let mut back = Round::from_stored(stored, None, Limits::default()).unwrap();
+        back.state = State::Collecting;
+        back.add_opinion("u-c", "x", "t").unwrap();
+        assert_eq!(back.opinions.last().unwrap().id, "o3");
     }
 }

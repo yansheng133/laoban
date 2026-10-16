@@ -13,7 +13,7 @@ import {
 } from '@jest/globals';
 import { readFileSync } from 'fs';
 import { dirname, join, resolve } from 'path';
-import { createApp, h } from 'vue';
+import { createApp, h, reactive } from 'vue';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { parse, compileScript } = require('@vue/compiler-sfc');
@@ -120,4 +120,76 @@ describe('pages mount without errors in setup()', () => {
       expect(typeof bindings).toBe('object');
     });
   }
+});
+
+describe('the round panel checks the limits before sending', () => {
+  beforeAll(() => {
+    jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+  });
+
+  function panel(over: Record<string, unknown>) {
+    const def = loadPage(join(PAGES, '../components/RoundPanel.vue'));
+    const props = reactive({
+      round:          null,
+      draft:          '',
+      pending:        null,
+      elapsed:        0,
+      error:          '',
+      disabled:       false,
+      drafts:         [],
+      removedDraft:   null,
+      selectedTarget: null,
+      notice:         '',
+      limits:         {
+        opinionChars: 1000, replyChars: 300, roundChars: 8000, opinions: 30, replies: 20, batch: 10
+      },
+      available: true,
+      ...over,
+    });
+    let b: Record<string, { value: unknown }> = {};
+    const app = createApp({
+      setup() {
+        b = def.setup(props, { emit: () => undefined }) as Record<string, { value: unknown }>;
+
+        return () => h('div');
+      },
+    });
+
+    app.mount(document.createElement('div'));
+
+    return { b, props, app };
+  }
+
+  it('a pasted long opinion is kept as typed and cannot be sent', () => {
+    const pasted = '廢'.repeat(1001);
+    const { b, props, app } = panel({ draft: pasted });
+
+    expect(props.draft).toBe(pasted);
+    expect((b.draftState.value as { over: boolean }).over).toBe(true);
+    expect(b.canOpen.value).toBe(false);
+    props.draft = '廢'.repeat(1000);
+    expect(b.canOpen.value).toBe(true);
+    app.unmount();
+  });
+
+  it('a full round takes no more opinions; without the CRD nothing opens', () => {
+    const r = {
+      id: 'r1', app: 'todo', initiator: 'u-a', scope: ['web'], state: 'collecting', deadline: 0, opinions: [], confirmers: [], plan: null, message: '', result: null, log: [], you: {
+        user: 'u-a', isInitiator: true, mustConfirm: false, canAddOpinion: true, canDiscuss: true
+      },
+      used: { chars: 7990, opinions: 9 },
+    };
+    const { b, props, app } = panel({ round: r, draft: 'x'.repeat(10) });
+
+    expect(b.canAdd.value).toBe(true);
+    props.draft = 'x'.repeat(11);
+    expect(b.canAdd.value).toBe(false);
+    expect((b.space.value as { over: boolean; shown: boolean }).over).toBe(true);
+    app.unmount();
+
+    const closed = panel({ draft: 'x', available: false });
+
+    expect(closed.b.canOpen.value).toBe(false);
+    closed.app.unmount();
+  });
 });

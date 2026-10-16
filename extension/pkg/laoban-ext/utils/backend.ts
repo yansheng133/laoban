@@ -7,6 +7,7 @@ import {
   AI_REQUEST_MARGIN_MS, AI_REQUEST_TIMEOUT_MS, BACKEND_BASE_PATH, FLEET_BUNDLES_PATH, DEFAULT_REQUEST_TIMEOUT_MS
 } from '../config/backend';
 import type { Architecture } from './layout';
+import type { RoundLimits } from './limits';
 import type { Deployment } from './rollout';
 import type { Bundle } from './bundle';
 
@@ -103,6 +104,9 @@ export interface RoundView {
   result: ApplyResponse | null;
   log: { at: string; by: string; event: string; code?: string; args?: Record<string, string> }[];
   you: { user: string; isInitiator: boolean; mustConfirm: boolean; canAddOpinion: boolean; canDiscuss?: boolean };
+  // Size limits and what the round has used of them (the backend counts).
+  limits?: RoundLimits;
+  used?: { chars: number; opinions: number };
 }
 
 // One opinion: optionally about one component of the architecture, with
@@ -127,6 +131,10 @@ export interface RoundResponse {
   round: RoundView | null;
   // Present when this call published the change.
   applied?: ApplyResponse;
+  // False when the backend cannot store rounds (the Round CRD is missing).
+  roundsAvailable?: boolean;
+  // Limits for a new round.
+  limits?: RoundLimits;
 }
 
 // The four generated files, as the AI and the editor see them.

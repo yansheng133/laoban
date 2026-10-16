@@ -317,27 +317,61 @@ impl GithubCommitter {
     /// Commit `files` on top of the branch head and move the branch.
     /// Returns the new commit SHA.
     pub fn commit(&self, files: &[CommitFile], message: &str) -> Result<String, GithubError> {
+        let branch = self.config.branch.clone();
+        self.commit_on(&branch, files, message, false)
+    }
+
+    /// Commit `files` on `branch` (another branch than the apps', such as
+    /// the archive of rounds). A missing branch is created with this one
+    /// commit and no history, so it shares nothing with the apps' branch
+    /// and Fleet (which follows that branch) never sees it.
+    pub fn commit_to_branch(
+        &self,
+        branch: &str,
+        files: &[CommitFile],
+        message: &str,
+    ) -> Result<String, GithubError> {
+        if !safe_ref(branch) || branch == self.config.branch {
+            return Err(GithubError::BadPath);
+        }
+        self.commit_on(branch, files, message, true)
+    }
+
+    fn commit_on(
+        &self,
+        branch: &str,
+        files: &[CommitFile],
+        message: &str,
+        create: bool,
+    ) -> Result<String, GithubError> {
         for f in files {
             if !safe_path(&f.path) {
                 return Err(GithubError::BadPath);
             }
         }
-        let branch = &self.config.branch;
-        let head = self.call(
+        let head = match self.call(
             "get ref",
             "GET",
             &self.url(&format!("git/ref/heads/{branch}")),
             None,
-        )?;
-        let base_commit = sha_at(&head["object"]["sha"], "get ref")?;
-
-        let commit = self.call(
-            "get commit",
-            "GET",
-            &self.url(&format!("git/commits/{base_commit}")),
-            None,
-        )?;
-        let base_tree = sha_at(&commit["tree"]["sha"], "get commit")?;
+        ) {
+            Ok(head) => Some(head),
+            Err(GithubError::Status { status: 404, .. }) if create => None,
+            Err(e) => return Err(e),
+        };
+        let base = match &head {
+            Some(head) => {
+                let base_commit = sha_at(&head["object"]["sha"], "get ref")?;
+                let commit = self.call(
+                    "get commit",
+                    "GET",
+                    &self.url(&format!("git/commits/{base_commit}")),
+                    None,
+                )?;
+                Some((base_commit, sha_at(&commit["tree"]["sha"], "get commit")?))
+            }
+            None => None,
+        };
 
         let mut entries = Vec::with_capacity(files.len());
         for f in files {
@@ -351,28 +385,42 @@ impl GithubCommitter {
             entries.push(json!({ "path": f.path, "mode": "100644", "type": "blob", "sha": sha }));
         }
 
+        let tree_body = match &base {
+            Some((_, base_tree)) => json!({ "base_tree": base_tree, "tree": entries }),
+            None => json!({ "tree": entries }),
+        };
         let tree = self.call(
             "create tree",
             "POST",
             &self.url("git/trees"),
-            Some(&json!({ "base_tree": base_tree, "tree": entries })),
+            Some(&tree_body),
         )?;
         let tree_sha = sha_at(&tree["sha"], "create tree")?;
 
+        let parents: Vec<&str> = base.iter().map(|(c, _)| c.as_str()).collect();
         let new_commit = self.call(
             "create commit",
             "POST",
             &self.url("git/commits"),
-            Some(&json!({ "message": message, "tree": tree_sha, "parents": [base_commit] })),
+            Some(&json!({ "message": message, "tree": tree_sha, "parents": parents })),
         )?;
         let new_sha = sha_at(&new_commit["sha"], "create commit")?;
 
-        self.call(
-            "update ref",
-            "PATCH",
-            &self.url(&format!("git/refs/heads/{branch}")),
-            Some(&json!({ "sha": new_sha, "force": false })),
-        )?;
+        if base.is_some() {
+            self.call(
+                "update ref",
+                "PATCH",
+                &self.url(&format!("git/refs/heads/{branch}")),
+                Some(&json!({ "sha": new_sha, "force": false })),
+            )?;
+        } else {
+            self.call(
+                "create ref",
+                "POST",
+                &self.url("git/refs"),
+                Some(&json!({ "ref": format!("refs/heads/{branch}"), "sha": new_sha })),
+            )?;
+        }
         Ok(new_sha)
     }
 }

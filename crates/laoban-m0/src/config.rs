@@ -19,6 +19,13 @@ pub const ENV_CLUSTER_ID: &str = "LAOBAN_CLUSTER_ID";
 pub const ENV_AI_BASE_URL: &str = "LAOBAN_AI_BASE_URL";
 /// Upper bound for one AI call, in seconds.
 pub const ENV_AI_TIMEOUT: &str = "LAOBAN_AI_TIMEOUT_SECONDS";
+/// Lower limits for rounds of 意見收斂 (chart `rounds.limits`). Each may
+/// only be lowered: a value above the built-in maximum is refused.
+pub const ENV_ROUND_OPINION_CHARS: &str = "LAOBAN_ROUND_MAX_OPINION_CHARS";
+pub const ENV_ROUND_REPLY_CHARS: &str = "LAOBAN_ROUND_MAX_REPLY_CHARS";
+pub const ENV_ROUND_CHARS: &str = "LAOBAN_ROUND_MAX_CHARS";
+pub const ENV_ROUND_OPINIONS: &str = "LAOBAN_ROUND_MAX_OPINIONS";
+pub const ENV_ROUND_REPLIES: &str = "LAOBAN_ROUND_MAX_REPLIES";
 
 pub const DEFAULT_TOKEN_CAP: u64 = 2_000_000;
 pub const DEFAULT_TARGET_NAMESPACE: &str = "laoban-dev";
@@ -79,6 +86,7 @@ pub struct EnvConfig {
     /// (a local Ollama server does not check keys).
     pub anthropic_api_key: Option<Secret>,
     pub github_token: Secret,
+    pub round_limits: crate::rounds::Limits,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -192,6 +200,24 @@ pub fn from_env_with(get: impl Fn(&str) -> Option<String>) -> Result<EnvConfig, 
         return Err(ConfigError::Invalid(ENV_CLUSTER_ID));
     }
 
+    let mut round_limits = crate::rounds::Limits::default();
+    for (var, slot) in [
+        (ENV_ROUND_OPINION_CHARS, &mut round_limits.opinion_chars),
+        (ENV_ROUND_REPLY_CHARS, &mut round_limits.reply_chars),
+        (ENV_ROUND_CHARS, &mut round_limits.round_chars),
+        (ENV_ROUND_OPINIONS, &mut round_limits.opinions),
+        (ENV_ROUND_REPLIES, &mut round_limits.replies),
+    ] {
+        if let Some(v) = value(var) {
+            let max = *slot;
+            *slot = v
+                .parse::<usize>()
+                .ok()
+                .filter(|n| (1..=max).contains(n))
+                .ok_or(ConfigError::Invalid(var))?;
+        }
+    }
+
     Ok(EnvConfig {
         settings: M0Settings {
             model,
@@ -205,6 +231,7 @@ pub fn from_env_with(get: impl Fn(&str) -> Option<String>) -> Result<EnvConfig, 
         ai: AiEndpoint { base_url },
         anthropic_api_key: key.map(Secret),
         github_token: Secret(token),
+        round_limits,
     })
 }
 
@@ -275,6 +302,11 @@ mod tests {
             (ENV_AI_TIMEOUT, "10"),
             (ENV_AI_TIMEOUT, "3600"),
             (ENV_AI_TIMEOUT, "soon"),
+            (ENV_ROUND_OPINION_CHARS, "1001"),
+            (ENV_ROUND_REPLY_CHARS, "0"),
+            (ENV_ROUND_CHARS, "8001"),
+            (ENV_ROUND_OPINIONS, "many"),
+            (ENV_ROUND_REPLIES, "21"),
         ] {
             let mut pairs = FULL.to_vec();
             pairs.push((k, v));
@@ -287,6 +319,33 @@ mod tests {
         let mut pairs = FULL.to_vec();
         pairs.push((ENV_TOKEN_CAP, "1_000"));
         assert_eq!(from_env_with(env(&pairs)).unwrap().settings.token_cap, 1000);
+    }
+
+    #[test]
+    fn round_limits_can_only_be_lowered() {
+        let c = from_env_with(env(FULL)).unwrap();
+        assert_eq!(c.round_limits, crate::rounds::Limits::default());
+        let mut pairs = FULL.to_vec();
+        pairs.extend([
+            (ENV_ROUND_OPINION_CHARS, "500"),
+            (ENV_ROUND_REPLY_CHARS, "300"),
+            (ENV_ROUND_CHARS, "4000"),
+            (ENV_ROUND_OPINIONS, "10"),
+            (ENV_ROUND_REPLIES, "5"),
+        ]);
+        let l = from_env_with(env(&pairs)).unwrap().round_limits;
+        assert_eq!(
+            (
+                l.opinion_chars,
+                l.reply_chars,
+                l.round_chars,
+                l.opinions,
+                l.replies,
+                l.batch
+            ),
+            (500, 300, 4000, 10, 5, 10)
+        );
+        assert!(l.within_maximum());
     }
 
     #[test]

@@ -18,6 +18,26 @@
 {{- fail (printf "github.repo must look like <owner>/<repo>, got %q" $githubRepo) }}
 {{- end }}
 {{- $model := required "config.model is required: the model ID (LAOBAN_MODEL)" .Values.config.model }}
+{{- /* Round limits may only be lowered (see values.yaml). */}}
+{{- $roundLimits := list
+  (list "opinionChars" "LAOBAN_ROUND_MAX_OPINION_CHARS" 1000)
+  (list "replyChars" "LAOBAN_ROUND_MAX_REPLY_CHARS" 300)
+  (list "roundChars" "LAOBAN_ROUND_MAX_CHARS" 8000)
+  (list "opinions" "LAOBAN_ROUND_MAX_OPINIONS" 30)
+  (list "replies" "LAOBAN_ROUND_MAX_REPLIES" 20) }}
+{{- $limits := (.Values.rounds | default dict).limits | default dict }}
+{{- range $roundLimits }}
+{{- $v := get $limits (index . 0) }}
+{{- /* sprig's get gives "" for a missing key; YAML gives null for an empty one. */}}
+{{- if not (or (kindIs "invalid" $v) (and (kindIs "string" $v) (eq $v ""))) }}
+{{- if not (or (kindIs "float64" $v) (kindIs "int64" $v) (kindIs "int" $v)) }}
+{{- fail (printf "rounds.limits.%s may only be lowered: a whole number from 1 to %d, got %v" (index . 0) (index . 2) $v) }}
+{{- end }}
+{{- if or (ne (float64 $v) (float64 (int $v))) (lt (int $v) 1) (gt (int $v) (index . 2)) }}
+{{- fail (printf "rounds.limits.%s may only be lowered: a whole number from 1 to %d, got %v" (index . 0) (index . 2) $v) }}
+{{- end }}
+{{- end }}
+{{- end }}
 {{- if and .Values.syslog.enabled (not .Values.syslog.host) }}
 {{- fail "syslog.host is required when syslog.enabled is true" }}
 {{- end }}
@@ -134,6 +154,13 @@ spec:
               value: {{ .Values.config.targetNamespace | quote }}
             - name: LAOBAN_CLUSTER_ID
               value: {{ .Values.config.clusterId | quote }}
+            {{- range $roundLimits }}
+            {{- $v := get $limits (index . 0) }}
+            {{- if not (or (kindIs "invalid" $v) (and (kindIs "string" $v) (eq $v ""))) }}
+            - name: {{ index . 1 }}
+              value: {{ int $v | toString | quote }}
+            {{- end }}
+            {{- end }}
             {{- if .Values.syslog.enabled }}
             - name: LAOBAN_SYSLOG_HOST
               value: {{ .Values.syslog.host | quote }}

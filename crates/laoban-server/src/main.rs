@@ -71,8 +71,30 @@ fn api_from_env() -> (ApiState, String) {
         s.repo(),
         s.target_namespace
     );
+    let round_limits = config.round_limits;
     match M0Service::new(s, Box::new(provider), github) {
-        Ok(service) => {
+        Ok(mut service) => {
+            service.set_round_limits(round_limits);
+            // Rounds are kept in Round resources in the backend's own
+            // namespace. Outside a cluster (local runs) they stay in memory.
+            let store_status = if std::env::var("KUBERNETES_SERVICE_HOST").is_ok() {
+                match laoban_server::kube::KubeStore::in_cluster() {
+                    Ok(store) => {
+                        let line = format!("rounds stored in namespace {}", store.namespace());
+                        service.use_state_store(Arc::new(store));
+                        line
+                    }
+                    Err(e) => {
+                        service.use_state_store(Arc::new(laoban_server::kube::UnavailableStore(
+                            e.clone(),
+                        )));
+                        format!("rounds unavailable: {e}")
+                    }
+                }
+            } else {
+                "rounds kept in memory (not in a cluster)".to_string()
+            };
+            let status = format!("{status}; {store_status}");
             let service = Arc::new(service);
             // Rounds of 意見收斂 converge at their deadline.
             service.start_round_timer();
@@ -108,7 +130,9 @@ fn main() -> ExitCode {
                  LAOBAN_GITHUB_REPO       <owner>/<repo> (required for /api)\n  \
                  LAOBAN_GITHUB_TOKEN      GitHub token (required for /api)\n  \
                  LAOBAN_TARGET_NAMESPACE  default laoban-dev\n  \
-                 LAOBAN_CLUSTER_ID        default c-m-26kbxk5f\n\n\
+                 LAOBAN_CLUSTER_ID        default c-m-26kbxk5f\n  \
+                 LAOBAN_STATE_NAMESPACE   where rounds are stored (default the pod's)\n  \
+                 LAOBAN_ROUND_MAX_*       lower the size limits of rounds\n\n\
                  Without the required variables /healthz and /version still work and \
                  the API answers 500 naming the missing variables. Without the TLS \
                  variables only /healthz and /version are served."

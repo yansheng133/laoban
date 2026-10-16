@@ -99,14 +99,23 @@ jobs:
         # ci-values.yaml requires the CRDs, which lint cannot fake in the
         # cluster's capabilities; the template step below covers it with
         # --api-versions. m0-values.yaml is the M0 install (no CRDs needed).
+        # Errors are also annotations, readable without the job log.
         run: |
-          helm lint charts/laoban -f charts/laoban/ci/ci-values.yaml \
+          lint() {
+            if ! out=$(helm lint "$@" 2>&1); then
+              echo "$out"
+              grep -E 'ERROR|Error' <<< "$out" | head -5 | while read -r l; do echo "::error::helm lint: $l"; done
+              exit 1
+            fi
+            echo "$out"
+          }
+          lint charts/laoban -f charts/laoban/ci/ci-values.yaml \
             --kube-version "${KUBE_VERSION}" --set crds.required=false
-          helm lint charts/laoban -f charts/laoban/ci/m0-values.yaml \
+          lint charts/laoban -f charts/laoban/ci/m0-values.yaml \
             --kube-version "${KUBE_VERSION}"
-          helm lint charts/laoban -f charts/laoban/ci/m0-values.yaml \
+          lint charts/laoban -f charts/laoban/ci/m0-values.yaml \
             -f charts/laoban/ci/m0-local-model-values.yaml --kube-version "${KUBE_VERSION}"
-          helm lint charts/laoban-crd --kube-version "${KUBE_VERSION}"
+          lint charts/laoban-crd --kube-version "${KUBE_VERSION}"
       - name: helm template
         run: |
           mkdir -p rendered
@@ -128,7 +137,7 @@ jobs:
             if out=$(helm template laoban charts/laoban -n laoban-system --kube-version "${KUBE_VERSION}" "$@" 2>&1); then
               echo "rendering unexpectedly succeeded: $*"; exit 1
             fi
-            grep -qF "$want" <<< "$out" || { echo "expected '$want', got:"; echo "$out"; exit 1; }
+            grep -qF "$want" <<< "$out" || { echo "expected '$want', got:"; echo "$out"; echo "::error::expected '$want', got: $(head -c 300 <<< "$out" | tr '\n' ' ')"; exit 1; }
           }
           ci=(-f charts/laoban/ci/ci-values.yaml --api-versions "${LAOBAN_API}")
           m0=(-f charts/laoban/ci/m0-values.yaml)
@@ -148,6 +157,11 @@ jobs:
           check "ai.baseUrl must be scheme, host and optional port only" "${local[@]}" --set ai.baseUrl=ftp://192.0.2.1
           check "ai.timeoutSeconds must be between 30 and 1800" "${local[@]}" --set ai.timeoutSeconds=10
           check "ai.timeoutSeconds must be between 30 and 1800" "${m0[@]}" --set ai.timeoutSeconds=3600
+          # Round limits may only be lowered.
+          check "rounds.limits.opinionChars may only be lowered" "${m0[@]}" --set rounds.limits.opinionChars=1001
+          check "rounds.limits.roundChars may only be lowered" "${m0[@]}" --set rounds.limits.roundChars=0
+          check "rounds.limits.replies may only be lowered" "${m0[@]}" --set-string rounds.limits.replies=many
+          check "rounds.limits.replyChars may only be lowered" "${m0[@]}" --set-json 'rounds.limits.replyChars=2.5'
       - name: Local-model render has no Anthropic key and points at the endpoint
         run: |
           f=rendered/laoban-m0-local.yaml
@@ -161,8 +175,9 @@ jobs:
           if grep -q 'name: LAOBAN_AI_BASE_URL$' rendered/laoban-m0.yaml; then echo "M0: unexpected LAOBAN_AI_BASE_URL"; exit 1; fi
       - name: M0 render has only the aggregated API's RBAC and no PVC
         # M0 serves the API as an aggregated API (docs/m0-design.md, 身分):
-        # the backend may read the request-header ConfigMap and nothing else;
-        # users get ClusterRoles for this API group only. No impersonation.
+        # the backend may read the request-header ConfigMap and its own Round
+        # resources in its namespace, nothing else; users get ClusterRoles
+        # for this API group only. No impersonation.
         run: |
           # Failures are also annotations, readable without the job log.
           fail() { echo "::error::$1"; exit 1; }
@@ -170,15 +185,32 @@ jobs:
           echo "M0:"; kinds rendered/laoban-m0.yaml
           echo "ci:"; kinds rendered/laoban.yaml
           f=rendered/laoban-m0.yaml
-          if grep -qE '^kind: (ClusterRoleBinding|Role|PersistentVolumeClaim)$' "$f"; then
-            fail "M0 render must not contain ClusterRoleBindings, Roles or a PVC"
+          if grep -qE '^kind: (ClusterRoleBinding|PersistentVolumeClaim)$' "$f"; then
+            fail "M0 render must not contain ClusterRoleBindings or a PVC"
           fi
           if grep -q 'impersonate' "$f"; then fail "M0 render must not grant impersonate"; fi
-          [ "$(grep -c '^kind: RoleBinding$' "$f")" -eq 1 ] || fail "M0: expected exactly one RoleBinding"
-          grep -A12 '^kind: RoleBinding$' "$f" | grep -q 'namespace: kube-system' \
-            || fail "M0: the RoleBinding must be in kube-system"
-          grep -A16 '^kind: RoleBinding$' "$f" | grep -q 'name: extension-apiserver-authentication-reader' \
-            || fail "M0: the RoleBinding must bind extension-apiserver-authentication-reader"
+          # One Role: Round objects in laoban-system, nothing else.
+          [ "$(grep -c '^kind: Role$' "$f")" -eq 1 ] || fail "M0: expected exactly one Role (rounds)"
+          role=$(awk '/^kind: Role$/{c=1} /^---/{c=0} c' "$f")
+          grep -q 'namespace: laoban-system' <<< "$role" || fail "M0: the Role must be in laoban-system"
+          [ "$(grep -c 'apiGroups:' <<< "$role")" -eq 1 ] || fail "M0: the Role must have one rule"
+          grep -q 'apiGroups: \["laoban.yansheng133.github.io"\]' <<< "$role" || fail "M0: the Role must cover laoban's CRD group only"
+          grep -q 'resources: \["rounds"\]' <<< "$role" || fail "M0: the Role must cover rounds only"
+          if grep -qE '"(\*|patch|watch|deletecollection|escalate|bind)"' <<< "$role"; then fail "M0: unexpected verbs in the Role"; fi
+          [ "$(grep -c '^kind: RoleBinding$' "$f")" -eq 2 ] || fail "M0: expected exactly two RoleBindings"
+          awk '/^kind: RoleBinding$/{c=1} /^---/{c=0} c' "$f" | grep -q 'namespace: kube-system' \
+            || fail "M0: one RoleBinding must be in kube-system"
+          awk '/^kind: RoleBinding$/{c=1} /^---/{c=0} c' "$f" | grep -q 'name: extension-apiserver-authentication-reader' \
+            || fail "M0: a RoleBinding must bind extension-apiserver-authentication-reader"
+          awk '/^kind: RoleBinding$/{c=1} /^---/{c=0} c' "$f" | grep -q 'name: laoban-state' \
+            || fail "M0: a RoleBinding must bind the rounds Role"
+          # Lowered round limits reach the backend; unset ones are not passed.
+          if grep -q 'LAOBAN_ROUND_MAX_' "$f"; then fail "M0: no round limits unless set"; fi
+          helm template laoban charts/laoban -n laoban-system --kube-version "${KUBE_VERSION}" \
+            -f charts/laoban/ci/m0-values.yaml --set rounds.limits.opinionChars=500 > /tmp/limits.yaml
+          grep -A1 'name: LAOBAN_ROUND_MAX_OPINION_CHARS$' /tmp/limits.yaml | grep -q 'value: "500"' \
+            || fail "M0: rounds.limits.opinionChars must render as LAOBAN_ROUND_MAX_OPINION_CHARS=\"500\""
+          [ "$(grep -c 'LAOBAN_ROUND_MAX_' /tmp/limits.yaml)" -eq 1 ] || fail "M0: only the set limit is passed"
           [ "$(grep -c '^kind: ClusterRole$' "$f")" -eq 2 ] || fail "M0: expected the two laoban-api ClusterRoles"
           if awk '/^kind: ClusterRole$/{c=1} /^---/{c=0} c && /apiGroups:/' "$f" | grep -v 'api.laoban.yansheng133.github.io' | grep -q .; then
             fail "M0: user ClusterRoles may only cover api.laoban.yansheng133.github.io"

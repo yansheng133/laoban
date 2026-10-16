@@ -1,0 +1,36 @@
+{{- /*
+The backend keeps rounds of 意見收斂 in Round resources (laoban-crd chart) in
+its own namespace, so a round survives a restart. This Role is all it may
+write in the cluster: Round objects in the release namespace. Users cannot
+reach them; they go through the backend's API, which checks their RBAC.
+Apps are still deployed by Fleet only.
+*/ -}}
+{{- if .Values.aggregatedApi.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ printf "%s-state" (include "laoban.fullname" .) | trunc 63 | trimSuffix "-" }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "laoban.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["laoban.yansheng133.github.io"]
+    resources: ["rounds"]
+    verbs: ["get", "list", "create", "update", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ printf "%s-state" (include "laoban.fullname" .) | trunc 63 | trimSuffix "-" }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "laoban.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ printf "%s-state" (include "laoban.fullname" .) | trunc 63 | trimSuffix "-" }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "laoban.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

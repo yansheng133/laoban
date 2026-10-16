@@ -12,6 +12,7 @@ import {
   getRound, openRound, roundAction, addOpinions, supportOpinion, replyToOpinion, RequestError, StoreLike, RoundView,
   RoundResponse, RoundAction, ApplyResponse, OpinionItem
 } from '../utils/backend';
+import { DEFAULT_LIMITS, RoundLimits } from '../utils/limits';
 
 export const POLL_MS = 5 * 1000;
 
@@ -22,7 +23,7 @@ export interface RoundHooks {
   // Timeout for calls that run the AI (open with deadline 0, converge,
   // the last confirm or skip).
   aiTimeoutMs: () => number;
-  // Shown when a running round is gone (the backend restarted).
+  // Shown when a running round is gone.
   lostMessage: () => string;
   // Shown when a request that runs the AI got no answer but the round
   // shows the work going on (see run()).
@@ -38,6 +39,10 @@ export interface RoundFlow {
   elapsed: Ref<number>;
   // A round runs: direct changes in its scope wait.
   active: ComputedRef<boolean>;
+  // Size limits (of the round, or for a new one), as the backend reports.
+  limits: Ref<RoundLimits>;
+  // False when the backend cannot store rounds (the Round CRD is missing).
+  available: Ref<boolean>;
   refresh: () => Promise<void>;
   open: (items: OpinionItem[], deadlineMinutes: number, scope: string) => Promise<boolean>;
   act: (action: RoundAction, body?: Record<string, string>) => Promise<boolean>;
@@ -76,6 +81,8 @@ export function useRound(store: StoreLike, hooks: RoundHooks): RoundFlow {
   const notice = ref('');
   const pending = ref<string | null>(null);
   const elapsed = ref(0);
+  const limits = ref<RoundLimits>({ ...DEFAULT_LIMITS });
+  const available = ref(true);
   let app = '';
   let poll: ReturnType<typeof setInterval> | null = null;
   let tick: ReturnType<typeof setInterval> | null = null;
@@ -95,7 +102,13 @@ export function useRound(store: StoreLike, hooks: RoundHooks): RoundFlow {
     const r = res.round || null;
     const wasActive = !!round.value && ACTIVE.includes(round.value.state);
 
-    // A running round that is gone: the backend keeps rounds in memory.
+    if (typeof res.roundsAvailable === 'boolean') {
+      available.value = res.roundsAvailable;
+    }
+    if (r?.limits || res.limits) {
+      limits.value = { ...DEFAULT_LIMITS, ...(res.limits || {}), ...(r?.limits || {}) };
+    }
+    // A running round that is gone (deleted from the cluster).
     if (wasActive && !r) {
       notice.value = hooks.lostMessage();
     } else if (r && r.id !== round.value?.id) {
@@ -253,6 +266,6 @@ export function useRound(store: StoreLike, hooks: RoundHooks): RoundFlow {
   });
 
   return {
-    round, error, notice, pending, elapsed, active, refresh, open, act, add, support, reply, start, stop
+    round, error, notice, pending, elapsed, active, limits, available, refresh, open, act, add, support, reply, start, stop
   };
 }

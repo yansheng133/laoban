@@ -149,7 +149,8 @@ laoban:
     hintPlanSame: 收斂後的計畫沒有改變架構（模組與 API 都一樣），可能只改程式內容，或這次不需要修改。請看步驟與說明。
     lastLog: "上一輪的紀錄（{count}）"
     notes: "AI 的說明（可能不準確）："
-    lost: 進行中的一輪已經不在了，可能是後端重新啟動（一輪只存在後端記憶體裡）。需要的話請重新開一輪。
+    lost: 進行中的一輪已經不在了（可能被管理者刪除）。需要的話請重新開一輪。
+    unavailable: 意見收斂暫時無法使用：叢集裡沒有 laoban 的 Round 資源。請管理者先升級 laoban-crd chart。
     showCurrent: 看目前的架構
     showPlan: 看收斂後的計畫
     logLine: "{who}：{event}"
@@ -168,6 +169,7 @@ laoban:
       applying: 全部確認，AI 開始修改程式
       done: 已部署新版本
       cancelled: 取消這一輪
+      restarted: 後端重新啟動，AI 重新開始收斂
   expand:
     open: 放大
     close: 關閉放大
@@ -219,6 +221,16 @@ laoban:
     draftHint: "目前有 {count} 則草稿，到左邊的意見收斂一起送出。"
     sideTitle: 意見
     sideOpenHint: 關閉放大後，在左邊的意見收斂開一輪，草稿會一起送出。
+  limits:
+    count: "{count} / {max}"
+    tooLong: "超過 {max} 字（多 {over} 字），請精簡後再送出。"
+    draftTooLong: "有元件的草稿超過 {max} 字，請先精簡。"
+    newRoundOver: "這些意見合計超過一輪的上限（{max} 字），請精簡或分次送出。"
+    roundSpace: "這一輪已用 {used} / {max} 字，還可以寫約 {left} 字。"
+    roundOver: "這一輪只剩約 {left} 字，請精簡後再送出。"
+    roundFull: 這一輪的意見已滿，請先收斂。附議不受影響。
+    repliesFull: "這則意見的回覆已達上限（{max} 則）。"
+    spaceLabel: 這一輪的意見空間
   editor:
     hint: 直接修改這四個檔案。儲存後會成為新的一版（標記「手動修改」）並由 Fleet 部署，不呼叫 AI；儲存前會做和 AI 產生的程式一樣的檢查。
     hintReadOnly: 目前只能看。

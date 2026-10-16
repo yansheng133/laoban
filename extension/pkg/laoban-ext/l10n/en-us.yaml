@@ -149,7 +149,8 @@ laoban:
     hintPlanSame: "The converged plan does not change the architecture (same modules and API): it may change code only, or nothing needs to change. See the steps and notes."
     lastLog: "Last round's log ({count})"
     notes: "AI notes (may be inaccurate): "
-    lost: "The running round is gone, probably because the backend restarted (rounds are kept in its memory only). Start a new round if needed."
+    lost: The running round is gone (an administrator may have deleted it). Start a new round if needed.
+    unavailable: "Rounds are unavailable: the cluster has no laoban Round resource. Please ask an administrator to upgrade the laoban-crd chart first."
     showCurrent: Show current architecture
     showPlan: Show converged plan
     logLine: "{who}: {event}"
@@ -168,6 +169,7 @@ laoban:
       applying: all confirmed, the AI started changing the code
       done: new version deployed
       cancelled: cancelled this round
+      restarted: The backend restarted; the AI converges again
   expand:
     open: Enlarge
     close: Close
@@ -219,6 +221,16 @@ laoban:
     draftHint: "{count} draft(s); send them with the opinion round on the left."
     sideTitle: Opinions
     sideOpenHint: Close the enlarged view and start a round on the left; the drafts are sent with it.
+  limits:
+    count: "{count} / {max}"
+    tooLong: "Longer than {max} characters ({over} too many). Please shorten it before sending."
+    draftTooLong: "A draft for a component is longer than {max} characters. Please shorten it first."
+    newRoundOver: "Together these opinions are longer than a round allows ({max} characters). Please shorten them or send them in parts."
+    roundSpace: "This round has used {used} of {max} characters; about {left} are left."
+    roundOver: "Only about {left} characters are left in this round. Please shorten it before sending."
+    roundFull: This round is full. Please converge it first. +1 still works.
+    repliesFull: "This opinion has the most replies allowed ({max})."
+    spaceLabel: Space for opinions in this round
   editor:
     hint: Edit the four files directly. Saving creates a new version (marked "Manual edit") that Fleet deploys, without calling the AI; the files get the same checks as AI-generated code.
     hintReadOnly: View only.

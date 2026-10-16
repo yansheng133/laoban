@@ -20,6 +20,8 @@ import { useRoute } from 'vue-router';
 import { useText } from '../composables/useText';
 import ArchitectureView from '../components/ArchitectureView.vue';
 import RoundPanel from '../components/RoundPanel.vue';
+import CharCounter from '../components/CharCounter.vue';
+import { roundSpace, textState } from '../utils/limits';
 import OpinionList from '../components/OpinionList.vue';
 import StatusBar from '../components/StatusBar.vue';
 import VersionList from '../components/VersionList.vue';
@@ -46,7 +48,7 @@ export default defineComponent({
   name: 'LaobanAppDetail',
 
   components: {
-    ArchitectureView, RoundPanel, OpinionList, StatusBar, VersionList, CodeEditor, StructureEdit
+    ArchitectureView, RoundPanel, OpinionList, StatusBar, VersionList, CodeEditor, StructureEdit, CharCounter
   },
 
   setup() {
@@ -452,6 +454,12 @@ export default defineComponent({
       return n ? (n.name || n.id) : '';
     });
     const selectedDraft = computed(() => drafts.value.find((d) => d.target === selectedNode.value) || null);
+    // Size limits of rounds, as the backend reports them; too long text is
+    // kept as typed and cannot be saved or sent.
+    const roundLimits = computed(() => round.limits.value);
+    const roundsAvailable = computed(() => round.available.value);
+    const componentTooLong = computed(() => textState(componentText.value, roundLimits.value.opinionChars).over);
+    const roundLeft = computed(() => roundSpace(round.round.value, roundLimits.value, { chars: 0, opinions: 0 }).left);
     const badges = computed(() => (round.active.value ? opinionCounts(round.round.value?.opinions) : null));
     // The enlarged view's Opinions tab: while a round runs or drafts wait.
     const showOpinionsTab = computed(() => (!!round.round.value && round.active.value) || drafts.value.length > 0);
@@ -499,7 +507,7 @@ export default defineComponent({
     }
 
     function saveDraft() {
-      if (selectedNode.value && selectedNodeName.value && componentText.value.trim()) {
+      if (selectedNode.value && selectedNodeName.value && componentText.value.trim() && !componentTooLong.value) {
         drafts.value = putDraft(drafts.value, { target: selectedNode.value, targetName: selectedNodeName.value, text: componentText.value });
         removedDraft.value = null;
         // Set after the text watcher has run.
@@ -689,6 +697,10 @@ export default defineComponent({
       showPlan,
       showingPlan,
       roundNotice,
+      roundLimits,
+      roundsAvailable,
+      roundLeft,
+      componentTooLong,
       detailStatus,
       expanded,
       archPanel,
@@ -815,6 +827,8 @@ export default defineComponent({
           :error="roundError"
           :disabled="deploying || phase === 'applying'"
           :notice="roundNotice"
+          :limits="roundLimits"
+          :available="roundsAvailable"
           :drafts="drafts"
           :removed-draft="removedDraft"
           :selected-target="selectedNode"
@@ -1047,14 +1061,19 @@ export default defineComponent({
             id="laoban-component-opinion"
             v-model="componentText"
             rows="2"
-            maxlength="1000"
+            :class="{ 'laoban-over': componentTooLong }"
+            :aria-invalid="componentTooLong ? 'true' : 'false'"
             :placeholder="t('laoban.opinions.componentPlaceholder')"
+          />
+          <CharCounter
+            :text="componentText"
+            :max="roundLimits.opinionChars"
           />
           <div class="laoban-component-opinion-actions">
             <button
               type="submit"
               class="btn btn-sm role-primary"
-              :disabled="!componentText.trim()"
+              :disabled="!componentText.trim() || componentTooLong"
             >
               {{ selectedDraft ? t('laoban.opinions.updateDraft') : t('laoban.opinions.addDraft') }}
             </button>
@@ -1232,6 +1251,8 @@ export default defineComponent({
               :can-discuss="!!roundState.you && !!roundState.you.canDiscuss"
               :busy="busy"
               :selected="selectedNode"
+              :limits="roundLimits"
+              :round-left="roundLeft"
               @support="roundSupport"
               @reply="roundReply"
               @select="selectTarget"
@@ -1654,4 +1675,7 @@ export default defineComponent({
 
 <style lang="scss">
 @import '../styles/global.scss';
+.laoban-over {
+  border-color: var(--error) !important;
+}
 </style>

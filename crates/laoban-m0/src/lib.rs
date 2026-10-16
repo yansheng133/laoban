@@ -8,6 +8,7 @@
 //!   `main.py`, README.
 //! * [`github`]: commit a directory with the Git Data API.
 //! * [`store`]: in-memory plan store.
+//! * [`state`]: laoban's own Kubernetes resources (rounds), or memory.
 //! * [`service`]: ties it together behind `plan`, `apply` and `config`.
 //! * [`config`]: environment variables.
 
@@ -19,16 +20,19 @@ pub mod plan;
 pub mod render;
 pub mod rounds;
 pub mod service;
+pub mod state;
 pub mod store;
 mod time;
 
 pub use config::{from_env_with, AiEndpoint, ConfigError, EnvConfig, M0Settings, Secret};
 pub use github::{CommitFile, CommitInfo, GithubCommitter, GithubConfig, GithubError, GithubToken};
+pub use rounds::Limits as RoundLimits;
 pub use service::{
     AddOpinionsRequest, ApplyOptions, ApplyRequest, M0Error, M0Service, OpenRoundRequest,
     OpinionItem, OpinionRequest, PlanRequestBody, RestoreRequest, SaveFilesRequest,
     SaveLayoutRequest, SkipRequest,
 };
+pub use state::{MemoryStore, StateError, StateStore};
 
 /// The AI returned something that does not match the expected format or
 /// limits. The detail is for tests and debugging; it is not shown to users
