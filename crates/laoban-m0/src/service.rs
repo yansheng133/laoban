@@ -523,6 +523,10 @@ pub struct M0Service {
     me: std::sync::OnceLock<std::sync::Weak<M0Service>>,
     /// Background plan / apply requests, by job ID.
     jobs: Mutex<HashMap<String, Job>>,
+    /// One lock per app: its versions are written one at a time, each
+    /// checked against the version the previous one wrote (report 20, B11:
+    /// two saves at once made the second fail as a GitHub problem).
+    app_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
 }
 
 impl M0Service {
@@ -567,6 +571,7 @@ impl M0Service {
             archive_retry: Mutex::new(HashMap::new()),
             me: std::sync::OnceLock::new(),
             jobs: Mutex::new(HashMap::new()),
+            app_locks: Mutex::new(HashMap::new()),
         })
     }
 
@@ -723,6 +728,12 @@ impl M0Service {
             return job.map(|job| job(self));
         }
         Some(job(self))
+    }
+
+    /// The lock for writing versions of `app` (see `app_locks`).
+    fn app_lock(&self, app: &str) -> Arc<Mutex<()>> {
+        let mut locks = self.app_locks.lock().unwrap_or_else(|e| e.into_inner());
+        Arc::clone(locks.entry(app.to_string()).or_default())
     }
 
     pub fn settings(&self) -> &M0Settings {
@@ -1062,11 +1073,6 @@ impl M0Service {
         if stored.base.is_some() {
             require_user(user)?;
         }
-        // A new app must still not exist (another plan may have been
-        // applied under the same name since).
-        if stored.base.is_none() && self.app_names()?.contains(&stored.app) {
-            return Err(M0Error::AppExists(stored.app.clone()));
-        }
         let plan_json = serde_json::to_string_pretty(&stored.plan.to_codegen_json(&stored.app))
             .map_err(|e| M0Error::Internal(e.to_string()))?;
         let mut blocks = vec![UntrustedBlock {
@@ -1107,6 +1113,15 @@ impl M0Service {
             max_tokens: Some(CODEGEN_MAX_TOKENS),
         })?;
         let generated = parse_generated(&completion.content).map_err(M0Error::AiInvalidOutput)?;
+        // From here on the app is read and written under its lock (not
+        // during the AI call above, which can take minutes).
+        let lock = self.app_lock(&stored.app);
+        let _one_at_a_time = lock.lock().unwrap_or_else(|e| e.into_inner());
+        // A new app must still not exist (another plan may have been
+        // applied under the same name since it was made).
+        if stored.base.is_none() && self.app_names()?.contains(&stored.app) {
+            return Err(M0Error::AppExists(stored.app.clone()));
+        }
         if let Some(base) = &stored.base {
             let lost = lost_edits(&edits, &base.files, &generated);
             if !lost.is_empty() {
@@ -1184,7 +1199,17 @@ impl M0Service {
         let sha = self
             .github
             .commit(&commit_files, &p.message)
-            .map_err(M0Error::Github)?;
+            .map_err(|e| match e {
+                // The branch moved since it was read: someone else wrote a
+                // version first (outside laoban, as laoban's own writes
+                // wait for each other). Not a GitHub or token problem.
+                GithubError::Status {
+                    stage: "update ref",
+                    status: 409 | 422,
+                    ..
+                } => M0Error::VersionConflict,
+                other => M0Error::Github(other),
+            })?;
 
         Ok(self.version_response(app, p.kind, &sha, p.files))
     }
@@ -1726,7 +1751,9 @@ impl M0Service {
                     .len();
                 if size > rounds::MAX_PLAN_BYTES {
                     self.update_round(&mut rs, app, round_id, |r| {
-                        r.fail(
+                        r.fail_coded(
+                            "planTooLarge",
+                            &[],
                             "AI 產生的修改計畫太大（超過 150 KB），請發起人縮小範圍或精簡意見後重新收斂。",
                             &at,
                         )
@@ -1740,7 +1767,7 @@ impl M0Service {
                 }
             }
             Err(e) => {
-                self.update_round(&mut rs, app, round_id, |r| r.fail(&e.user_message(), &at));
+                self.update_round(&mut rs, app, round_id, |r| fail_with(r, &e, &at));
             }
         }
     }
@@ -1795,8 +1822,13 @@ impl M0Service {
         let mut rs = self.rounds();
         self.update_round(&mut rs, app, round_id, |r| match &result {
             Ok(v) => r.done(v.clone(), &at),
-            Err(M0Error::PlanNotFound) => r.fail("找不到這一輪的修改計畫，請發起人重新收斂。", &at),
-            Err(e) => r.fail(&e.user_message(), &at),
+            Err(M0Error::PlanNotFound) => r.fail_coded(
+                "planMissing",
+                &[],
+                "找不到這一輪的修改計畫，請發起人重新收斂。",
+                &at,
+            ),
+            Err(e) => fail_with(r, e, &at),
         });
         result.ok()
     }
@@ -1851,6 +1883,8 @@ impl M0Service {
         require_user(user)?;
         let files = parse_generated(&body.files.to_string())
             .map_err(|e| M0Error::InvalidFiles(files_problem(&e.0)))?;
+        let lock = self.app_lock(app);
+        let _one_at_a_time = lock.lock().unwrap_or_else(|e| e.into_inner());
         let current = self.load_app(app)?;
         self.check_base(app, &body.base_commit)?;
         if files == current.files {
@@ -1909,6 +1943,8 @@ impl M0Service {
         if body.positions.is_empty() || body.positions.len() > meta::MAX_LAYOUT_ENTRIES {
             return Err(M0Error::BadRequest("版面資料不正確。"));
         }
+        let lock = self.app_lock(app);
+        let _one_at_a_time = lock.lock().unwrap_or_else(|e| e.into_inner());
         let current = self.load_app(app)?;
         self.check_base(app, &body.base_commit)?;
         let arch = architecture_with_layout(&current.plan, app, &Layout::new());
@@ -1954,6 +1990,8 @@ impl M0Service {
     ) -> Result<Value, M0Error> {
         let commit = body.commit.trim();
         let target = self.load_version(app, commit)?;
+        let lock = self.app_lock(app);
+        let _one_at_a_time = lock.lock().unwrap_or_else(|e| e.into_inner());
         let current = self.load_app(app)?;
         require_user(user)?;
         self.check_no_round(app)?;
@@ -2010,6 +2048,23 @@ struct Publish<'a> {
 }
 
 /// Changes need a verified caller.
+/// A round failed with `e`: its message, and a code the page translates
+/// when it has one (`laoban.round.failures.*`).
+fn fail_with(r: &mut Round, e: &M0Error, at: &str) {
+    let (code, args): (&str, Vec<(&str, String)>) = match e {
+        M0Error::MergeConflict(files) => ("mergeConflict", vec![("files", files.clone())]),
+        M0Error::ManualEditLost(files) => ("manualEditLost", vec![("files", files.clone())]),
+        M0Error::AiInvalidOutput(_) => ("aiInvalidOutput", vec![]),
+        M0Error::AiUnavailable(_) => ("aiUnavailable", vec![]),
+        M0Error::BudgetExceeded => ("budgetExceeded", vec![]),
+        M0Error::SpendLimit => ("spendLimit", vec![]),
+        M0Error::Github(_) => ("githubFailed", vec![]),
+        M0Error::VersionConflict => ("versionConflict", vec![]),
+        _ => ("", vec![]),
+    };
+    r.fail_coded(code, &args, &e.user_message(), at);
+}
+
 fn require_user(user: Option<&str>) -> Result<&str, M0Error> {
     user.filter(|u| !u.is_empty())
         .ok_or(M0Error::Unauthenticated)

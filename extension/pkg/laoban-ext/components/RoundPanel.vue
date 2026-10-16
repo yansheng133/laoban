@@ -157,6 +157,8 @@ export default defineComponent({
     const objectionState = computed(() => textState(objection.value, props.limits.opinionChars));
     const objectionSpace = computed(() => roundSpace(props.round, props.limits, { chars: chars(objection.value), opinions: 1 }));
     const roundLeft = computed(() => roundSpace(props.round, props.limits, { chars: 0, opinions: 0 }).left);
+    // Room for the general opinion: what the component drafts leave.
+    const draftLeft = computed(() => Math.max(0, roundLeft.value - props.drafts.reduce((n, d) => n + chars(d.text), 0)));
     const canObject = computed(() => !busy.value && !!objection.value.trim() && !objectionState.value.over && !objectionSpace.value.over);
     const sendable = computed(() => count.value > 0 && !tooMany.value && !tooLong.value && !space.value.over);
     const canOpen = computed(() => !busy.value && props.available && !active.value && sendable.value);
@@ -164,6 +166,7 @@ export default defineComponent({
 
     // Log entries in the page's language; the backend's Chinese text when
     // the code is unknown.
+    const FAILURES = ['planTooLarge', 'planMissing', 'restartUnpublished', 'restartUnknown', 'mergeConflict', 'manualEditLost', 'aiInvalidOutput', 'aiUnavailable', 'budgetExceeded', 'spendLimit', 'githubFailed', 'versionConflict'];
     const EVENTS = ['opened', 'opinion', 'objected', 'converging', 'converged', 'failed', 'confirmed', 'skipped', 'applying', 'done', 'cancelled', 'supported', 'unsupported', 'replied', 'restarted'];
 
     function logText(l: RoundView['log'][number]): string {
@@ -179,9 +182,25 @@ export default defineComponent({
       if (args.user) {
         args.user = who(args.user);
       }
+      // A failure the page knows: in its language (report 20, N7).
+      if (l.code === 'failed' && args.code && FAILURES.includes(args.code)) {
+        args.message = t(`laoban.round.failures.${ args.code }`, args);
+      }
 
       return t(`laoban.round.events.${ l.code }`, args);
     }
+
+    // Why the round failed, in the page's language when the backend gave a
+    // known code; its Chinese text otherwise.
+    const failureText = computed(() => {
+      const r = props.round;
+
+      if (r?.messageCode && FAILURES.includes(r.messageCode)) {
+        return t(`laoban.round.failures.${ r.messageCode }`, r.messageArgs || {});
+      }
+
+      return r?.message || '';
+    });
 
     function formatTime(at: string): string {
       const d = new Date(at);
@@ -234,10 +253,12 @@ export default defineComponent({
       space,
       objectionState,
       roundLeft,
+      draftLeft,
       objectionSpace,
       canObject,
       formatTime,
       logText,
+      failureText,
       open,
       addOpinion,
       sendObjection,
@@ -536,7 +557,7 @@ export default defineComponent({
         <div
           v-if="space.shown"
           class="laoban-space"
-          :class="{ over: space.over || space.full }"
+          :class="{ warn: space.warn, over: space.over || space.full }"
           data-testid="laoban-space"
         >
           <div
@@ -577,6 +598,7 @@ export default defineComponent({
         <CharCounter
           :text="draft"
           :max="limits.opinionChars"
+          :left="draftLeft"
         />
         <p
           v-if="draftsTooLong"
@@ -691,6 +713,7 @@ export default defineComponent({
           <CharCounter
             :text="objection"
             :max="limits.opinionChars"
+            :left="roundLeft"
           />
           <p
             v-if="objectionSpace.over && !objectionState.over"
@@ -728,7 +751,7 @@ export default defineComponent({
           class="text-error"
           role="alert"
         >
-          {{ round.message }}
+          {{ failureText }}
         </p>
         <button
           v-if="you && you.isInitiator"
@@ -913,8 +936,12 @@ export default defineComponent({
     span {
       display: block;
       height: 100%;
-      background: var(--warning);
+      background: var(--muted);
     }
+  }
+
+  &.warn .laoban-space-bar span {
+    background: var(--warning);
   }
 
   &.over {

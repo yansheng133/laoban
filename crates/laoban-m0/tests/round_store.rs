@@ -302,6 +302,15 @@ fn a_restart_while_publishing_never_publishes_twice() {
     let v = round_of(&b);
     assert_eq!(state(&v), "done", "{v}");
     assert!(v["round"]["result"]["commit"].is_string());
+    // Written to GitHub; not yet running (report 20, N6).
+    let done = v["round"]["log"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap()
+        .clone();
+    assert_eq!(done["code"], "done");
+    assert!(done["event"].as_str().unwrap().contains("等待 Fleet"));
     assert_eq!(writes(&github), commits, "nothing published again");
     assert_eq!(b.provider.call_count(), 0);
 
@@ -320,6 +329,18 @@ fn a_restart_while_publishing_never_publishes_twice() {
     let v = round_of(&b);
     assert_eq!(state(&v), "failed", "{v}");
     assert!(v["round"]["message"].as_str().unwrap().contains("重新收斂"));
+    // The page shows it in its own language (report 20, N7).
+    assert_eq!(v["round"]["messageCode"], "restartUnpublished");
+    let failed = v["round"]["log"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap()
+        .clone();
+    assert_eq!(
+        (failed["code"].as_str(), failed["args"]["code"].as_str()),
+        (Some("failed"), Some("restartUnpublished"))
+    );
     assert_eq!(writes(&github), 0);
 }
 

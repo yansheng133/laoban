@@ -101,6 +101,9 @@ export interface RoundView {
   confirmers: { user: string; answer: 'pending' | 'confirmed' | 'skipped'; at?: string }[];
   plan: { planId: string; summary: string; steps: string[]; architecture: Architecture; notes?: string } | null;
   message: string;
+  // The failure as a code the page translates (laoban.round.failures.*).
+  messageCode?: string;
+  messageArgs?: Record<string, string>;
   result: ApplyResponse | null;
   log: { at: string; by: string; event: string; code?: string; args?: Record<string, string> }[];
   you: { user: string; isInitiator: boolean; mustConfirm: boolean; canAddOpinion: boolean; canDiscuss?: boolean };

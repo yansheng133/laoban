@@ -4,9 +4,10 @@
 //! files from the branch with the contents API (raw media type, so no
 //! base64 decoding is needed).
 //!
-//! No retries: a failed step (including a stale ref, which GitHub reports
-//! as 422 or 409 when the branch moved underneath us) is returned as an
-//! error and the caller reports `github_failed`. The token is kept in a
+//! No retries: a failed step is returned as an error. A stale ref (GitHub
+//! reports 422 or 409 when the branch moved underneath us) is the
+//! `update ref` stage with that status; the service reports it as a
+//! version conflict, everything else as `github_failed`. The token is kept in a
 //! wrapper whose `Debug` is redacted and is never put into an error.
 
 use std::fmt;

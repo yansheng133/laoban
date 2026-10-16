@@ -193,3 +193,51 @@ describe('the round panel checks the limits before sending', () => {
     closed.app.unmount();
   });
 });
+
+describe('the round panel in the page\'s language', () => {
+  beforeAll(() => {
+    jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+  });
+
+  it('shows a known failure by its code, an unknown one as sent', () => {
+    const def = loadPage(join(PAGES, '../components/RoundPanel.vue'));
+    const base = {
+      id: 'r1', app: 'todo', initiator: 'u-a', scope: ['web'], state: 'failed', deadline: 0, opinions: [], confirmers: [], plan: null, result: null, you: {
+        user: 'u-a', isInitiator: true, mustConfirm: false, canAddOpinion: false
+      },
+    };
+    const props = reactive({
+      round: {
+        ...base,
+        message: '後端在發布途中重新啟動…',
+        messageCode: 'restartUnpublished',
+        log: [{
+          at: '', by: 'laoban', event: '失敗：…', code: 'failed', args: { message: '後端在發布途中重新啟動…', code: 'restartUnpublished' }
+        }],
+      } as Record<string, unknown>,
+      draft: '', pending: null, elapsed: 0, error: '', disabled: false, drafts: [], removedDraft: null, selectedTarget: null, notice: '',
+      limits: {
+        opinionChars: 1000, replyChars: 300, roundChars: 8000, opinions: 30, replies: 20, batch: 10
+      },
+      available: true,
+    });
+    let b: Record<string, unknown> = {};
+    const app = createApp({
+      setup() {
+        b = def.setup(props, { emit: () => undefined }) as Record<string, unknown>;
+
+        return () => h('div');
+      },
+    });
+
+    app.mount(document.createElement('div'));
+    // The test store's t() returns the key.
+    expect((b.failureText as { value: string }).value).toBe('laoban.round.failures.restartUnpublished');
+    const logText = b.logText as (l: unknown) => string;
+
+    expect(logText((props.round as { log: unknown[] }).log[0])).toBe('laoban.round.events.failed');
+    props.round = { ...base, message: '別的原因', log: [] };
+    expect((b.failureText as { value: string }).value).toBe('別的原因');
+    app.unmount();
+  });
+});

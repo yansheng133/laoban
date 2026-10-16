@@ -20,8 +20,10 @@ export const DEFAULT_LIMITS: RoundLimits = {
   opinionChars: 1000, replyChars: 300, roundChars: 8000, opinions: 30, replies: 20, batch: 10
 };
 
-// Show how full the round is from this share on.
-export const SPACE_SHOWN_AT = 0.7;
+// Show how full the round is from this share on (neutral), and warn from
+// WARN_AT (report 20: 70% was late; two long opinions later it was full).
+export const SPACE_SHOWN_AT = 0.5;
+export const SPACE_WARN_AT = 0.7;
 // The counter turns to a warning from this share on.
 export const NEAR_AT = 0.9;
 
@@ -58,6 +60,8 @@ export interface RoundSpace {
   share: number;
   // Show the bar.
   shown: boolean;
+  // The bar in the warning colour.
+  warn: boolean;
   // Nothing more fits (characters or number of opinions).
   full: boolean;
   // What is about to be sent does not fit.
@@ -92,6 +96,7 @@ export function roundSpace(round: RoundView | null, limits: RoundLimits, adding:
     left:   Math.max(0, max - used.chars),
     share,
     shown:  share >= SPACE_SHOWN_AT || full || over,
+    warn:   share >= SPACE_WARN_AT,
     full,
     over,
   };

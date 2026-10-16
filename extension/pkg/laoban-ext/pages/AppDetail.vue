@@ -460,6 +460,10 @@ export default defineComponent({
     const roundsAvailable = computed(() => round.available.value);
     const componentTooLong = computed(() => textState(componentText.value, roundLimits.value.opinionChars).over);
     const roundLeft = computed(() => roundSpace(round.round.value, roundLimits.value, { chars: 0, opinions: 0 }).left);
+    // A collecting round that is full takes no more drafts either: they
+    // could not be sent (report 20, N4).
+    const roundFull = computed(() => round.round.value?.state === 'collecting' &&
+      roundSpace(round.round.value, roundLimits.value, { chars: 0, opinions: 0 }).full);
     const badges = computed(() => (round.active.value ? opinionCounts(round.round.value?.opinions) : null));
     // The enlarged view's Opinions tab: while a round runs or drafts wait.
     const showOpinionsTab = computed(() => (!!round.round.value && round.active.value) || drafts.value.length > 0);
@@ -507,7 +511,7 @@ export default defineComponent({
     }
 
     function saveDraft() {
-      if (selectedNode.value && selectedNodeName.value && componentText.value.trim() && !componentTooLong.value) {
+      if (selectedNode.value && selectedNodeName.value && componentText.value.trim() && !componentTooLong.value && !roundFull.value) {
         drafts.value = putDraft(drafts.value, { target: selectedNode.value, targetName: selectedNodeName.value, text: componentText.value });
         removedDraft.value = null;
         // Set after the text watcher has run.
@@ -539,11 +543,19 @@ export default defineComponent({
       }
     }
 
+    // A component named in the drafts or the opinions: select it and bring
+    // its opinion box (under the 3D view) into sight, as picking it in the
+    // list above the 3D view does (report 20, N3).
     function selectTarget(id: string) {
       selectedNode.value = id;
       if (!expanded.value) {
         tab.value = 'arch';
       }
+      nextTick(() => {
+        const el = canComment.value ? composer.value : archPanel.value;
+
+        el?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+      });
     }
 
     function clearOpinions() {
@@ -701,6 +713,7 @@ export default defineComponent({
       roundsAvailable,
       roundLeft,
       componentTooLong,
+      roundFull,
       detailStatus,
       expanded,
       archPanel,
@@ -1057,10 +1070,17 @@ export default defineComponent({
             for="laoban-component-opinion"
             class="laoban-label"
           >{{ t('laoban.opinions.onComponent', { name: selectedNodeName }) }}</label>
+          <p
+            v-if="roundFull"
+            class="text-error laoban-hint"
+          >
+            {{ t('laoban.limits.roundFull') }}
+          </p>
           <textarea
             id="laoban-component-opinion"
             v-model="componentText"
             rows="2"
+            :disabled="roundFull"
             :class="{ 'laoban-over': componentTooLong }"
             :aria-invalid="componentTooLong ? 'true' : 'false'"
             :placeholder="t('laoban.opinions.componentPlaceholder')"
@@ -1068,12 +1088,13 @@ export default defineComponent({
           <CharCounter
             :text="componentText"
             :max="roundLimits.opinionChars"
+            :left="roundState && roundActive ? roundLeft : undefined"
           />
           <div class="laoban-component-opinion-actions">
             <button
               type="submit"
               class="btn btn-sm role-primary"
-              :disabled="!componentText.trim() || componentTooLong"
+              :disabled="!componentText.trim() || componentTooLong || roundFull"
             >
               {{ selectedDraft ? t('laoban.opinions.updateDraft') : t('laoban.opinions.addDraft') }}
             </button>
@@ -1130,7 +1151,10 @@ export default defineComponent({
               </template>
             </button>
           </div>
-          <label class="laoban-compare">
+          <label
+            v-if="sideTab !== 'opinions'"
+            class="laoban-compare"
+          >
             {{ t('laoban.versions.compareWith') }}
             <select
               v-model="compareMode"
@@ -1171,7 +1195,7 @@ export default defineComponent({
                   </span>
                   <span
                     v-if="v.request"
-                    class="laoban-timeline-request laoban-text"
+                    class="laoban-timeline-request"
                     :title="v.request"
                   >{{ v.request }}</span>
                 </button>
@@ -1183,7 +1207,7 @@ export default defineComponent({
             role="tabpanel"
             class="laoban-side-panel"
           >
-            <p class="text-muted laoban-hint">
+            <p class="text-muted laoban-hint laoban-side-hint">
               {{ view.hint }}
             </p>
             <p
@@ -1342,6 +1366,13 @@ export default defineComponent({
   gap: 6px 12px;
   align-items: center;
   margin-bottom: 6px;
+
+  // The description changes with the comparison; on its own line the
+  // controls below it stay where they are (report 20, N1).
+  > .laoban-hint {
+    flex-basis: 100%;
+    margin: 0;
+  }
 }
 
 .laoban-lock {
@@ -1530,22 +1561,41 @@ export default defineComponent({
   }
 }
 
-// Two lines per version: number, time and kind; then the request.
+// Two lines per version: number, time and kind; then the request. Text
+// that does not fit ends in "…" (the full text is in the tooltip) instead
+// of wrapping or being cut off (report 20, N5).
 .laoban-timeline-item {
   flex-direction: column;
   align-items: stretch;
+  min-width: 0;
   padding: 4px 8px;
+  overflow: hidden;
 }
 
 .laoban-timeline-line {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 2px 8px;
   align-items: baseline;
+  min-width: 0;
   font-size: 13px;
+
+  > strong,
+  > .badge-state {
+    flex: none;
+  }
+
+  > .text-muted {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
 }
 
 .laoban-timeline-request {
+  display: block;
+  min-width: 0;
   font-size: 12px;
   overflow: hidden;
   white-space: nowrap;
@@ -1579,6 +1629,12 @@ export default defineComponent({
   overflow-y: auto;
 }
 
+// Room between the tabs and the description (report 20, N10).
+.laoban-side-hint {
+  margin-top: 8px;
+  line-height: 1.5;
+}
+
 .laoban-file-changes {
   margin-bottom: 8px;
   font-size: 13px;
@@ -1605,6 +1661,11 @@ export default defineComponent({
   width: auto;
   margin-left: 6px;
   padding: 2px 6px;
+}
+
+// The same width whichever comparison is chosen (report 20, N1).
+.laoban-compare-select:not(.laoban-node-picker) {
+  min-width: 11em;
 }
 
 // Fixed on screen: seen wherever the page is scrolled.

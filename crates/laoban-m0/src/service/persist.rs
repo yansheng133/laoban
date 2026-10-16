@@ -354,7 +354,9 @@ impl M0Service {
             }
             Ok(None) => {
                 self.update_round(&mut rs, app, round_id, |r| {
-                    r.fail(
+                    r.fail_coded(
+                        "restartUnpublished",
+                        &[],
                         "後端在發布途中重新啟動，這一輪的修改沒有發布。請發起人重新收斂。",
                         &at,
                     )
@@ -362,7 +364,9 @@ impl M0Service {
             }
             Err(_) => {
                 self.update_round(&mut rs, app, round_id, |r| {
-                    r.fail(
+                    r.fail_coded(
+                        "restartUnknown",
+                        &[],
                         "後端在發布途中重新啟動，無法確認這一輪的修改是否已發布。請到版本紀錄確認；沒有新版本時請發起人重新收斂。",
                         &at,
                     )

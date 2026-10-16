@@ -154,6 +154,19 @@ laoban:
     showCurrent: Show current architecture
     showPlan: Show converged plan
     logLine: "{who}: {event}"
+    failures:
+      planTooLarge: The AI's change plan is too large (over 150 KB). The initiator can narrow the scope or shorten the opinions and converge again.
+      planMissing: This round's change plan was not found. The initiator can converge again.
+      restartUnpublished: The backend restarted while publishing; this round's change was not published. The initiator can converge again.
+      restartUnknown: The backend restarted while publishing and could not tell whether this round's change was published. Check the versions; if there is no new version, the initiator can converge again.
+      mergeConflict: "{files} was also edited directly during this round and conflicts with the AI's change; nothing was deployed. The initiator can converge again."
+      manualEditLost: "The AI's change would overwrite the hand edits to {files} made during this round; nothing was deployed. The initiator can converge again, or undo the hand edit first if it is not needed."
+      aiInvalidOutput: The AI's answer was not in the required format; nothing was written. The initiator can converge again.
+      aiUnavailable: The AI service failed. The initiator can converge again later.
+      budgetExceeded: laoban's AI token limit for this period is used up. Wait for next month or ask an administrator to raise it.
+      spendLimit: The Anthropic account reached its spend limit. Please ask an administrator to check the Anthropic Console.
+      githubFailed: Writing to GitHub failed. The initiator can converge again later; if it keeps failing, ask an administrator to check the token and repository settings.
+      versionConflict: The app got a new version meanwhile; nothing was deployed. The initiator can converge again.
     events:
       opened: "started a round (converges in {minutes} min)"
       opinion: "gave {count} opinion(s)"
@@ -167,7 +180,7 @@ laoban:
       confirmed: confirmed
       skipped: "skipped {user}'s confirmation"
       applying: all confirmed, the AI started changing the code
-      done: new version deployed
+      done: The new version is in GitHub; Fleet deploys it next
       cancelled: cancelled this round
       restarted: The backend restarted; the AI converges again
   expand:
@@ -206,6 +219,8 @@ laoban:
     supportedBy: "+1 from {names}"
     replies: "Replies ({count})"
     replyPlaceholder: Reply to this opinion
+    showMore: Show all
+    showLess: Show less
     send: Send
     drafts: "Drafts on components ({count})"
     removeDraft: "Remove the draft on {name}"
@@ -226,8 +241,8 @@ laoban:
     tooLong: "Longer than {max} characters ({over} too many). Please shorten it before sending."
     draftTooLong: "A draft for a component is longer than {max} characters. Please shorten it first."
     newRoundOver: "Together these opinions are longer than a round allows ({max} characters). Please shorten them or send them in parts."
-    roundSpace: "This round has used {used} of {max} characters; about {left} are left."
-    roundOver: "Only about {left} characters are left in this round. Please shorten it before sending."
+    roundSpace: "This round has used {used} of {max} characters; {left} are left."
+    roundOver: "Only {left} characters are left in this round. Please shorten it before sending."
     roundFull: This round is full. Please converge it first. +1 still works.
     repliesFull: "This opinion has the most replies allowed ({max})."
     spaceLabel: Space for opinions in this round

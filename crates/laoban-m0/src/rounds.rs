@@ -275,8 +275,14 @@ pub struct Round {
     pub opinions: Vec<Opinion>,
     pub confirmers: Vec<Confirmer>,
     pub plan: Option<RoundPlan>,
-    /// Why converging or applying failed.
+    /// Why converging or applying failed (Traditional Chinese).
     pub message: String,
+    /// The same as a code the page translates (`laoban.round.failures.*`),
+    /// with the values it refers to; empty when there is no translation.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub message_code: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub message_args: BTreeMap<String, String>,
     /// The apply response once published.
     pub result: Option<serde_json::Value>,
     pub log: Vec<LogEntry>,
@@ -450,6 +456,8 @@ impl Round {
             confirmers: Vec::new(),
             plan: None,
             message: String::new(),
+            message_code: String::new(),
+            message_args: BTreeMap::new(),
             result: None,
             log: Vec::new(),
             last_opinion: 0,
@@ -678,6 +686,8 @@ impl Round {
         self.plan = None;
         self.recipe = None;
         self.message.clear();
+        self.message_code.clear();
+        self.message_args.clear();
         self.note(
             at,
             "laoban",
@@ -782,13 +792,34 @@ impl Round {
     }
 
     pub fn fail(&mut self, message: &str, at: &str) {
+        self.fail_coded("", &[], message, at);
+    }
+
+    /// Fail with a code the page can show in its language (`message` is
+    /// the Traditional Chinese text, kept for clients without it).
+    pub fn fail_coded(&mut self, code: &str, args: &[(&str, String)], message: &str, at: &str) {
         self.state = State::Failed;
         self.message = message.to_string();
+        self.message_code = code.to_string();
+        self.message_args = args
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.clone()))
+            .collect();
+        let mut log_args: Vec<(&'static str, String)> = vec![("message", message.to_string())];
+        if !code.is_empty() {
+            log_args.push(("code", code.to_string()));
+            for (k, v) in args {
+                // Only the known argument names go into the log.
+                if *k == "files" {
+                    log_args.push(("files", v.clone()));
+                }
+            }
+        }
         self.note(
             at,
             "laoban",
             "failed",
-            &[("message", message.to_string())],
+            &log_args,
             format!("失敗：{message}"),
         );
     }
@@ -894,7 +925,14 @@ impl Round {
     pub fn done(&mut self, result: serde_json::Value, at: &str) {
         self.state = State::Done;
         self.result = Some(result);
-        self.note(at, "laoban", "done", &[], "已部署新版本".into());
+        // Written to GitHub; Fleet deploys it shortly after (report 20, N6).
+        self.note(
+            at,
+            "laoban",
+            "done",
+            &[],
+            "新版本已寫入 GitHub，等待 Fleet 部署".into(),
+        );
     }
 
     /// The initiator converges again after a failure.
