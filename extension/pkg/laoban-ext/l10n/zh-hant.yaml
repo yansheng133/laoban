@@ -413,6 +413,7 @@ laoban:
       steps: 步驟
       masked: "送出給 AI 前已遮蔽 {count} 處疑似敏感資訊。"
       usage: "這次用了 {input} 個輸入 token、{output} 個輸出 token。"
+      usageModel: "由 AI 模型 {model} 產生，用了 {input} 個輸入 token、{output} 個輸出 token。"
       apply: 確認並部署
     result:
       viewApp: 到應用頁查看

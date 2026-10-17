@@ -830,7 +830,12 @@ impl M0Service {
     /// the caller gets the error (for example `409 app_exists`) instead of
     /// a job that fails (report 23, N29).
     pub fn plan_job(&self, body: &PlanRequestBody, user: Option<&str>) -> Result<Value, M0Error> {
-        match body.base_app.as_deref().map(str::trim).filter(|a| !a.is_empty()) {
+        match body
+            .base_app
+            .as_deref()
+            .map(str::trim)
+            .filter(|a| !a.is_empty())
+        {
             Some(app) => self.check_no_round(app)?,
             None => {
                 if let Some(n) = body
@@ -1102,6 +1107,9 @@ impl M0Service {
                 "inputTokens": completion.input_tokens,
                 "outputTokens": completion.output_tokens,
             },
+            // Shown with the plan, so nobody mistakes a local model's work
+            // for another model's.
+            "model": completion.model,
         });
         let stored = StoredPlan {
             id,

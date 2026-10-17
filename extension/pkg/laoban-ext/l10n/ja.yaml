@@ -415,6 +415,7 @@ laoban:
       steps: 手順
       masked: "AI に送る前に、機密の可能性がある {count} 件をマスクしました。"
       usage: "入力 {input} トークン、出力 {output} トークンを使用しました。"
+      usageModel: "AI モデル {model} が作成しました（入力 {input} トークン、出力 {output} トークン）。"
       apply: 確認してデプロイ
     result:
       viewApp: アプリページで見る

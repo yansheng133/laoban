@@ -110,7 +110,7 @@ export default defineComponent({
             v-if="v.current"
             class="badge-state bg-success"
           >{{ t('laoban.versions.current') }}</span>
-          <span class="text-muted">{{ formatTime(v.at) }} · {{ kindLabel(v.kind) }}<template v-if="byLabel(v)"> · {{ byLabel(v) }}</template></span>
+          <span class="text-muted">{{ formatTime(v.at) }} · {{ kindLabel(v.kind) }}<template v-if="byLabel(v)"> · {{ byLabel(v) }}</template><template v-if="v.model"> · {{ v.model }}</template></span>
           <a
             v-if="safeHttpsUrl(v.commitUrl)"
             :href="safeHttpsUrl(v.commitUrl)"

@@ -413,6 +413,7 @@ laoban:
       steps: Steps
       masked: "{count} possibly sensitive items were masked before sending to the AI."
       usage: "This used {input} input tokens and {output} output tokens."
+      usageModel: "Made by the AI model {model}, using {input} input tokens and {output} output tokens."
       apply: Confirm and deploy
     result:
       viewApp: View in Apps
