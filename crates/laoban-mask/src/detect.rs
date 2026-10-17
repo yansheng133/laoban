@@ -24,6 +24,56 @@ static ACCOUNT: LazyLock<Regex> = LazyLock::new(|| {
     .expect("valid regex")
 });
 
+/// Credentials recognisable on their own: provider key and token formats,
+/// JSON Web Tokens, bearer tokens and PEM private key blocks.
+static CREDENTIAL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(concat!(
+        r"(?s)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----",
+        r"|\bsk-(?:ant-)?[A-Za-z0-9_\-]{16,}",
+        r"|\bgh[pousr]_[A-Za-z0-9]{20,}",
+        r"|\bgithub_pat_[A-Za-z0-9_]{20,}",
+        r"|\bglpat-[A-Za-z0-9_\-]{20,}",
+        r"|\b(?:AKIA|ASIA)[0-9A-Z]{16}\b",
+        r"|\bAIza[0-9A-Za-z_\-]{35}",
+        r"|\bxox[abprs]-[A-Za-z0-9\-]{10,}",
+        r"|\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}",
+        r"|(?i:\bbearer)\s+[A-Za-z0-9._~+/\-]{20,}=*",
+    ))
+    .expect("valid regex")
+});
+
+/// A secret-ish key followed by `:`, `=` or `：` and a value. Only the value
+/// is masked.
+static SECRET_VALUE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r#"(?i)(?:\b(?:password|passwd|pwd|passphrase|secret|client[_-]?secret|token|access[_-]?token|api[_-]?key|access[_-]?key|secret[_-]?key|private[_-]?key)|密碼|密码|口令|パスワード)["']?\s*[:=：]\s*["']?([^\s"',;}，。；、）」』]{4,})"#,
+    )
+    .expect("valid regex")
+});
+
+pub(crate) fn credentials(text: &str) -> Vec<Finding> {
+    let mut out: Vec<Finding> = CREDENTIAL
+        .find_iter(text)
+        .map(|m| Finding {
+            kind: Kind::Credential,
+            start: m.start(),
+            end: m.end(),
+            checksum_valid: None,
+        })
+        .collect();
+    for caps in SECRET_VALUE.captures_iter(text) {
+        if let Some(g) = caps.get(1) {
+            out.push(Finding {
+                kind: Kind::Credential,
+                start: g.start(),
+                end: g.end(),
+                checksum_valid: None,
+            });
+        }
+    }
+    out
+}
+
 fn is_ascii_alnum_at(text: &str, idx: usize, before: bool) -> bool {
     let c = if before {
         text[..idx].chars().next_back()

@@ -302,10 +302,10 @@
           "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
         },
         "clusterId": {
-          "description": "Rancher cluster ID of the target cluster (LAOBAN_CLUSTER_ID), e.g. c-m-26kbxk5f.",
+          "description": "Rancher cluster ID of the cluster laoban runs in (LAOBAN_CLUSTER_ID), e.g. c-m-abcd1234. Required.",
           "type": "string",
           "maxLength": 63,
-          "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+          "pattern": "^([a-z0-9]([-a-z0-9]*[a-z0-9])?)?$"
         },
         "language": {
           "description": "Language of the backend's messages for people (LAOBAN_LANGUAGE): en or zh-Hant.",

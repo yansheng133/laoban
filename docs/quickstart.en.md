@@ -9,10 +9,11 @@ Follow this guide and in about 30 minutes you can build your first app from one 
 | Item | Description |
 |---|---|
 | Rancher 2.15 | Rancher Prime or the community edition. The extension is marked as supporting 2.15 only. The Rancher server must be able to reach `yansheng133.github.io` (the Helm repo) and `raw.githubusercontent.com` (the extension files) |
-| A cluster managed by Rancher | Runs the laoban backend and the generated apps; it can be a downstream cluster or local. Either x86-64 or ARM64 works (so far fully verified only on ARM64) |
+| A downstream cluster managed by Rancher | Runs the laoban backend and the generated apps. **The local cluster cannot be used** (Fleet puts the local cluster in a different workspace; laoban currently uses only `fleet-default`). Either x86-64 or ARM64 works (so far fully verified only on ARM64) |
+| Outbound access | The downstream cluster must reach `api.anthropic.com` (or your local model), `api.github.com`, `ghcr.io` (the backend image) and `registry.suse.com` (the `bci/python` image the generated apps use); Fleet must be able to read your GitHub repo |
 | `kubectl`, `helm` 3 | Able to operate on the cluster above; sections 5 and 7 also need access to the Rancher **local** cluster (for example, `/etc/rancher/rke2/rke2.yaml` on the Rancher host), or use the local cluster → **Import YAML** in the Rancher UI instead |
 | GitHub account | A repo to hold the generated apps, and a token that can write only to that repo |
-| Anthropic API key | Or a local model endpoint compatible with the Anthropic Messages API (for example, Ollama; see the section 「改用本機模型」 (using a local model) in [charts/laoban/README.md](../charts/laoban/README.md)) |
+| Anthropic API key | Or a local model endpoint compatible with the Anthropic Messages API (for example, Ollama; see "Using a local model" in section 4) |
 
 laoban calls the AI every time it generates a plan or changes code, and the cost is paid by your Anthropic account. The backend has a monthly token cap (default 2,000,000); when it is used up, laoban stops calling the AI.
 
@@ -30,15 +31,15 @@ The steps below follow the Rancher 2.15 screens.
    - Target: **Helm Repository** (HTTP(S) URL pointing to a Helm chart repository index; this is the default)
    - Index URL: `https://yansheng133.github.io/laoban`
    - Click **Add Repository** at the bottom of the screen.
-3. After saving, the screen stays on Apps → Repositories in the local cluster. Go back to **Extensions** from the top-left menu → **Available** tab, find the **laoban** card → **⋮** at the card's top right → **Install** → confirm the version (the latest, for example `0.1.19`) → **Install**. The dialog shows a yellow "untrusted authors" notice because laoban is a community project, not a Rancher-certified extension.
+3. After saving, the screen stays on Apps → Repositories in the local cluster. Go back to **Extensions** from the top-left menu → **Available** tab, find the **laoban** card → **⋮** at the card's top right → **Install** → confirm the version (the latest, for example `0.1.20`) → **Install**. The dialog shows a yellow "untrusted authors" notice because laoban is a community project, not a Rancher-certified extension.
 4. After installation, **Extensions changed - reload required** appears at the top; click **Reload** (or reload the page). **laoban** appears under **Global Apps** in the top-left menu.
 
 If the Index URL does not open, use `https://raw.githubusercontent.com/yansheng133/laoban/gh-pages` instead; the content is the same.
 
 ## 2. Prepare GitHub
 
-1. Create a new repo to hold the generated apps, for example `laoban-apps`. **Check "Add a README file" when creating it** so that it has a `main` branch.
-   - We recommend trying with a public repo first: Fleet needs no extra read permission. A private repo needs an additional Secret for Fleet to read it; see [deploy/m0/README.md](../deploy/m0/README.md).
+1. Create a new repo to hold the generated apps, for example `laoban-apps` (any name works; use yours in sections 4 and 5). **Check "Add a README file" when creating it** so that it has a `main` branch.
+   - A public repo is fine for a trial: Fleet needs no extra read permission. But each app's `laoban.json` and README record the requests (masked) and the Rancher user IDs of the people who made changes, so **use a private repo for real use**. A private repo needs an additional Secret for Fleet to read it; see [deploy/m0/README.md](../deploy/m0/README.md).
 2. Create a **fine-grained personal access token**:
    - Repository access: **Only select repositories**, selecting only the repo above.
    - Repository permissions: grant only **Contents: Read and write** (Metadata: Read-only is added automatically).
@@ -51,7 +52,7 @@ If the Index URL does not open, use `https://raw.githubusercontent.com/yansheng1
 # Backend
 kubectl --context downstream create namespace laoban-system
 # Generated apps (enforced with Pod Security restricted)
-kubectl --context downstream apply -f https://raw.githubusercontent.com/yansheng133/laoban/v0.1.19/deploy/m0/namespace-laoban-dev.yaml
+kubectl --context downstream apply -f https://raw.githubusercontent.com/yansheng133/laoban/v0.1.20/deploy/m0/namespace-laoban-dev.yaml
 
 # Read the key and token from files: they stay out of values and out of shell history
 kubectl --context downstream -n laoban-system create secret generic laoban-anthropic --from-file=api-key=./anthropic-api-key
@@ -60,14 +61,14 @@ kubectl --context downstream -n laoban-system create secret generic laoban-githu
 
 ## 4. Install the backend
 
-First look up the Rancher ID of the cluster that runs laoban (it starts with `c-m-`; the local cluster is `local`):
+First look up the Rancher ID of the cluster that runs laoban (it starts with `c-m-`):
 
 ```bash
 kubectl --context local get clusters.management.cattle.io \
   -o custom-columns=ID:.metadata.name,NAME:.spec.displayName
 ```
 
-`clusterId` is used only to build the **Open app** URL (apps are opened through the Rancher proxy); the page does not need it to find the backend. Looking up the cluster ID requires access to the local cluster; alternatively, open that cluster in the Rancher UI, and the part after `/c/` in the address bar is the ID (for example, `c-m-xxxxxxxx`).
+`clusterId` is required and is used only to build the **Open app** URL (apps are opened through the Rancher proxy); the page does not need it to find the backend. Looking up the cluster ID requires access to the local cluster; alternatively, open that cluster in the Rancher UI, and the part after `/c/` in the address bar is the ID (for example, `c-m-xxxxxxxx`).
 
 Create `values-laoban.yaml` (replace the `<...>` parts):
 
@@ -96,11 +97,27 @@ Install (CRDs first, then the backend):
 ```bash
 helm repo add laoban https://yansheng133.github.io/laoban
 helm repo update
-helm --kube-context downstream install laoban-crd laoban/laoban-crd -n laoban-system --version 0.1.19
-helm --kube-context downstream install laoban laoban/laoban -n laoban-system -f values-laoban.yaml --version 0.1.19
+helm --kube-context downstream install laoban-crd laoban/laoban-crd -n laoban-system --version 0.1.20
+helm --kube-context downstream install laoban laoban/laoban -n laoban-system -f values-laoban.yaml --version 0.1.20
 ```
 
 The published chart already contains the image digest for this version (`ghcr.io/yansheng133/laoban-server`), so you do not need to specify it.
+
+### Using a local model
+
+To use a local model compatible with the Anthropic Messages API (for example, Ollama) instead of the Anthropic API, change `values-laoban.yaml` like this:
+
+```yaml
+anthropic:
+  existingSecret: ""   # no Anthropic API key needed
+ai:
+  baseUrl: http://<model server address>:11434   # must be reachable from Pods in the downstream cluster
+  timeoutSeconds: 900                            # local models are slower
+config:
+  model: qwen3-coder:30b                         # the model name on the server
+```
+
+Keep the other fields. You do not need the `laoban-anthropic` Secret from section 3. `http://` is not encrypted, so use it only on an internal network.
 
 Check that the backend is ready:
 
@@ -120,11 +137,11 @@ First look up the cluster name in Fleet (not the `c-m-` ID above):
 kubectl --context local -n fleet-default get clusters.fleet.cattle.io
 ```
 
-Download the two templates, replace `<owner>` with your GitHub account and `clusterName: rke2` with the name you looked up, then apply them:
+Download the two templates. In `fleet-gitrepo.yaml`, replace `https://github.com/<owner>/laoban-apps` with your repo and `clusterName: rke2` with the name you looked up, then apply them. **Do not change** the GitRepo's own name (`metadata.name: laoban-apps`): the page tracks deployments by that name:
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/yansheng133/laoban/v0.1.19/deploy/m0/fleet-gitrepo.yaml
-curl -fsSLO https://raw.githubusercontent.com/yansheng133/laoban/v0.1.19/deploy/m0/fleet-gitreporestriction.yaml
+curl -fsSLO https://raw.githubusercontent.com/yansheng133/laoban/v0.1.20/deploy/m0/fleet-gitrepo.yaml
+curl -fsSLO https://raw.githubusercontent.com/yansheng133/laoban/v0.1.20/deploy/m0/fleet-gitreporestriction.yaml
 # After editing fleet-gitrepo.yaml:
 kubectl --context local apply -f fleet-gitreporestriction.yaml
 kubectl --context local apply -f fleet-gitrepo.yaml
@@ -146,11 +163,11 @@ Switch the UI language in the user menu at the top right of Rancher → Preferen
 ## 7. Let other people use it
 
 - Rancher administrators can use it right away.
-- Other people: those with the built-in **edit** role in `laoban-dev` can use it, and those with **view** can look.
+- Other people: those with the built-in **edit** role in `laoban-dev` can use it, and those with **view** can look. They usually cannot read Fleet's status; the page then checks the Deployments in `laoban-dev` to tell when a new version is running, so no extra permission is needed.
 - If you manage access with Rancher Projects, apply the Project roles in the Rancher **local** cluster (use a kubeconfig that can manage the local cluster, for example `/etc/rancher/rke2/rke2.yaml` on the Rancher host; or paste this file into the local cluster → **Import YAML** in the Rancher UI), then assign members **laoban user** or **laoban viewer**:
 
 ```bash
-kubectl --context local apply -f https://raw.githubusercontent.com/yansheng133/laoban/v0.1.19/deploy/rancher/roletemplate.yaml
+kubectl --context local apply -f https://raw.githubusercontent.com/yansheng133/laoban/v0.1.20/deploy/rancher/roletemplate.yaml
 ```
 
   See [deploy/rancher/README.md](../deploy/rancher/README.md) for details.
@@ -163,11 +180,26 @@ kubectl --context local apply -f https://raw.githubusercontent.com/yansheng133/l
 | The page says "No laoban backend was found…" | AVAILABLE in `kubectl --context downstream get apiservice v1alpha1.api.laoban.yansheng133.github.io`; whether you have edit/view on `laoban-dev` or the laoban user/viewer role |
 | Generating a plan fails and mentions the token or spend limit | Your quota in the Anthropic Console; the backend's monthly token cap (`config.tokenCap`) |
 | Writing to GitHub fails | Whether the token has only Contents: Read and write on that one repo, and whether the repo has a `main` branch; backend log: `kubectl --context downstream -n laoban-system logs deploy/laoban` |
-| Deployment never finishes | Status of `laoban-apps` in Rancher → Continuous Delivery → Git Repos; whether the Pod is blocked by Pod Security |
+| Deployment never finishes | Status of `laoban-apps` in Rancher → Continuous Delivery → Git Repos; whether the Pod is blocked by Pod Security; whether the downstream cluster can pull `registry.suse.com/bci/python` |
+| The new GitRepo shows no resources | Normal: the repo has no `apps/` yet; it appears after the first app is deployed |
+| Generating a plan fails with a model "not found" error | Whether the model ID in `config.model` is correct; for a local model, download it on the server first |
 | Rounds of opinions show a message asking an administrator to upgrade the laoban-crd chart first | `laoban-crd` is not installed, or its version is older than the backend |
 | After a backend restart the token usage starts from 0, or plans not yet confirmed are gone | `laoban-crd` is older than 0.1.19 (the backend log says "not installed"). After upgrading `laoban-crd`, saving starts within 30 seconds |
 | You want to reset the token usage in the middle of a month | Delete that month's record and restart the backend: `kubectl --context downstream -n laoban-system delete tokenusage tokens-YYYY-MM` (UTC month), then `kubectl --context downstream -n laoban-system rollout restart deploy/laoban` |
 | After an upgrade, the first `kubectl get rounds` reports an error and the second one works | kubectl's discovery cache is still stale; no action needed |
+
+## Upgrade
+
+1. **Extension**: Rancher → Extensions → **⋮** at the top right → **Manage Repositories** → **⋮** on the `laoban` row → **Refresh** (Rancher caches the repo list; without Refresh the new version does not show). Back in **Extensions** → **Installed** → **⋮** at the top right of the laoban card → **Upgrade** → choose the new version → **Upgrade**, then click **Reload** at the top.
+2. **Backend**: upgrade the CRDs **first**, then the backend (use the new version):
+
+```bash
+helm repo update
+helm --kube-context downstream upgrade laoban-crd laoban/laoban-crd -n laoban-system --version <new version>
+helm --kube-context downstream upgrade laoban laoban/laoban -n laoban-system -f values-laoban.yaml --version <new version>
+```
+
+Running rounds of opinions, plans not yet confirmed and this month's token usage are stored in the cluster and remain after the upgrade. See [Releases](https://github.com/yansheng133/laoban/releases) for notes on each version.
 
 ## Uninstall
 

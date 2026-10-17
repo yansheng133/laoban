@@ -138,8 +138,10 @@ config:
   tokenCap: 2000000
   # Namespace the generated apps are deployed to by Fleet (LAOBAN_TARGET_NAMESPACE).
   targetNamespace: laoban-dev
-  # Rancher cluster ID of the target cluster, used to build app URLs (LAOBAN_CLUSTER_ID).
-  clusterId: c-m-26kbxk5f
+  # Rancher cluster ID of the cluster laoban runs in (c-m-xxxxxxxx, or "local"),
+  # used to build the "Open app" URLs (LAOBAN_CLUSTER_ID). Required: in the
+  # Rancher UI it is the part after /c/ in the address of that cluster.
+  clusterId: ""
   # Language of the backend's messages for people: errors, round events and
   # failures, commit messages, the generated README (LAOBAN_LANGUAGE).
   # "en" or "zh-Hant". The page shows most of them in its own language.

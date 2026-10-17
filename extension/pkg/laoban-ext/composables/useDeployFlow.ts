@@ -189,6 +189,9 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
     return true;
   }
 
+  // The caller cannot read Fleet's bundles (see poll).
+  let bundlesHidden = false;
+
   async function poll(gen: number) {
     if (unmounted || gen !== pollGeneration || !applied.value) {
       return;
@@ -205,11 +208,21 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
       if (gen !== pollGeneration) {
         return;
       }
-      pollError.value = true;
+      // Fleet's bundles live in the local cluster's fleet-default namespace,
+      // which project members usually cannot read. Without them, the
+      // Deployments in the app's own namespace (readable with the laoban
+      // user role) tell when the new version runs.
+      if (e instanceof RequestError && (e.status === 403 || e.status === 404)) {
+        bundlesHidden = true;
+      } else {
+        pollError.value = true;
+      }
     }
 
     // 'modified': running but drifted from Git; offer the app anyway.
-    if (readiness.value?.state === 'ready' || readiness.value?.state === 'modified') {
+    const viaDeployments = bundlesHidden && rolloutTargets(applied.value?.rollout).length > 0;
+
+    if (viaDeployments || readiness.value?.state === 'ready' || readiness.value?.state === 'modified') {
       const done = await rolledOut(gen);
 
       if (done === null) {
