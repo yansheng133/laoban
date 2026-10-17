@@ -123,8 +123,13 @@ export default defineComponent({
         >
           {{ t('laoban.access.viewOnly') }}
         </p>
+        <!-- Only once the backend answers and the caller may make apps:
+             without a backend there is nothing to send the request to
+             (report 23, N22). -->
         <form
+          v-if="config && mayChange"
           class="laoban-form"
+          data-testid="laoban-plan-form"
           @submit.prevent="generatePlan"
         >
           <label

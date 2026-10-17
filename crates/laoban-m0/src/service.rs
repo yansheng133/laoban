@@ -826,7 +826,25 @@ impl M0Service {
     }
 
     /// `POST /api/plan` with `background`: the plan as a job.
+    /// What can be refused at once is refused before the job starts, so
+    /// the caller gets the error (for example `409 app_exists`) instead of
+    /// a job that fails (report 23, N29).
     pub fn plan_job(&self, body: &PlanRequestBody, user: Option<&str>) -> Result<Value, M0Error> {
+        match body.base_app.as_deref().map(str::trim).filter(|a| !a.is_empty()) {
+            Some(app) => self.check_no_round(app)?,
+            None => {
+                if let Some(n) = body
+                    .app_name
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|n| valid_app_name(n))
+                {
+                    if self.app_names()?.iter().any(|e| e == n) {
+                        return Err(M0Error::AppExists(n.to_string()));
+                    }
+                }
+            }
+        }
         let body = body.clone();
         let owner = user.map(str::to_string);
         self.start_job("plan", user, move |s| s.plan(&body, owner.as_deref()))

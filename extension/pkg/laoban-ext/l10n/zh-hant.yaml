@@ -148,6 +148,8 @@ laoban:
     applying: "AI 正在修改程式並寫進 GitHub（已 {seconds} 秒）…"
     retry: 重新收斂
     cancel: 取消這一輪
+    cancelConfirm: "確定取消？這一輪的意見都會作廢。"
+    cancelKeep: 不取消
     log: "紀錄（{count}）"
     hintPlan: 收斂後的修改計畫與目前版本的差異：標示的是部署後會新增、刪除、修改的部分。
     hintPlanSame: 收斂後的計畫沒有改變架構（模組與 API 都一樣），可能只改程式內容，或這次不需要修改。請看步驟與說明。
@@ -284,6 +286,7 @@ laoban:
     round_active: "這個應用已經有一輪意見收斂正在進行。"
   access:
     viewOnly: "你可以看應用，但不能新增或修改（你的角色是 laoban viewer）。需要修改請管理者給你 laoban user 角色。"
+    viewOnlyRound: "你可以看這一輪的意見，但不能參與（你的角色是 laoban viewer）。需要參與請管理者給你 laoban user 角色。"
   waiting:
     youConfirmed: "你已經確認，等其他人回覆。"
     failed: "你確認後這一輪失敗了，發起人可以重新收斂。"

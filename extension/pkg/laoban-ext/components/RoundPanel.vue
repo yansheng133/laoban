@@ -258,6 +258,29 @@ export default defineComponent({
     });
     const newDeadline = ref(30);
 
+    // When a round ends (done, cancelled), the next one starts from the
+    // defaults again, not from the last round's choices (report 23, N25).
+    watch(active, (isActive, wasActive) => {
+      if (wasActive && !isActive) {
+        minutes.value = 0;
+        scope.value = 'all';
+        confirmingCancel.value = false;
+      }
+    });
+
+    // Cancelling throws the opinions away: ask once more (report 23, N24).
+    const confirmingCancel = ref(false);
+
+    function cancelRound() {
+      if (!confirmingCancel.value) {
+        confirmingCancel.value = true;
+
+        return;
+      }
+      confirmingCancel.value = false;
+      emit('act', 'cancel', {});
+    }
+
     watch(deadlineChoices, (list) => {
       if (list.length && !list.includes(newDeadline.value)) {
         newDeadline.value = list[list.length - 1];
@@ -316,6 +339,8 @@ export default defineComponent({
     return {
       t,
       minutes,
+      confirmingCancel,
+      cancelRound,
       scope,
       deadlines: DEADLINES,
       deadlineChoices,
@@ -384,11 +409,12 @@ export default defineComponent({
       {{ t('laoban.round.unavailable') }}
     </p>
     <p
-      v-if="viewOnly && !active"
+      v-if="viewOnly"
       class="laoban-banner-info"
       role="status"
+      data-testid="laoban-view-only"
     >
-      {{ t('laoban.access.viewOnly') }}
+      {{ active ? t('laoban.access.viewOnlyRound') : t('laoban.access.viewOnly') }}
     </p>
     <!-- No round running: open one. -->
     <form
@@ -634,6 +660,7 @@ export default defineComponent({
         :limits="limits"
         :round-left="roundLeft"
         :can-edit="state === 'collecting' && !!you && !!you.canAddOpinion"
+        :read-only="viewOnly"
         @support="$emit('support', $event)"
         @reply="(id, text) => $emit('reply', id, text)"
         @edit="(id, text) => $emit('edit', id, text)"
@@ -641,9 +668,9 @@ export default defineComponent({
         @select="$emit('select-target', $event)"
       />
 
-      <!-- Collecting: add an opinion. -->
+      <!-- Collecting: add an opinion (not for a viewer, report 23 B24). -->
       <form
-        v-if="state === 'collecting'"
+        v-if="state === 'collecting' && !viewOnly"
         class="laoban-form"
         @submit.prevent="addOpinion"
       >
@@ -739,9 +766,10 @@ export default defineComponent({
           >
           {{ t('laoban.opinions.shareDrafts') }}
         </label>
-        <!-- Drafts are shared by default: say so once there is one. -->
+        <!-- Drafts are shared by default: said from the start, so the
+             buttons below do not move when typing starts (report 23, N27). -->
         <p
-          v-if="draftsShared && count > 0"
+          v-if="draftsShared"
           class="text-muted laoban-hint laoban-shared-hint"
           data-testid="laoban-shared-hint"
         >
@@ -1026,15 +1054,29 @@ export default defineComponent({
         </button>
       </div>
 
-      <button
+      <div
         v-if="you && you.isInitiator && ['collecting', 'confirming', 'failed'].includes(state)"
-        type="button"
-        class="btn btn-sm role-secondary laoban-round-cancel"
-        :disabled="busy"
-        @click="$emit('act', 'cancel', {})"
+        class="laoban-round-cancel"
       >
-        {{ t('laoban.round.cancel') }}
-      </button>
+        <button
+          type="button"
+          class="btn btn-sm"
+          :class="confirmingCancel ? 'role-primary bg-error' : 'role-secondary'"
+          :disabled="busy"
+          data-testid="laoban-round-cancel"
+          @click="cancelRound"
+        >
+          {{ confirmingCancel ? t('laoban.round.cancelConfirm') : t('laoban.round.cancel') }}
+        </button>
+        <button
+          v-if="confirmingCancel"
+          type="button"
+          class="btn btn-sm role-link"
+          @click="confirmingCancel = false"
+        >
+          {{ t('laoban.round.cancelKeep') }}
+        </button>
+      </div>
 
       <details class="laoban-round-log">
         <summary>{{ t('laoban.round.log', { count: round.log.length }) }}</summary>
@@ -1167,6 +1209,10 @@ export default defineComponent({
 
 .laoban-round-cancel {
   align-self: flex-start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
 }
 
 .laoban-round-log {

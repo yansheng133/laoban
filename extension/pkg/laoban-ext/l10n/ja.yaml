@@ -150,6 +150,8 @@ laoban:
     applying: "AI がコードを変更して GitHub に書き込んでいます（{seconds} 秒）…"
     retry: もう一度収束
     cancel: この回を取り消す
+    cancelConfirm: "取り消しますか？このラウンドの意見はすべて無効になります。"
+    cancelKeep: 取り消さない
     log: "記録（{count}）"
     hintPlan: 収束した計画と現在のバージョンの差分です。
     hintPlanSame: 収束した計画はアーキテクチャを変えません（モジュールと API は同じ）。コードだけの変更か、今回は変更不要の可能性があります。手順と説明を確認してください。
@@ -286,6 +288,7 @@ laoban:
     round_active: "このアプリではすでに意見のラウンドが進行中です。"
   access:
     viewOnly: "アプリを見ることはできますが、作成や変更はできません（ロールは laoban viewer）。変更するには管理者に laoban user ロールを依頼してください。"
+    viewOnlyRound: "このラウンドの意見を見ることはできますが、参加はできません（ロールは laoban viewer）。参加するには管理者に laoban user ロールを依頼してください。"
   waiting:
     youConfirmed: "確認済みです。ほかの人の回答を待っています。"
     failed: "あなたが確認した後、このラウンドは失敗しました。開始した人がもう一度収束できます。"

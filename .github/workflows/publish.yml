@@ -63,6 +63,10 @@ jobs:
           done
           [ "$cargo" = "$v" ] || fail "Cargo.toml version $cargo is not $v"
           [ "$ext" = "$v" ] || fail "extension version $ext is not $v"
+          # The card icon comes from this tag, so a later change on main does
+          # not change older versions' cards (report 23, N26).
+          grep -q "\"icon\": \"https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${RELEASE_TAG}/" extension/pkg/laoban-ext/package.json \
+            || fail "the extension icon URL must point at ${RELEASE_TAG}"
           [ -f "docs/releases/${RELEASE_TAG}.md" ] || fail "docs/releases/${RELEASE_TAG}.md (the release notes) is missing"
           git show-ref -q gh-pages || fail "the gh-pages branch must exist"
           echo "version=$v" >> "$GITHUB_OUTPUT"

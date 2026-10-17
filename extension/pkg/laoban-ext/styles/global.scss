@@ -20,3 +20,19 @@ html.laoban-nav-collapsed .dashboard-content {
   background: var(--info-banner-bg, rgba(36, 83, 255, 0.15));
   color: var(--body-text);
 }
+
+// The same for warnings (waiting for you) and errors (failed); Rancher's
+// `banner warning` is transparent in the dark theme too (report 23, B23).
+.laoban-banner-warning,
+.laoban-banner-error {
+  padding: 8px 12px;
+  border-left: 4px solid var(--warning, #daa520);
+  border-radius: var(--border-radius, 4px);
+  background: var(--warning-banner-bg, rgba(218, 165, 32, 0.15));
+  color: var(--body-text);
+}
+
+.laoban-banner-error {
+  border-left-color: var(--error, #d32f2f);
+  background: var(--error-banner-bg, rgba(211, 47, 47, 0.15));
+}

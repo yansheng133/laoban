@@ -148,6 +148,8 @@ laoban:
     applying: "The AI is changing the code and committing to GitHub ({seconds}s)…"
     retry: Converge again
     cancel: Cancel this round
+    cancelConfirm: "Cancel it? All opinions in this round are discarded."
+    cancelKeep: Keep the round
     log: "Log ({count})"
     hintPlan: "The converged plan compared with the current version: marked parts are added, removed or changed by deploying it."
     hintPlanSame: "The converged plan does not change the architecture (same modules and API): it may change code only, or nothing needs to change. See the steps and notes."
@@ -284,6 +286,7 @@ laoban:
     round_active: "A round of opinions is already running for this app."
   access:
     viewOnly: "You can look at apps but not make or change them (your role is laoban viewer). Ask an administrator for the laoban user role."
+    viewOnlyRound: "You can read this round's opinions but not take part (your role is laoban viewer). Ask an administrator for the laoban user role."
   waiting:
     youConfirmed: "You confirmed. Waiting for the others to answer."
     failed: "This round failed after you confirmed. The person who started it can converge again."
