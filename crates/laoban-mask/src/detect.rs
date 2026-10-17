@@ -32,7 +32,8 @@ static ACCOUNT: LazyLock<Regex> = LazyLock::new(|| {
 static CREDENTIAL: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(concat!(
         r"(?s)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----",
-        r"|\bsk-(?:ant-)?[A-Za-z0-9_\-]{16,}",
+        r"|\bsk-ant-[a-z]{3}[0-9]{2}-[A-Za-z0-9_\-]{20,}",
+        r"|\bsk-(?:proj-)?[A-Za-z0-9]{20,}",
         r"|\bgh[pousr]_[A-Za-z0-9]{20,}",
         r"|\bgithub_pat_[A-Za-z0-9_]{20,}",
         r"|\bglpat-[A-Za-z0-9_\-]{20,}",
@@ -40,7 +41,7 @@ static CREDENTIAL: LazyLock<Regex> = LazyLock::new(|| {
         r"|\bAIza[0-9A-Za-z_\-]{35}",
         r"|\bxox[abprs]-[A-Za-z0-9\-]{10,}",
         r"|\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}",
-        r"|(?i:\bbearer)\s+[A-Za-z0-9._~+/\-]{20,}=*",
+        r"|(?i:\bbearer)\s+(?:[A-Za-z0-9._~+/\-]{10,}[0-9][A-Za-z0-9._~+/\-]*|[A-Za-z0-9._~+/\-]*[0-9][A-Za-z0-9._~+/\-]{10,})=*",
     ))
     .expect("valid regex")
 });

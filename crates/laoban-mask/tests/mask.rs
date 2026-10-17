@@ -286,7 +286,7 @@ fn credentials_are_masked_for_both_destinations() {
     let jwt = jwt.as_str();
     let kind = "OPENSSH PRIVATE KEY";
     let pem = format!("-----BEGIN {kind}-----\nAAAAexample\n-----END {kind}-----");
-    let bearer = "q".repeat(32);
+    let bearer = format!("{}9{}", "q".repeat(16), "w".repeat(15));
     let text = format!(
         "key {anthropic}, gh {github}, pat {pat}, aws {aws}, jwt {jwt}\n{pem}\n\
          Authorization: Bearer {bearer}"
@@ -313,7 +313,9 @@ fn ordinary_words_are_not_credentials() {
     let text = "做一個登入頁，要有密碼欄位與忘記密碼連結；token 用量顯示在右上角。\n\
                 密碼：至少八碼並包含大小寫字母。パスワード：8文字以上。max token: 4000\n\
                 def login(password: str):\n    token = request.headers.get(\"Authorization\")\n\
-                const token = localStorage.getItem('t'); headers: { Authorization: 'Bearer ' + token }";
+                const token = localStorage.getItem('t'); headers: { Authorization: 'Bearer ' + token }\n\
+                name: sk-payment-gateway-service; .sk-chase-dot-container {}\n\
+                # Uses Bearer authentication-with-refresh-tokens for the API";
     let out = masker().mask(text, Destination::Ai);
     assert_eq!(out.text, text);
     assert!(out.findings.is_empty());

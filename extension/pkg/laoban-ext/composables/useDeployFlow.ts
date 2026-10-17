@@ -176,6 +176,8 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
         if (gen !== pollGeneration) {
           return null;
         }
+        // Read fine: an earlier failed poll is over.
+        pollError.value = false;
         if (!deploymentRolledOut(d, target.contentHash)) {
           return false;
         }
