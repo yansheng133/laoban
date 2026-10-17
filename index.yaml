@@ -126,25 +126,4 @@ entries:
     urls:
     - assets/laoban-ext/laoban-ext-0.1.18.tgz
     version: 0.1.18
-  - annotations:
-      catalog.cattle.io/certified: rancher
-      catalog.cattle.io/display-name: laoban
-      catalog.cattle.io/namespace: cattle-ui-plugin-system
-      catalog.cattle.io/os: linux
-      catalog.cattle.io/permits-os: linux, windows
-      catalog.cattle.io/rancher-version: '>= 2.15.0-0 < 2.16.0-0'
-      catalog.cattle.io/scope: management
-      catalog.cattle.io/ui-component: plugins
-      catalog.cattle.io/ui-extensions-version: '>= 3.0.0 < 4.0.0'
-    apiVersion: v2
-    appVersion: v0.1.17
-    created: "2026-10-16T15:11:48.71214236Z"
-    description: 'laoban: describe what you need, review the plan and architecture
-      view, then approve changes'
-    digest: 9554734fc366e55a2415dacfba6e0a43705c38bf06eb6eeb1ce2288a83b612da
-    name: laoban-ext
-    type: application
-    urls:
-    - assets/laoban-ext/laoban-ext-v0.1.17.tgz
-    version: v0.1.17
 generated: "2026-10-17T00:09:42.849812575Z"
