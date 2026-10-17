@@ -41,7 +41,9 @@ jobs:
       contents: write
       packages: read
     env:
-      TAG: ${{ inputs.tag || github.ref_name }}
+      # Not TAG: @rancher/shell's chart patch script reads $TAG as the
+      # extension version, and "v0.1.17" broke loading (report 22, B18).
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -52,7 +54,7 @@ jobs:
         id: ver
         run: |
           fail() { echo "::error::$1"; exit 1; }
-          v="${TAG#v}"
+          v="${RELEASE_TAG#v}"
           cargo="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"$/\1/p' Cargo.toml)"
           ext="$(jq -r .version extension/pkg/laoban-ext/package.json)"
           for c in laoban laoban-crd; do
@@ -61,7 +63,7 @@ jobs:
           done
           [ "$cargo" = "$v" ] || fail "Cargo.toml version $cargo is not $v"
           [ "$ext" = "$v" ] || fail "extension version $ext is not $v"
-          [ -f "docs/releases/${TAG}.md" ] || fail "docs/releases/${TAG}.md (the release notes) is missing"
+          [ -f "docs/releases/${RELEASE_TAG}.md" ] || fail "docs/releases/${RELEASE_TAG}.md (the release notes) is missing"
           git show-ref -q gh-pages || fail "the gh-pages branch must exist"
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
@@ -81,7 +83,7 @@ jobs:
           yarn test
           # Writes tmp/{assets,charts,extensions,index.yaml}; the index is
           # merged with the one already on gh-pages.
-          yarn publish-pkgs -s "${GITHUB_REPOSITORY}" -b gh-pages -t "laoban-ext-${{ steps.ver.outputs.version }}"
+          env -u TAG yarn publish-pkgs -s "${GITHUB_REPOSITORY}" -b gh-pages -t "laoban-ext-${{ steps.ver.outputs.version }}"
           test -f tmp/index.yaml
 
       - name: Image digest of this release
@@ -137,9 +139,16 @@ jobs:
           if [ -f gh-pages/index.yaml ]; then merge=gh-pages/index.yaml; else merge="$out/index.yaml"; fi
           helm repo index "$out/assets" --url assets --merge "$merge"
           mv "$out/assets/index.yaml" "$out/index.yaml"
+          # Each chart is in the index at this version, without a "v" (the
+          # extension's files are named laoban-ext-<version>; report 22, B18).
           for c in laoban laoban-crd laoban-ext; do
-            grep -q "^  $c:$" "$out/index.yaml" || { echo "::error::$c missing from index.yaml"; exit 1; }
+            got="$(yq -r ".entries.\"$c\"[] | .version" "$out/index.yaml" 2>/dev/null || true)"
+            grep -qx "${VERSION}" <<< "$got" || { echo "::error::$c ${VERSION} missing from index.yaml (found: $(echo $got))"; exit 1; }
           done
+          app="$(yq -r '.entries."laoban-ext"[] | select(.version == strenv(VERSION)) | .appVersion' "$out/index.yaml")"
+          [ "$app" = "${VERSION}" ] || { echo "::error::laoban-ext appVersion is $app, not ${VERSION}"; exit 1; }
+          test -f "$out/extensions/laoban-ext/${VERSION}/plugin/laoban-ext-${VERSION}.umd.min.js" \
+            || { echo "::error::extensions/laoban-ext/${VERSION}/plugin/laoban-ext-${VERSION}.umd.min.js missing"; exit 1; }
 
       - name: Commit to gh-pages
         run: |
@@ -153,7 +162,7 @@ jobs:
           if git diff --cached --quiet; then
             echo "nothing new to publish"
           else
-            git commit -m "Publish ${TAG}"
+            git commit -m "Publish ${RELEASE_TAG}"
             git push origin gh-pages
           fi
 
@@ -161,8 +170,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release edit "$TAG" --notes-file "docs/releases/${TAG}.md"
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" --notes-file "docs/releases/${RELEASE_TAG}.md"
           else
-            gh release create "$TAG" --verify-tag --title "laoban ${TAG}" --notes-file "docs/releases/${TAG}.md"
+            gh release create "$RELEASE_TAG" --verify-tag --title "laoban ${RELEASE_TAG}" --notes-file "docs/releases/${RELEASE_TAG}.md"
           fi

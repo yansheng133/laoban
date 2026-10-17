@@ -174,6 +174,7 @@ M0 預設 `persistence.enabled: false`：M0 不外送稽核紀錄（只寫後端
 | `github.existingSecret`／`secretKey` | `LAOBAN_GITHUB_TOKEN` | 必填，從 Secret 注入 |
 | `config.targetNamespace` | `LAOBAN_TARGET_NAMESPACE` | 預設 `laoban-dev` |
 | `config.clusterId` | `LAOBAN_CLUSTER_ID` | 跑後端與應用的叢集在 Rancher 裡的 ID，用來組應用網址。預設 `c-m-26kbxk5f` 是 Sam 的環境，**自己安裝時一定要改**（`kubectl --context local get clusters.management.cattle.io`） |
+| `config.language` | `LAOBAN_LANGUAGE` | 後端給人看的訊息（錯誤、意見收斂的事件與失敗原因、commit 訊息、產生的 README）用的語言：`en`（預設，未設定或不認得的值也是）或 `zh-Hant` |
 | `persistence.mountPath` | `LAOBAN_SPOOL_DIR` | 稽核暫存區路徑 |
 | `syslog.enabled`／`host`／`port` | `LAOBAN_SYSLOG_*` | 稽核紀錄送往的 syslog 伺服器，預設 port 6514（syslog over TLS）；M0 關閉 |
 | `syslog.tls.caConfigMap`／`caKey` | `LAOBAN_SYSLOG_CA_FILE` | 簽發 syslog 伺服器憑證的 CA（ConfigMap） |

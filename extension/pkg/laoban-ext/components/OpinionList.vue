@@ -186,7 +186,7 @@ export default defineComponent({
           {{ g.name }}
         </button>
         <span v-else>{{ t('laoban.opinions.general') }}</span>
-        <span class="text-muted">（{{ g.opinions.length }}）</span>
+        <span class="text-muted">（{{ g.opinions.filter((o) => !o.withdrawn).length }}）</span>
       </h4>
       <ul>
         <li

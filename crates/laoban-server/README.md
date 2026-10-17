@@ -14,7 +14,7 @@ TLS 連接埠要求 client 憑證：由 API server 的 request-header CA 簽發�
 API 的規則：
 
 - `POST` 必須帶 `Content-Type: application/json`，主體可以用 `Content-Length` 或 chunked 傳輸（Kubernetes API server 轉送時可能改成 chunked），上限 512 KiB；兩者同時出現、或其他傳輸編碼，一律 400。
-- 錯誤一律是 `{"error": {"code": "…", "message": "…"}}`，`message` 是繁體中文。代碼與狀態碼見 `crates/laoban-m0/README.md`。規格之外的三種情況沿用 `bad_request` 代碼、改用較精確的狀態碼：主體過大 413、方法不對 405（附 `Allow`）、沒有這個 API 404。
+- 錯誤一律是 `{"error": {"code": "…", "message": "…"}}`，`message` 的語言由 `LAOBAN_LANGUAGE` 決定：`en`（預設，未設定或不認得的值也是）或 `zh-Hant`（見 `crates/laoban-m0/src/lang.rs`）。代碼與狀態碼見 `crates/laoban-m0/README.md`。規格之外的三種情況沿用 `bad_request` 代碼、改用較精確的狀態碼：主體過大 413、方法不對 405（附 `Allow`）、沒有這個 API 404。
 - 必要的環境變數沒設定或格式不對時，伺服器照常啟動，`/healthz`、`/version` 正常；API 回 `500 internal`，訊息寫出缺少的變數名稱（不寫值）。啟動 log 也會寫一行 `/api disabled: …`。
 
 ## 逾時

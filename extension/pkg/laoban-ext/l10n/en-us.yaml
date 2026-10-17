@@ -46,6 +46,7 @@ laoban:
     loading: Loading…
     changeTitle: Change this app (opinion round)
     idle: "Change this app with the opinion round on the left; code and the 3D layout can also be edited directly."
+    idleViewOnly: "You can look at this app's versions, code and rounds; your role does not let you change it."
     stale: "Someone just published a new version. Save or discard your changes and the page loads it."
     reloading: Someone published a new version; loading it…
     currentSteps: Current build steps
@@ -264,6 +265,7 @@ laoban:
     sideTitle: Opinions
     sideOpenHint: Close the enlarged view and start a round on the left; the drafts are sent with it.
   errors:
+    app_exists: "An app with this name already exists. To change it, use Edit in the app list; to make another one, choose a different name."
     forbidden: "You don't have permission for this. It needs the laoban user role (or edit) in the Project of the apps' namespace; ask an administrator."
     unauthenticated: "Your Rancher session has ended. Please sign in again."
     unavailable: "The laoban backend can't be reached right now (its APIService is not ready). Try again later or ask an administrator."

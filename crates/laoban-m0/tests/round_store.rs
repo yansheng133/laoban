@@ -216,7 +216,7 @@ fn collecting_and_confirming_rounds_survive_a_restart() {
         .last()
         .unwrap()
         .request
-        .contains("（u-b）也要能篩選"));
+        .contains("(u-b) 也要能篩選"));
     assert_eq!(stored(&store)["state"], "done");
 }
 
@@ -310,7 +310,10 @@ fn a_restart_while_publishing_never_publishes_twice() {
         .unwrap()
         .clone();
     assert_eq!(done["code"], "done");
-    assert!(done["event"].as_str().unwrap().contains("等待 Fleet"));
+    assert!(done["event"]
+        .as_str()
+        .unwrap()
+        .contains("Fleet deploys it next"));
     assert_eq!(writes(&github), commits, "nothing published again");
     assert_eq!(b.provider.call_count(), 0);
 
@@ -328,7 +331,10 @@ fn a_restart_while_publishing_never_publishes_twice() {
     let b = backend(MockProvider::new(), &github, &store);
     let v = round_of(&b);
     assert_eq!(state(&v), "failed", "{v}");
-    assert!(v["round"]["message"].as_str().unwrap().contains("重新收斂"));
+    assert!(v["round"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("converge again"));
     // The page shows it in its own language (report 20, N7).
     assert_eq!(v["round"]["messageCode"], "restartUnpublished");
     let failed = v["round"]["log"]

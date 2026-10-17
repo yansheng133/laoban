@@ -3,10 +3,20 @@
 @import './palettes.scss';
 
 // Rancher's side menu hidden on laoban's pages (utils/nav.ts).
-body.laoban-nav-collapsed .dashboard-content {
+html.laoban-nav-collapsed .dashboard-content {
   --nav-width: 0px;
 
   .default-side-nav {
     display: none;
   }
+}
+
+// An information banner that reads as one in the dark theme too (Rancher's
+// plain `banner info` is transparent there; report 22, N8).
+.laoban-banner-info {
+  padding: 8px 12px;
+  border-left: 4px solid var(--info, #2453ff);
+  border-radius: var(--border-radius, 4px);
+  background: var(--info-banner-bg, rgba(36, 83, 255, 0.15));
+  color: var(--body-text);
 }

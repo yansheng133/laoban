@@ -140,6 +140,10 @@ config:
   targetNamespace: laoban-dev
   # Rancher cluster ID of the target cluster, used to build app URLs (LAOBAN_CLUSTER_ID).
   clusterId: c-m-26kbxk5f
+  # Language of the backend's messages for people: errors, round events and
+  # failures, commit messages, the generated README (LAOBAN_LANGUAGE).
+  # "en" or "zh-Hant". The page shows most of them in its own language.
+  language: en
 
 # Rounds of 意見收斂. They are stored in Round resources (laoban-crd chart) in
 # the release namespace; without that CRD the page says so and rounds wait.

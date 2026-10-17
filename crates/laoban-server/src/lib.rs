@@ -6,7 +6,7 @@
 //! - `GET /version` returns build metadata as JSON.
 //! - `POST /api/plan`, `POST /api/apply`, `GET /api/config`: the M0
 //!   pipeline (`laoban-m0`). JSON in and out; errors are
-//!   `{"error": {"code", "message"}}` with a Traditional Chinese message.
+//!   `{"error": {"code", "message"}}`, the message in `LAOBAN_LANGUAGE`.
 //!
 //! The server is deliberately std-only: one thread per connection, strict
 //! limits on request size, socket timeouts and concurrent connections, and
@@ -30,6 +30,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use laoban_m0::{tr, trf};
 use laoban_m0::{
     AddOpinionsRequest, ApplyOptions, ApplyRequest, DeadlineRequest, DraftsRequest, M0Error,
     M0Service, OpenRoundRequest, OpinionRequest, PlanRequestBody, RestoreRequest, SaveFilesRequest,
@@ -154,7 +155,13 @@ impl Server {
     pub fn bind<A: ToSocketAddrs>(addr: A) -> io::Result<Self> {
         Self::bind_with_api(
             addr,
-            ApiState::Unconfigured("後端 API 尚未設定。".to_string()),
+            ApiState::Unconfigured(
+                tr(
+                    "The backend API is not configured yet.",
+                    "後端 API 尚未設定。",
+                )
+                .to_string(),
+            ),
         )
     }
 
@@ -927,20 +934,26 @@ fn route_api(api: &ApiState, head: &RequestHead, body: &[u8], caller: Option<&Ca
                 let mut r = Response::api_error(
                     404,
                     "other_namespace",
-                    &format!("laoban 服務的是 namespace {ns}。"),
+                    &trf!(en: "laoban serves namespace {ns}.", zh: "laoban 服務的是 namespace {ns}。"),
                 );
                 let mut v: serde_json::Value = serde_json::from_str(&r.body).unwrap_or_default();
                 v["error"]["targetNamespace"] = json!(ns);
                 r.body = v.to_string();
                 return r;
             }
-            None => return Response::api_error(404, "bad_request", "找不到這個 API。"),
+            None => {
+                return Response::api_error(
+                    404,
+                    "bad_request",
+                    tr("No such API.", "找不到這個 API。"),
+                )
+            }
         }
     } else {
         head.path.as_str()
     };
     let Some(route) = Route::parse(path) else {
-        return Response::api_error(404, "bad_request", "找不到這個 API。");
+        return Response::api_error(404, "bad_request", tr("No such API.", "找不到這個 API。"));
     };
     let allowed = route.method(&head.method);
     if head.method != allowed {
@@ -951,7 +964,14 @@ fn route_api(api: &ApiState, head: &RequestHead, body: &[u8], caller: Option<&Ca
         };
         return Response {
             allow: Some(allow),
-            ..Response::api_error(405, "bad_request", "不支援這個 HTTP 方法。")
+            ..Response::api_error(
+                405,
+                "bad_request",
+                tr(
+                    "This HTTP method is not supported.",
+                    "不支援這個 HTTP 方法。",
+                ),
+            )
         };
     }
     let service = match api {
@@ -975,7 +995,13 @@ fn route_api(api: &ApiState, head: &RequestHead, body: &[u8], caller: Option<&Ca
             Route::PastRounds(name) => service.past_rounds(name),
             Route::PastRound(name, id) => service.past_round(name, id),
             Route::RoundsMine => service.rounds_waiting(caller.map(|c| c.user.as_str())),
-            _ => return Response::api_error(404, "bad_request", "找不到這個 API。"),
+            _ => {
+                return Response::api_error(
+                    404,
+                    "bad_request",
+                    tr("No such API.", "找不到這個 API。"),
+                )
+            }
         });
     }
     let lock = caller.map(|c| c.user.as_str()); // the verified user
@@ -997,9 +1023,10 @@ fn route_api(api: &ApiState, head: &RequestHead, body: &[u8], caller: Option<&Ca
                 match serde_json::from_slice::<ApplyOptions>(body) {
                     Ok(o) => o,
                     Err(_) => {
-                        return bad_request(
+                        return bad_request(tr(
+                            "Invalid request format: send no body, or {\"background\": true}.",
                             "請求格式不正確：可以不帶內容，或 {\"background\": true}。",
-                        )
+                        ))
                     }
                 }
             };
@@ -1024,13 +1051,16 @@ fn route_api(api: &ApiState, head: &RequestHead, body: &[u8], caller: Option<&Ca
     // aggregated port without the API server's client certificate. A
     // content type other than JSON is refused either way.
     if !head.json_content_type && (head.has_content_type || caller.is_none()) {
-        return bad_request("請以 JSON 送出（Content-Type: application/json）。");
+        return bad_request(tr(
+            "Please send JSON (Content-Type: application/json).",
+            "請以 JSON 送出（Content-Type: application/json）。",
+        ));
     }
     match route {
         Route::Plan => {
             let Ok(req) = serde_json::from_slice::<PlanRequestBody>(body) else {
                 return bad_request(
-                    "請求格式不正確：需要 {\"prompt\": \"…\"}，可加 \"appName\" 或 \"baseApp\"。",
+                    tr("Invalid request format: {\"prompt\": \"…\"} is required; \"appName\" or \"baseApp\" may be added.", "請求格式不正確：需要 {\"prompt\": \"…\"}，可加 \"appName\" 或 \"baseApp\"。"),
                 );
             };
             if req.background {
@@ -1046,7 +1076,10 @@ fn route_api(api: &ApiState, head: &RequestHead, body: &[u8], caller: Option<&Ca
         }
         Route::Apply => {
             let Ok(req) = serde_json::from_slice::<ApplyRequest>(body) else {
-                return bad_request("請求格式不正確：需要 {\"planId\": \"…\"}。");
+                return bad_request(tr(
+                    "Invalid request format: {\"planId\": \"…\"} is required.",
+                    "請求格式不正確：需要 {\"planId\": \"…\"}。",
+                ));
             };
             let mut resp = reply(if req.background {
                 service.apply_job(&req, lock)
@@ -1059,14 +1092,17 @@ fn route_api(api: &ApiState, head: &RequestHead, body: &[u8], caller: Option<&Ca
         }
         Route::Restore(name) => {
             let Ok(req) = serde_json::from_slice::<RestoreRequest>(body) else {
-                return bad_request("請求格式不正確：需要 {\"commit\": \"…\"}。");
+                return bad_request(tr(
+                    "Invalid request format: {\"commit\": \"…\"} is required.",
+                    "請求格式不正確：需要 {\"commit\": \"…\"}。",
+                ));
             };
             reply(service.restore(name, &req, lock))
         }
         Route::Round(name) => {
             let Ok(req) = serde_json::from_slice::<OpenRoundRequest>(body) else {
                 return bad_request(
-                    "請求格式不正確：需要 {\"opinion\": \"…\", \"deadlineMinutes\": 0～1440}，可加 \"scope\"（web、api、all）。",
+                    tr("Invalid request format: {\"opinion\": \"…\", \"deadlineMinutes\": 0–1440} is required; \"scope\" (web, api, all) may be added.", "請求格式不正確：需要 {\"opinion\": \"…\", \"deadlineMinutes\": 0～1440}，可加 \"scope\"（web、api、all）。"),
                 );
             };
             reply(service.open_round(name, &req, lock))
@@ -1074,7 +1110,7 @@ fn route_api(api: &ApiState, head: &RequestHead, body: &[u8], caller: Option<&Ca
         Route::RoundOpinions(name) => {
             let Ok(req) = serde_json::from_slice::<AddOpinionsRequest>(body) else {
                 return bad_request(
-                    "請求格式不正確：需要 {\"text\": \"…\"}（可加 \"target\"），或 {\"items\": [{\"text\": \"…\", \"target\": \"…\"}]}。",
+                    tr("Invalid request format: {\"text\": \"…\"} is required (\"target\" may be added), or {\"items\": [{\"text\": \"…\", \"target\": \"…\"}]}.", "請求格式不正確：需要 {\"text\": \"…\"}（可加 \"target\"），或 {\"items\": [{\"text\": \"…\", \"target\": \"…\"}]}。"),
                 );
             };
             reply(service.add_opinion(name, &req, lock))
@@ -1084,7 +1120,10 @@ fn route_api(api: &ApiState, head: &RequestHead, body: &[u8], caller: Option<&Ca
         | Route::RoundEdit(name, _)
         | Route::RoundPlanComment(name, _) => {
             let Ok(req) = serde_json::from_slice::<OpinionRequest>(body) else {
-                return bad_request("請求格式不正確：需要 {\"text\": \"…\"}。");
+                return bad_request(tr(
+                    "Invalid request format: {\"text\": \"…\"} is required.",
+                    "請求格式不正確：需要 {\"text\": \"…\"}。",
+                ));
             };
             match route {
                 Route::RoundReply(_, id) => reply(service.reply_to_opinion(name, id, &req, lock)),
@@ -1097,41 +1136,48 @@ fn route_api(api: &ApiState, head: &RequestHead, body: &[u8], caller: Option<&Ca
         }
         Route::RoundDeadline(name) => {
             let Ok(req) = serde_json::from_slice::<DeadlineRequest>(body) else {
-                return bad_request("請求格式不正確：需要 {\"minutes\": 0～1440}。");
+                return bad_request(tr(
+                    "Invalid request format: {\"minutes\": 0–1440} is required.",
+                    "請求格式不正確：需要 {\"minutes\": 0～1440}。",
+                ));
             };
             reply(service.set_round_deadline(name, &req, lock))
         }
         Route::RoundDrafts(name) => {
             let Ok(req) = serde_json::from_slice::<DraftsRequest>(body) else {
                 return bad_request(
-                    "請求格式不正確：需要 {\"items\": [{\"text\": \"…\", \"target\": \"…\"}], \"shared\": true}。",
+                    tr("Invalid request format: {\"items\": [{\"text\": \"…\", \"target\": \"…\"}], \"shared\": true} is required.", "請求格式不正確：需要 {\"items\": [{\"text\": \"…\", \"target\": \"…\"}], \"shared\": true}。"),
                 );
             };
             reply(service.save_drafts(name, &req, lock))
         }
         Route::RoundSkip(name) => {
             let Ok(req) = serde_json::from_slice::<SkipRequest>(body) else {
-                return bad_request("請求格式不正確：需要 {\"user\": \"…\"}。");
+                return bad_request(tr(
+                    "Invalid request format: {\"user\": \"…\"} is required.",
+                    "請求格式不正確：需要 {\"user\": \"…\"}。",
+                ));
             };
             reply(service.skip_in_round(name, &req, lock))
         }
         Route::Files(name) => {
             let Ok(req) = serde_json::from_slice::<SaveFilesRequest>(body) else {
-                return bad_request(
+                return bad_request(tr(
+                    "Invalid request format: {\"baseCommit\": \"…\", \"files\": {…}} is required.",
                     "請求格式不正確：需要 {\"baseCommit\": \"…\", \"files\": {…}}。",
-                );
+                ));
             };
             reply(service.save_files(name, &req, lock))
         }
         Route::Layout(name) => {
             let Ok(req) = serde_json::from_slice::<SaveLayoutRequest>(body) else {
                 return bad_request(
-                    "請求格式不正確：需要 {\"baseCommit\": \"…\", \"positions\": {…}}。",
+                    tr("Invalid request format: {\"baseCommit\": \"…\", \"positions\": {…}} is required.", "請求格式不正確：需要 {\"baseCommit\": \"…\", \"positions\": {…}}。"),
                 );
             };
             reply(service.save_layout(name, &req, lock))
         }
-        _ => Response::api_error(404, "bad_request", "找不到這個 API。"),
+        _ => Response::api_error(404, "bad_request", tr("No such API.", "找不到這個 API。")),
     }
 }
 
@@ -1225,13 +1271,21 @@ fn handle_connection<C: Conn>(mut stream: C, api: &ApiState, access: &Access) ->
             Response::api_error(
                 404,
                 "bad_request",
-                "這個連接埠只提供健康檢查；API 經 Kubernetes API server 提供。",
+                tr("This port only serves health checks; the API is served through the Kubernetes API server.", "這個連接埠只提供健康檢查；API 經 Kubernetes API server 提供。"),
             ),
             false,
         )
     } else if is_api {
-        let too_large =
-            || Response::api_error(413, "bad_request", "請求內容太大（上限 512 KiB）。");
+        let too_large = || {
+            Response::api_error(
+                413,
+                "bad_request",
+                tr(
+                    "The request body is too large (limit 512 KiB).",
+                    "請求內容太大（上限 512 KiB）。",
+                ),
+            )
+        };
         let resp = if head.chunked {
             match read_chunked(&mut stream, rest, MAX_BODY_BYTES) {
                 Ok(body) => route_api(api, &head, &body, caller.as_ref()),

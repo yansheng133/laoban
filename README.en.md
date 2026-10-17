@@ -6,11 +6,21 @@ laoban (老闆, "the boss") is a Rancher UI extension: describe the app you want
 
 > The project nickname is "Teppan noodles with chicken nuggets" (鐵板麵加雞塊). Where the name comes from: telling the system what you need is like ordering from the boss at a Taiwanese breakfast shop.
 
+![Build an app from one sentence, then change it together (video sped up)](docs/images/demo-zh.gif)
+
+| One sentence → plan and 3D architecture diagram | Comment together | AI consolidates into a change plan |
+|---|---|---|
+| ![Overview: request, plan and 3D architecture diagram](docs/images/01-overview-plan-en.png) | ![Round of opinions: comments, +1, replies](docs/images/04-round-opinions-en.png) | ![Consolidated change plan, with changes marked in the 3D diagram](docs/images/05-round-plan-zh.png) |
+| **Deployed** | **Version comparison** | **App list** |
+| ![Deployed, open the app](docs/images/02-app-deployed-zh.png) | ![Expanded view, comparing two versions](docs/images/06-compare-versions-zh.png) | ![App list with markers for items waiting for your confirmation](docs/images/03-apps-list-zh.png) |
+
+The video and most screenshots show the Traditional Chinese UI; the UI is also available in English and Japanese.
+
 ## Try it
 
 Follow the **[quickstart](docs/quickstart.en.md)**; it takes about 30 minutes:
 
-1. In Rancher Extensions, add the Helm repo `https://yansheng133.github.io/laoban` and install **laoban**.
+1. In Rancher Extensions, add the Helm repo `https://yansheng133.github.io/laoban` and install **laoban** (0.1.18 or later; the 0.1.17 extension fails to load).
 2. Install the backend with Helm (`laoban/laoban-crd`, `laoban/laoban`).
 3. Create a Fleet GitRepo pointing to the GitHub repo that holds the apps.
 
@@ -86,7 +96,8 @@ The backend writes only its own state resources in `laoban-system` (the `Round` 
 - One Rancher uses only one backend: the page finds the first cluster with laoban installed among the clusters the user can see.
 - Generated apps always have two components, web page plus API (Python), deployed in one namespace (default `laoban-dev`) and run under Pod Security restricted.
 - The backend has only one replica; plans are kept in memory, and rounds of opinions are stored in `Round` resources.
-- AI costs are paid by your Anthropic account; the backend has a monthly token cap (default 2,000,000).
+- AI costs are paid by your Anthropic account. The backend has a monthly token cap (default 2,000,000), but usage is kept only in memory and starts again from 0 when the backend restarts; be sure to set a spend limit in the Anthropic Console.
+- Backend messages are in English by default; set the chart's `config.language: zh-Hant` for Traditional Chinese. The page follows Rancher's language setting.
 
 ## Installation (details)
 

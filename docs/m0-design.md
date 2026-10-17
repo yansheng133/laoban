@@ -149,7 +149,7 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 
 新增應用與一般的計畫／部署也一樣：`POST /api/plan` 或 `.../plans/<planId>/apply` 帶 `"background": true` 時，回應是一項工作 `{jobId, kind, state: "running"}`，頁面每 2 秒讀 `GET .../plans/<jobId>`（`plans` 的 get，edit 角色本來就有），直到 `done`（`result` 就是原本的回應）或 `failed`（`error` 是原本會回的錯誤：status、code、message）。工作只有發起的人讀得到，保留 1 小時，重啟後消失（頁面會說找不到進度，請到應用清單確認）。不帶 `background` 時照舊在請求裡完成。
 
-**錯誤格式**（v0.1.14）：錯誤回應同時是 Kubernetes 的 `Status`（`kind`、`status: Failure`、`message`、`reason`、`code`），`kubectl create --raw` 會印出中文原因；頁面照舊讀 `error.code`／`error.message`，而且以它為準（不會把後端的 404、403 當成 API server 的「連不上」「沒權限」）。
+**錯誤格式**（v0.1.14）：錯誤回應同時是 Kubernetes 的 `Status`（`kind`、`status: Failure`、`message`、`reason`、`code`），`kubectl create --raw` 會印出後端語言（`LAOBAN_LANGUAGE`）的原因；頁面照舊讀 `error.code`／`error.message`，而且以它為準（不會把後端的 404、403 當成 API server 的「連不上」「沒權限」）。
 
 **版本的檔案指紋**（v0.1.14）：`GET .../apps/<name>` 與 `.../versions/<commit>` 多一個 `fileDigests`：四個程式檔各自 sha256 的前 16 個十六進位字。頁面比較兩個版本時，用它列出改了哪些程式檔，所以只改程式、沒改架構的版本也看得出改了什麼。
 
@@ -163,7 +163,7 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 - 等待確認時的附議與回覆只是討論，不會改變已經收斂好的計畫。
 - 收斂時，意見依元件分組交給 AI：先放整個應用的意見，再按元件分組，每則附上作者、附議者與回覆。AI 會被告知附議越多的意見越多人同意。
 
-狀態：`collecting` → `converging` → `confirming` → `applying` → `done`；也可能是 `failed`、`cancelled`。每一輪的 `you` 寫出呼叫者是不是發起人、要不要確認、能不能提意見；`log` 記錄每個動作與時間：每筆有繁中的 `event`，以及給頁面依介面語言顯示的 `code`（`opened`、`opinion`、`objected`、`converging`、`converged`、`failed`、`confirmed`、`skipped`、`applying`、`done`、`cancelled`、`restarted`）與 `args`（`minutes`、`count`、`user`、`message`）。
+狀態：`collecting` → `converging` → `confirming` → `applying` → `done`；也可能是 `failed`、`cancelled`。每一輪的 `you` 寫出呼叫者是不是發起人、要不要確認、能不能提意見；`log` 記錄每個動作與時間：每筆有後端語言（`LAOBAN_LANGUAGE`，預設英文，可設 `zh-Hant`）的 `event`，以及給頁面依介面語言顯示的 `code`（`opened`、`opinion`、`objected`、`converging`、`converged`、`failed`、`confirmed`、`skipped`、`applying`、`done`、`cancelled`、`restarted`）與 `args`（`minutes`、`count`、`user`、`message`）。
 
 - **收斂**：截止時間到了，後端（每 10 秒檢查一次）把所有意見連同作者交給 AI，用修改既有應用的計畫流程，另外指示 AI 合併重複的意見、衝突時採較小較安全的改動並在 notes 說明；不需要修改或做不到時，也要在 notes 說明原因。計畫的 `notes` 會顯示在頁面上。收斂後的計畫實際動到的部分（網頁模組、API 模組或端點）會加進這一輪的範圍。範圍是依計畫的模組判斷的，AI 實際改寫的檔案可能超出範圍；超出範圍的手動修改由下面的保留檢查保護。
 - **確認**：要確認的人是這一輪提過意見的人。收斂好的計畫跟著這一輪保存，不會因為等太久或後端重啟而失效（v0.1.15 起；之前是 1 小時）。
@@ -189,7 +189,7 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 
 - 一輪的 JSON 多了 `drafts`（`mine`：自己的；`shared`：其他人分享的）與 `planComments`；`you.canComment` 表示能不能對計畫留言。對計畫的留言在有人按「有意見」後跟著意見一起交給 AI（標出是哪一步、原本的步驟文字、附議），新的計畫產生後清空。留言不影響確認，確認的人仍然只有寫意見的人。
 - 紀錄新增 `edited`、`withdrawn`、`deadline`（`minutes`，0 是立即收斂）、`commented`（`step`）、`emptyCancelled`。
-- 失敗原因多了 `messageCode`／`messageArgs`（例如 `restartUnpublished`、`mergeConflict` 帶 `files`），頁面依語言顯示；沒有代碼的照舊顯示中文 `message`。發布完成的紀錄改成「新版本已寫入 GitHub，等待 Fleet 部署」。
+- 失敗原因多了 `messageCode`／`messageArgs`（例如 `restartUnpublished`、`mergeConflict` 帶 `files`），頁面依語言顯示；沒有代碼的照舊顯示後端語言的 `message`。發布完成的紀錄改成「新版本已寫入 GitHub，等待 Fleet 部署」。
 - 所有應用共用一個分支，laoban 的 commit 一次一個；同一個應用的版本一次只寫一個（手動存檔、版面、還原、發布），第二個請求等第一個寫完，再和它寫的版本比對，所以會收到 `409 version_conflict`（「有了新版本」）而不是 GitHub 錯誤。萬一分支被別人（不經過 laoban）先推了，也回 `409 version_conflict`（20 報告 B11）。
 - 頁面：應用清單標出等你確認、等其他人確認、失敗待處理的應用，上方寫出幾輪等你確認；左側選單的「應用」顯示等你確認的件數（每 60 秒更新）；詳細頁的意見收斂上方顯示「這一輪等你確認」。詳細頁有「過去的輪次」，打開才讀取。
 
@@ -246,7 +246,7 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 
 ### 錯誤
 
-一律 `{"error": {"code": "…", "message": "…"}}`，`message` 是給使用者看的繁中句子。代碼：`bad_request`（400）、`round_not_found`（404，沒有這個歸檔的輪次）、`too_long`（400，意見或回覆太長）、`round_full`（400，這一輪的意見已滿）、`rounds_unavailable`（503，叢集裡沒有 Round CRD）、`round_conflict`（409）、`state_failed`（503，寫入 Round 資源失敗）、`plan_not_found`（404）、`already_applied`（409）、`app_exists`（409）、`app_not_found`（404）、`not_editable`（409）、`version_not_found`（404）、`unauthenticated`（401，請求沒有經過 API server、沒有驗證過的使用者）、`round_active`（409）、`round_scope`（409）、`merge_conflict`（409）、`round_state`（409，這一輪目前的狀態不能這樣做）、`not_initiator`（403）、`not_confirmer`（409）、`version_conflict`（409）、`invalid_files`（400）、`budget_exceeded`（429，laoban 自己的 token 上限）、`spend_limit`（402，Anthropic 花費上限，**不重試**）、`ai_invalid_output`（502，AI 回應不合格式或碰到禁止的資源）、`github_failed`（502）、`internal`（500）。
+一律 `{"error": {"code": "…", "message": "…"}}`，`message` 是給使用者看的句子，語言由 `LAOBAN_LANGUAGE`（chart `config.language`）決定：`en`（預設）或 `zh-Hant`。代碼：`bad_request`（400）、`round_not_found`（404，沒有這個歸檔的輪次）、`too_long`（400，意見或回覆太長）、`round_full`（400，這一輪的意見已滿）、`rounds_unavailable`（503，叢集裡沒有 Round CRD）、`round_conflict`（409）、`state_failed`（503，寫入 Round 資源失敗）、`plan_not_found`（404）、`already_applied`（409）、`app_exists`（409）、`app_not_found`（404）、`not_editable`（409）、`version_not_found`（404）、`unauthenticated`（401，請求沒有經過 API server、沒有驗證過的使用者）、`round_active`（409）、`round_scope`（409）、`merge_conflict`（409）、`round_state`（409，這一輪目前的狀態不能這樣做）、`not_initiator`（403）、`not_confirmer`（409）、`version_conflict`（409）、`invalid_files`（400）、`budget_exceeded`（429，laoban 自己的 token 上限）、`spend_limit`（402，Anthropic 花費上限，**不重試**）、`ai_invalid_output`（502，AI 回應不合格式或碰到禁止的資源）、`github_failed`（502）、`internal`（500）。
 
 ### 其他
 
@@ -319,7 +319,7 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 - 架構圖在**最新版本**（沒有在看舊版、沒有修改計畫）時可以拖曳元件，「儲存版面」走 `POST .../layout`。點選元件後可在「改結構」改名、刪除、新增連線，或新增模組：這些會變成句子加進「要怎麼修改」，再走一般的 AI 計畫／確認流程。新增資料庫、訊息佇列、Ingress 不在 M0 的固定範本內，按鈕顯示「試吃版不支援」。歷史版本唯讀。
 - 「確認並部署」按下後顯示 commit 連結，接著每 5 秒讀 Fleet Bundle（Bundle 只剩 Modified、沒有待部署或錯誤時，也視為應用已在執行，顯示連結並附上 Fleet 的訊息）（`/v1/fleet.cattle.io.bundles`，篩 `laoban.io` 前綴或 bundlePrefix）的 Ready 狀態，Ready 後顯示「打開應用」連結。
 - 所有 AI 產生的文字用文字方式顯示，不用 `v-html`。
-- 錯誤顯示後端回的繁中 `message`。
+- 錯誤顯示後端回的 `message`（後端語言）。
 
 ## 設定（後端環境變數）
 
@@ -335,5 +335,6 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 | `LAOBAN_GITHUB_TOKEN` | 從 Secret 注入 |
 | `LAOBAN_TARGET_NAMESPACE` | 預設 `laoban-dev` |
 | `LAOBAN_CLUSTER_ID` | 預設 `c-m-26kbxk5f`，用來組應用網址 |
+| `LAOBAN_LANGUAGE` | 後端訊息（錯誤、紀錄、commit 說明）的語言：`en`（預設）或 `zh-Hant`；chart 的 `config.language`（v0.1.18） |
 | `LAOBAN_STATE_NAMESPACE` | 選用。存 `Round` 資源的 namespace，預設是 Pod 自己的（`laoban-system`） |
 | `LAOBAN_ROUND_MAX_*` | 選用。調低意見收斂的大小限制（見「大小限制」），只能調低 |

@@ -184,7 +184,7 @@ fn opinions_until_the_deadline_then_everyone_confirms() {
         .unwrap();
     assert_eq!(state(&v), "done");
     let log = v["round"]["log"].to_string();
-    assert!(log.contains("略過 u-b 的確認"), "{log}");
+    assert!(log.contains("skipped u-b's confirmation"), "{log}");
     // Each entry also has a code and its values, for the page's language.
     assert!(log.contains(r#""code":"skipped""#), "{log}");
     assert!(log.contains(r#""user":"u-b""#), "{log}");
@@ -385,7 +385,7 @@ fn hand_edits_during_a_round_are_kept_or_nothing_is_published() {
         .unwrap();
     assert!(m.files.handler_py.contains("# kept by hand"));
     // The history shows the opinions, not the request sent to the AI.
-    assert_eq!(m.history.last().unwrap().request, "（u-a）清單要能排序");
+    assert_eq!(m.history.last().unwrap().request, "(u-a) 清單要能排序");
 }
 
 #[test]

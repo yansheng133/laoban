@@ -154,6 +154,8 @@ spec:
               value: {{ .Values.config.targetNamespace | quote }}
             - name: LAOBAN_CLUSTER_ID
               value: {{ .Values.config.clusterId | quote }}
+            - name: LAOBAN_LANGUAGE
+              value: {{ .Values.config.language | default "en" | quote }}
             {{- range $roundLimits }}
             {{- $v := get $limits (index . 0) }}
             {{- if not (or (kindIs "invalid" $v) (and (kindIs "string" $v) (eq $v ""))) }}

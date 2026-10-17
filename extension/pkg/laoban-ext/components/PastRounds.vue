@@ -15,6 +15,7 @@ import {
 } from '../utils/backend';
 import { formatDateTime } from '../utils/time';
 import { userLabel } from '../utils/users';
+import { currentUserId } from '../utils/me';
 import OpinionList from './OpinionList.vue';
 
 export default defineComponent({
@@ -109,22 +110,19 @@ export default defineComponent({
       }
     }
 
-    // The signed-in Rancher user: their own opinions read "you" (report 21, N11).
-    const me = (() => {
-      try {
-        const u = (store.getters['auth/v3User'] || {}) as { id?: unknown };
+    // The signed-in Rancher user: their own opinions read "you" (report 21,
+    // N11; report 22, B19).
+    const me = ref('');
 
-        return typeof u.id === 'string' ? u.id : '';
-      } catch {
-        return '';
-      }
-    })();
+    currentUserId(store).then((id) => {
+      me.value = id;
+    });
     const who = (id: string) => {
       if (id === 'laoban') {
         return 'laoban';
       }
 
-      return me && id === me ? t('laoban.round.you') : userLabel(store, id);
+      return me.value && id === me.value ? t('laoban.round.you') : userLabel(store, id);
     };
     // Log lines in the page's language when the code is known (as the
     // round panel shows them); the archived Chinese text otherwise.

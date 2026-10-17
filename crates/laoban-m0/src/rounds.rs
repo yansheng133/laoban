@@ -24,7 +24,9 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::lang::tr;
 use crate::plan::AppPlan;
+use crate::trf;
 
 /// Longest single opinion, in characters.
 pub const MAX_OPINION_CHARS: usize = 1_000;
@@ -275,7 +277,7 @@ pub struct Confirmer {
 pub struct LogEntry {
     pub at: String,
     pub by: String,
-    /// The event in Traditional Chinese (fallback for clients).
+    /// The event in the backend's language (fallback for clients).
     pub event: String,
     /// What happened, for the page to show in its language: `opened`,
     /// `opinion`, `objected`, `converging`, `converged`, `failed`,
@@ -339,7 +341,7 @@ pub struct Round {
     pub opinions: Vec<Opinion>,
     pub confirmers: Vec<Confirmer>,
     pub plan: Option<RoundPlan>,
-    /// Why converging or applying failed (Traditional Chinese).
+    /// Why converging or applying failed (in the configured language).
     pub message: String,
     /// The same as a code the page translates (`laoban.round.failures.*`),
     /// with the values it refers to; empty when there is no translation.
@@ -419,8 +421,8 @@ fn clean(text: &str, what: Text, max: usize) -> Result<String, RoundError> {
     let t = text.trim();
     if t.is_empty() {
         return Err(RoundError::Invalid(match what {
-            Text::Opinion => "請輸入意見。",
-            Text::Reply => "請輸入回覆。",
+            Text::Opinion => tr("Please enter an opinion.", "請輸入意見。"),
+            Text::Reply => tr("Please enter a reply.", "請輸入回覆。"),
         }));
     }
     if t.chars().count() > max {
@@ -518,10 +520,16 @@ impl Round {
         at: &str,
     ) -> Result<Self, RoundError> {
         if deadline_minutes > MAX_DEADLINE_MINUTES {
-            return Err(RoundError::Invalid("截止時間最長 24 小時。"));
+            return Err(RoundError::Invalid(tr(
+                "The deadline can be at most 24 hours away.",
+                "截止時間最長 24 小時。",
+            )));
         }
         if scope.is_empty() {
-            return Err(RoundError::Invalid("範圍不正確。"));
+            return Err(RoundError::Invalid(tr(
+                "The scope is not valid.",
+                "範圍不正確。",
+            )));
         }
         let mut r = Round {
             id,
@@ -555,7 +563,7 @@ impl Round {
             user,
             "opened",
             &[("minutes", deadline_minutes.to_string())],
-            format!("開始一輪（{deadline_minutes} 分鐘後收斂）"),
+            trf!(en: "started a round (converges in {deadline_minutes} min)", zh: "開始一輪（{deadline_minutes} 分鐘後收斂）"),
         );
         Ok(r)
     }
@@ -625,10 +633,16 @@ impl Round {
         at: &str,
     ) -> Result<usize, RoundError> {
         if items.is_empty() {
-            return Err(RoundError::Invalid("請輸入意見。"));
+            return Err(RoundError::Invalid(tr(
+                "Please enter an opinion.",
+                "請輸入意見。",
+            )));
         }
         if items.len() > self.limits.batch {
-            return Err(RoundError::Invalid("一次送出的意見太多。"));
+            return Err(RoundError::Invalid(tr(
+                "Too many opinions sent at once.",
+                "一次送出的意見太多。",
+            )));
         }
         let mut cleaned = Vec::with_capacity(items.len());
         for item in items {
@@ -681,7 +695,7 @@ impl Round {
             user,
             "opinion",
             &[("count", count.to_string())],
-            format!("提出 {count} 則意見"),
+            trf!(en: "gave {count} opinion(s)", zh: "提出 {count} 則意見"),
         );
         Ok(())
     }
@@ -714,10 +728,16 @@ impl Round {
             .find(|o| o.id == opinion)
             .ok_or(RoundError::NoSuchOpinion)?;
         if o.withdrawn {
-            return Err(RoundError::Invalid("這則意見已經撤回。"));
+            return Err(RoundError::Invalid(tr(
+                "This opinion has been withdrawn.",
+                "這則意見已經撤回。",
+            )));
         }
         if o.by == user {
-            return Err(RoundError::Invalid("不能附議自己的意見。"));
+            return Err(RoundError::Invalid(tr(
+                "You cannot +1 your own opinion.",
+                "不能附議自己的意見。",
+            )));
         }
         let now = if let Some(i) = o.supporters.iter().position(|u| u == user) {
             o.supporters.remove(i);
@@ -733,7 +753,7 @@ impl Round {
                 user,
                 "supported",
                 &[("opinion", id.clone())],
-                format!("附議意見 {id}"),
+                trf!(en: "+1'd opinion {id}", zh: "附議意見 {id}"),
             );
         } else {
             self.note(
@@ -741,7 +761,7 @@ impl Round {
                 user,
                 "unsupported",
                 &[("opinion", id.clone())],
-                format!("取消附議意見 {id}"),
+                trf!(en: "took back the +1 on opinion {id}", zh: "取消附議意見 {id}"),
             );
         }
         Ok(now)
@@ -766,7 +786,10 @@ impl Round {
             .find(|o| o.id == opinion)
             .ok_or(RoundError::NoSuchOpinion)?;
         if o.withdrawn {
-            return Err(RoundError::Invalid("這則意見已經撤回。"));
+            return Err(RoundError::Invalid(tr(
+                "This opinion has been withdrawn.",
+                "這則意見已經撤回。",
+            )));
         }
         if o.replies.len() >= limits.replies || total + text.chars().count() > limits.round_chars {
             return Err(full);
@@ -782,7 +805,7 @@ impl Round {
             user,
             "replied",
             &[("opinion", id.clone())],
-            format!("回覆意見 {id}"),
+            trf!(en: "replied to opinion {id}", zh: "回覆意見 {id}"),
         );
         Ok(())
     }
@@ -806,7 +829,7 @@ impl Round {
             "laoban",
             "converging",
             &[("count", self.active().count().to_string())],
-            format!("AI 開始收斂 {} 則意見", self.active().count()),
+            trf!(en: "the AI started converging {} opinion(s)", zh: "AI 開始收斂 {} 則意見", self.active().count()),
         );
     }
 
@@ -911,15 +934,22 @@ impl Round {
         self.comments_section().chars().count().saturating_sub(own)
     }
 
-    /// The opinions as a short list for the history: "（user）text；…".
+    /// The opinions as a short list for the history: "(user) text; …"
+    /// (in Chinese: "（user）text；…").
     pub fn opinion_list(&self) -> String {
         self.active()
             .map(|o| match &o.target {
-                Some(t) => format!("（{}）［{}］{}", o.by, t.name, o.text),
-                None => format!("（{}）{}", o.by, o.text),
+                Some(t) => trf!(
+                    en: "({}) [{}] {}",
+                    zh: "（{}）［{}］{}",
+                    o.by,
+                    t.name,
+                    o.text
+                ),
+                None => trf!(en: "({}) {}", zh: "（{}）{}", o.by, o.text),
             })
             .collect::<Vec<_>>()
-            .join("；")
+            .join(tr("; ", "；"))
     }
 
     /// People who must confirm: everyone who gave an opinion, in order.
@@ -952,7 +982,11 @@ impl Round {
             "laoban",
             "converged",
             &[],
-            "修改計畫已產生，等待確認".into(),
+            tr(
+                "change plan ready, waiting for confirmation",
+                "修改計畫已產生，等待確認",
+            )
+            .into(),
         );
     }
 
@@ -961,7 +995,7 @@ impl Round {
     }
 
     /// Fail with a code the page can show in its language (`message` is
-    /// the Traditional Chinese text, kept for clients without it).
+    /// the text in the backend's language, kept for clients without it).
     pub fn fail_coded(&mut self, code: &str, args: &[(&str, String)], message: &str, at: &str) {
         self.state = State::Failed;
         self.message = message.to_string();
@@ -985,7 +1019,7 @@ impl Round {
             "laoban",
             "failed",
             &log_args,
-            format!("失敗：{message}"),
+            trf!(en: "failed: {message}", zh: "失敗：{message}"),
         );
     }
 
@@ -1003,7 +1037,7 @@ impl Round {
         let c = self.confirmer_mut(user)?;
         c.answer = Answer::Confirmed;
         c.at = at.to_string();
-        self.note(at, user, "confirmed", &[], "確認".into());
+        self.note(at, user, "confirmed", &[], tr("confirmed", "確認").into());
         Ok(())
     }
 
@@ -1020,7 +1054,7 @@ impl Round {
             by,
             "skipped",
             &[("user", user.to_string())],
-            format!("略過 {user} 的確認"),
+            trf!(en: "skipped {user}'s confirmation", zh: "略過 {user} 的確認"),
         );
         Ok(())
     }
@@ -1041,7 +1075,7 @@ impl Round {
             user,
             "objected",
             &[("minutes", OBJECTION_MINUTES.to_string())],
-            format!("有意見，{OBJECTION_MINUTES} 分鐘後重新收斂"),
+            trf!(en: "disagreed; converging again in {OBJECTION_MINUTES} min", zh: "有意見，{OBJECTION_MINUTES} 分鐘後重新收斂"),
         );
         Ok(())
     }
@@ -1072,7 +1106,11 @@ impl Round {
             "laoban",
             "applying",
             &[],
-            "全部確認，AI 開始修改程式".into(),
+            tr(
+                "all confirmed, the AI started changing the code",
+                "全部確認，AI 開始修改程式",
+            )
+            .into(),
         );
     }
 
@@ -1083,7 +1121,11 @@ impl Round {
             "laoban",
             "restarted",
             &[],
-            "後端重新啟動，AI 重新開始收斂".into(),
+            tr(
+                "The backend restarted; the AI converges again",
+                "後端重新啟動，AI 重新開始收斂",
+            )
+            .into(),
         );
     }
 
@@ -1096,7 +1138,11 @@ impl Round {
             "laoban",
             "done",
             &[],
-            "新版本已寫入 GitHub，等待 Fleet 部署".into(),
+            tr(
+                "The new version is in GitHub; Fleet deploys it next",
+                "新版本已寫入 GitHub，等待 Fleet 部署",
+            )
+            .into(),
         );
     }
 
@@ -1122,7 +1168,13 @@ impl Round {
             return Err(RoundError::WrongState(self.state));
         }
         self.state = State::Cancelled;
-        self.note(at, by, "cancelled", &[], "取消這一輪".into());
+        self.note(
+            at,
+            by,
+            "cancelled",
+            &[],
+            tr("cancelled this round", "取消這一輪").into(),
+        );
         Ok(())
     }
 
@@ -1144,13 +1196,22 @@ impl Round {
         let max = self.limits.round_chars;
         let o = self.opinion_mut(opinion)?;
         if o.by != user {
-            return Err(RoundError::Invalid("只能修改自己的意見。"));
+            return Err(RoundError::Invalid(tr(
+                "You can only edit your own opinions.",
+                "只能修改自己的意見。",
+            )));
         }
         if o.withdrawn {
-            return Err(RoundError::Invalid("這則意見已經撤回。"));
+            return Err(RoundError::Invalid(tr(
+                "This opinion has been withdrawn.",
+                "這則意見已經撤回。",
+            )));
         }
         if o.text == text {
-            return Err(RoundError::Invalid("意見沒有任何變更。"));
+            return Err(RoundError::Invalid(tr(
+                "The opinion has no changes.",
+                "意見沒有任何變更。",
+            )));
         }
         if total - o.text.chars().count() + text.chars().count() > max {
             return Err(full);
@@ -1166,7 +1227,7 @@ impl Round {
             user,
             "edited",
             &[("opinion", id.clone())],
-            format!("修改意見 {id}"),
+            trf!(en: "edited opinion {id}", zh: "修改意見 {id}"),
         );
         Ok(())
     }
@@ -1184,10 +1245,16 @@ impl Round {
         }
         let o = self.opinion_mut(opinion)?;
         if o.by != user {
-            return Err(RoundError::Invalid("只能撤回自己的意見。"));
+            return Err(RoundError::Invalid(tr(
+                "You can only withdraw your own opinions.",
+                "只能撤回自己的意見。",
+            )));
         }
         if o.withdrawn {
-            return Err(RoundError::Invalid("這則意見已經撤回。"));
+            return Err(RoundError::Invalid(tr(
+                "This opinion has been withdrawn.",
+                "這則意見已經撤回。",
+            )));
         }
         o.withdrawn = true;
         o.text.clear();
@@ -1202,7 +1269,7 @@ impl Round {
             user,
             "withdrawn",
             &[("opinion", id.clone())],
-            format!("撤回意見 {id}"),
+            trf!(en: "withdrew opinion {id}", zh: "撤回意見 {id}"),
         );
         Ok(())
     }
@@ -1239,9 +1306,9 @@ impl Round {
             "deadline",
             &[("minutes", minutes.to_string())],
             if minutes == 0 {
-                "改成立即收斂".to_string()
+                tr("chose to converge now", "改成立即收斂").to_string()
             } else {
-                format!("截止時間改成 {minutes} 分鐘後")
+                trf!(en: "moved the deadline to {minutes} minutes from now", zh: "截止時間改成 {minutes} 分鐘後")
             },
         );
         Ok(())
@@ -1260,7 +1327,10 @@ impl Round {
             return Err(RoundError::WrongState(self.state));
         }
         if items.len() > MAX_DRAFTS {
-            return Err(RoundError::Invalid("草稿最多 10 則。"));
+            return Err(RoundError::Invalid(tr(
+                "At most 10 drafts are allowed.",
+                "草稿最多 10 則。",
+            )));
         }
         let mut cleaned = Vec::with_capacity(items.len());
         for item in items {
@@ -1290,9 +1360,10 @@ impl Round {
             .sum();
         let mine: usize = cleaned.iter().map(|d| d.text.chars().count()).sum();
         if others + mine > self.limits.round_chars {
-            return Err(RoundError::Invalid(
+            return Err(RoundError::Invalid(tr(
+                "This round has too many drafts. Please send or delete some first.",
                 "這一輪的草稿太多，請先送出或刪掉一些。",
-            ));
+            )));
         }
         if cleaned.is_empty() {
             self.drafts.remove(user);
@@ -1325,7 +1396,12 @@ impl Round {
             .and_then(|p| p.steps.get(step.wrapping_sub(1)))
         {
             Some(t) => t.clone(),
-            None => return Err(RoundError::Invalid("計畫沒有這一步。")),
+            None => {
+                return Err(RoundError::Invalid(tr(
+                    "The plan has no such step.",
+                    "計畫沒有這一步。",
+                )))
+            }
         };
         let text = clean(text, Text::Reply, self.limits.reply_chars)?;
         if self.plan_comments.len() >= MAX_PLAN_COMMENTS
@@ -1348,7 +1424,7 @@ impl Round {
             user,
             "commented",
             &[("step", step.to_string())],
-            format!("對計畫第 {step} 步留言"),
+            trf!(en: "commented on step {step} of the plan", zh: "對計畫第 {step} 步留言"),
         );
         Ok(())
     }
@@ -1366,9 +1442,15 @@ impl Round {
             .plan_comments
             .iter_mut()
             .find(|c| c.id == comment)
-            .ok_or(RoundError::Invalid("找不到這則留言，可能已經清除。"))?;
+            .ok_or(RoundError::Invalid(tr(
+                "This comment was not found; it may have been cleared.",
+                "找不到這則留言，可能已經清除。",
+            )))?;
         if c.by == user {
-            return Err(RoundError::Invalid("不能附議自己的留言。"));
+            return Err(RoundError::Invalid(tr(
+                "You cannot +1 your own comment.",
+                "不能附議自己的留言。",
+            )));
         }
         Ok(match c.supporters.iter().position(|u| u == user) {
             Some(i) => {
@@ -1391,7 +1473,11 @@ impl Round {
             "laoban",
             "emptyCancelled",
             &[],
-            "所有意見都撤回了，這一輪自動取消".into(),
+            tr(
+                "Every opinion was withdrawn; the round ended by itself",
+                "所有意見都撤回了，這一輪自動取消",
+            )
+            .into(),
         );
     }
 
@@ -1526,7 +1612,7 @@ mod tests {
         assert_eq!(r.skip("u-b", "u-b", "t"), Err(RoundError::NotInitiator));
         r.skip("u-a", "u-b", "t6").unwrap();
         assert!(r.all_answered());
-        assert!(r.log.iter().any(|l| l.event.contains("略過 u-b")));
+        assert!(r.log.iter().any(|l| l.event.contains("skipped u-b")));
     }
 
     #[test]
@@ -1658,7 +1744,7 @@ mod tests {
             "{req}"
         );
         assert!(req.contains("回覆（u-a）要含已完成的嗎？"), "{req}");
-        assert!(r.opinion_list().contains("（u-b）［list］清單加上篩選"));
+        assert!(r.opinion_list().contains("(u-b) [list] 清單加上篩選"));
 
         // Only authors confirm; support and replies go on while confirming.
         r.start_converging("t5");

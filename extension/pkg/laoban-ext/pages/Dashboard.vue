@@ -115,9 +115,10 @@ export default defineComponent({
         :aria-label="t('laoban.dashboard.chat.title')"
       >
         <h2>{{ t('laoban.dashboard.chat.title') }}</h2>
+        <!-- Only when the backend answers: otherwise its own error says why. -->
         <p
-          v-if="!mayChange"
-          class="banner info"
+          v-if="!mayChange && config"
+          class="laoban-banner-info"
           role="status"
         >
           {{ t('laoban.access.viewOnly') }}

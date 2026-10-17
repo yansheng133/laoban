@@ -11,7 +11,7 @@ import { useStore } from 'vuex';
 import { errorText as errorFor } from '../utils/errors';
 import { useText } from '../composables/useText';
 import {
-  listApps, listBundles, resolveAppUrl, AppSummary, WaitingRound
+  listApps, listBundles, resolveAppUrl, canChangeApps, AppSummary, WaitingRound
 } from '../utils/backend';
 import { refreshWaiting } from '../utils/waiting';
 import { bundleReadiness, Bundle, ReadinessState } from '../utils/bundle';
@@ -35,6 +35,13 @@ export default defineComponent({
     const waiting = ref<Record<string, WaitingRound>>({});
     const waitingCount = computed(() => Object.values(waiting.value).filter((w) => w.reason === 'confirm').length);
     let waitingTimer: ReturnType<typeof setInterval> | null = null;
+
+    // A viewer opens apps to look, not to edit (report 22, N20).
+    const mayChange = ref(true);
+
+    canChangeApps(store).then((v) => {
+      mayChange.value = v;
+    });
 
     async function loadWaiting() {
       // A nice-to-have, like the Fleet state; also updates the nav count.
@@ -127,7 +134,7 @@ export default defineComponent({
     expose({ refresh });
 
     return {
-      t, apps, loading, loaded, errorText, waiting, waitingCount, refresh, openUrl, formatTime, stateLabel, stateClass, appDetailRoute
+      t, apps, loading, loaded, errorText, waiting, waitingCount, refresh, openUrl, formatTime, stateLabel, stateClass, appDetailRoute, mayChange
     };
   },
 });
@@ -204,8 +211,9 @@ export default defineComponent({
             </td>
             <td class="laoban-text">
               <span v-if="app.editable">{{ app.summary }}</span>
+              <!-- The waiting badge says it already (report 22, N7: "Failed" twice). -->
               <span
-                v-if="app.round"
+                v-if="app.round && !waiting[app.appName]"
                 class="laoban-apps-round"
               >{{ t(`laoban.round.states.${ app.round }`) }}</span>
               <span
@@ -240,7 +248,7 @@ export default defineComponent({
                 :to="appDetailRoute(app.appName)"
                 class="btn btn-sm role-primary"
               >
-                {{ app.editable ? t('laoban.apps.edit') : t('laoban.apps.details') }}
+                {{ app.editable && mayChange ? t('laoban.apps.edit') : t('laoban.apps.details') }}
               </router-link>
             </td>
           </tr>

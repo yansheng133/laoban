@@ -8,7 +8,7 @@ type Translate = (key: string, args?: Record<string, unknown>) => string;
 export const TRANSLATED_ERRORS = [
   'forbidden', 'unauthenticated', 'unavailable', 'backend_not_found', 'version_conflict', 'not_initiator', 'not_confirmer',
   'round_state', 'budget_exceeded', 'spend_limit', 'github_failed', 'round_not_found', 'busy', 'app_not_found',
-  'version_not_found', 'round_active'
+  'version_not_found', 'round_active', 'app_exists'
 ];
 
 export function errorText(t: Translate, e: unknown, fallbackKey: string): string {

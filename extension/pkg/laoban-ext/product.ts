@@ -14,7 +14,8 @@ export function init($plugin: IPlugin, store: any) {
   } = $plugin.DSL(store, PRODUCT_NAME);
 
   product({
-    icon:    'gear',
+    // The same three layers as the 3D view (assets/icon.svg).
+    svg:     require('./assets/icon.svg'),
     inStore: 'management',
     weight:  100,
     to:      {
@@ -26,9 +27,12 @@ export function init($plugin: IPlugin, store: any) {
     }
   });
 
+  // Overview first in every language (Rancher sorts by label otherwise;
+  // report 22, N15).
   virtualType({
     labelKey: 'laoban.nav.dashboard',
     name:     DASHBOARD_PAGE,
+    weight:   2,
     route:    {
       name:   DASHBOARD_ROUTE_NAME,
       params: {
@@ -41,6 +45,7 @@ export function init($plugin: IPlugin, store: any) {
   virtualType({
     labelKey: 'laoban.nav.apps',
     name:     APPS_PAGE,
+    weight:   1,
     route:    {
       name:   APPS_ROUTE_NAME,
       params: {

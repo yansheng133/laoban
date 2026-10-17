@@ -84,6 +84,11 @@ export default defineComponent({
       type:    Boolean,
       default: true,
     },
+    // The signed-in user may look but not change (laoban viewer).
+    viewOnly: {
+      type:    Boolean,
+      default: false,
+    },
     // Others may see this person's drafts (kept in the round).
     draftsShared: {
       type:    Boolean,
@@ -135,7 +140,15 @@ export default defineComponent({
     });
     const active = computed(() => ['collecting', 'converging', 'confirming', 'applying', 'failed'].includes(state.value));
     const busy = computed(() => props.disabled || !!props.pending);
-    const you = computed(() => props.round?.you);
+    // A viewer reads the round but takes no part: every action is off, the
+    // same way the backend would refuse it (report 22, B22).
+    const you = computed(() => {
+      const y = props.round?.you;
+
+      return y && props.viewOnly ? {
+        ...y, isInitiator: false, mustConfirm: false, canAddOpinion: false, canDiscuss: false, canComment: false
+      } : y;
+    });
     const who = (id: string) => (you.value?.user && id === you.value.user ? t('laoban.round.you') : userLabel(store, id));
     const deadlineText = computed(() => {
       const r = props.round;
@@ -370,9 +383,16 @@ export default defineComponent({
     >
       {{ t('laoban.round.unavailable') }}
     </p>
+    <p
+      v-if="viewOnly && !active"
+      class="laoban-banner-info"
+      role="status"
+    >
+      {{ t('laoban.access.viewOnly') }}
+    </p>
     <!-- No round running: open one. -->
     <form
-      v-if="!active"
+      v-if="!active && !viewOnly"
       class="laoban-form"
       @submit.prevent="open"
     >

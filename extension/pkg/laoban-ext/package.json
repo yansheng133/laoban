@@ -1,13 +1,14 @@
 {
   "name": "laoban-ext",
   "description": "laoban: describe what you need, review the plan and architecture view, then approve changes",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "private": false,
   "rancher": {
     "annotations": {
       "catalog.cattle.io/rancher-version": ">= 2.15.0-0 < 2.16.0-0",
       "catalog.cattle.io/ui-extensions-version": ">= 3.0.0 < 4.0.0",
-      "catalog.cattle.io/display-name": "laoban"
+      "catalog.cattle.io/display-name": "laoban",
+      "catalog.cattle.io/certified": "community"
     }
   },
   "scripts": {},
@@ -26,5 +27,14 @@
     "> 1%",
     "last 2 versions",
     "not dead"
+  ],
+  "icon": "https://raw.githubusercontent.com/yansheng133/laoban/main/docs/images/laoban-icon.svg",
+  "homepage": "https://github.com/yansheng133/laoban",
+  "keywords": [
+    "laoban",
+    "ai",
+    "fleet",
+    "gitops",
+    "3d"
   ]
 }

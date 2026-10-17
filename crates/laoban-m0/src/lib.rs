@@ -11,10 +11,12 @@
 //! * [`state`]: laoban's own Kubernetes resources (rounds), or memory.
 //! * [`service`]: ties it together behind `plan`, `apply` and `config`.
 //! * [`config`]: environment variables.
+//! * [`lang`]: the language of text people read (`LAOBAN_LANGUAGE`).
 
 pub mod codegen;
 pub mod config;
 pub mod github;
+pub mod lang;
 pub mod meta;
 pub mod plan;
 pub mod render;
@@ -26,6 +28,7 @@ mod time;
 
 pub use config::{from_env_with, AiEndpoint, ConfigError, EnvConfig, M0Settings, Secret};
 pub use github::{CommitFile, CommitInfo, GithubCommitter, GithubConfig, GithubError, GithubToken};
+pub use lang::{tr, Lang};
 pub use rounds::Limits as RoundLimits;
 pub use service::{
     AddOpinionsRequest, ApplyOptions, ApplyRequest, DeadlineRequest, DraftsRequest, M0Error,

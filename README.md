@@ -6,11 +6,19 @@ laoban（老闆）是一個 Rancher UI extension：用一句話描述想要的�
 
 > 專案暱稱「鐵板麵加雞塊」。名稱的由來：對系統說需求，就像在早餐店跟老闆點餐。
 
+![用一句話做出應用，再一起修改它（影片已加速）](docs/images/demo-zh.gif)
+
+| 一句話 → 計畫與 3D 架構圖 | 一起提意見 | AI 收斂成修改計畫 |
+|---|---|---|
+| ![總覽：需求、計畫與 3D 架構圖](docs/images/01-overview-plan-zh.png) | ![意見收斂：意見、+1、回覆](docs/images/04-round-opinions-zh.png) | ![收斂後的修改計畫，3D 圖標出變更](docs/images/05-round-plan-zh.png) |
+| **部署完成** | **版本比較** | **應用清單** |
+| ![部署完成，打開應用](docs/images/02-app-deployed-zh.png) | ![放大檢視，比較兩個版本](docs/images/06-compare-versions-zh.png) | ![應用清單與等你確認的標記](docs/images/03-apps-list-zh.png) |
+
 ## 試用
 
 照 **[快速上手](docs/quickstart.md)** 做，大約 30 分鐘：
 
-1. 在 Rancher 的 Extensions 加入 Helm repo `https://yansheng133.github.io/laoban`，安裝 **laoban**。
+1. 在 Rancher 的 Extensions 加入 Helm repo `https://yansheng133.github.io/laoban`，安裝 **laoban**（0.1.18 以後；0.1.17 的 extension 載入不了）。
 2. 用 Helm 安裝後端（`laoban/laoban-crd`、`laoban/laoban`）。
 3. 建一個 Fleet GitRepo 指向放應用的 GitHub repo。
 
@@ -86,7 +94,8 @@ GitHub repo ──► Fleet ──► 目標 namespace 裡的應用
 - 一個 Rancher 只用一套後端：頁面在使用者看得到的叢集裡找第一個裝了 laoban 的。
 - 產生的應用固定是網頁加 API 兩個元件（Python），部署在一個 namespace（預設 `laoban-dev`），以 Pod Security restricted 執行。
 - 後端只有一個副本；計畫存在記憶體，意見收斂存在 `Round` 資源裡。
-- AI 的費用由你的 Anthropic 帳號支付；後端有每月 token 上限（預設 2,000,000）。
+- AI 的費用由你的 Anthropic 帳號支付。後端有每月 token 上限（預設 2,000,000），但用量只存在記憶體裡，後端重啟就從 0 重新計算；請一定要在 Anthropic Console 設花費上限。
+- 後端訊息預設是英文，chart 的 `config.language: zh-Hant` 改成繁體中文；頁面依 Rancher 的語言設定顯示。
 
 ## 安裝（細節）
 

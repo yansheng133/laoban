@@ -162,9 +162,9 @@ fn assert_error(v: &Value, code: &str) {
     assert_eq!(v["error"]["code"], code, "{v}");
     let msg = v["error"]["message"].as_str().unwrap();
     assert!(!msg.is_empty());
-    // Traditional Chinese message: at least one CJK character.
+    // English message by default (LAOBAN_LANGUAGE unset): no CJK character.
     assert!(
-        msg.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)),
+        !msg.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)),
         "{msg}"
     );
     // Also a Kubernetes Status, so kubectl prints the message.
@@ -510,7 +510,10 @@ fn slow_ai_calls_are_not_cut_by_socket_timeouts() {
 #[test]
 fn unconfigured_api_still_serves_probes() {
     let r = start_with(
-        ApiState::Unconfigured("後端設定不完整：缺少環境變數 LAOBAN_MODEL。".into()),
+        ApiState::Unconfigured(
+            "Backend configuration is incomplete: missing environment variables LAOBAN_MODEL."
+                .into(),
+        ),
         None,
     );
     assert_eq!(get(r.addr, "/healthz"), (200, "ok".to_string()));
@@ -532,6 +535,8 @@ fn binary_without_config_names_missing_variables_and_logs_requests() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_laoban-server"))
         .env("LAOBAN_LISTEN_ADDR", "127.0.0.1:0")
         .env("ANTHROPIC_API_KEY", secret)
+        // Messages for people follow LAOBAN_LANGUAGE (English by default).
+        .env("LAOBAN_LANGUAGE", "zh-Hant")
         .env_remove("LAOBAN_MODEL")
         .env_remove("LAOBAN_GITHUB_REPO")
         .env_remove("LAOBAN_GITHUB_TOKEN")

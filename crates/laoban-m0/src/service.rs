@@ -23,6 +23,7 @@ use crate::codegen::{
 };
 use crate::config::M0Settings;
 use crate::github::{GithubCommitter, GithubError};
+use crate::lang::tr;
 use crate::meta::{self, AppMeta, HistoryEntry, Layout, Pos, META_FILE};
 use crate::plan::{
     architecture_with_layout, carry_layout, parse_app_plan, valid_app_name, EDIT_PLAN_INSTRUCTIONS,
@@ -32,6 +33,7 @@ use crate::render::{render, rollout_hashes, RenderInput};
 use crate::rounds::{self, Limits, Part, PlanRecipe, Round, RoundError, RoundPlan, State, Text};
 use crate::state::{MemoryStore, StateError, StateStore};
 use crate::store::{BaseApp, PlanStore, StoreError, StoredPlan};
+use crate::trf;
 use crate::{time, InvalidOutput};
 
 mod persist;
@@ -228,7 +230,8 @@ const JOB_TTL: std::time::Duration = std::time::Duration::from_secs(60 * 60);
 const MAX_JOBS: usize = 200;
 
 /// Errors with the codes and statuses of the design's error table.
-/// `user_message` is Traditional Chinese for the page; `Display` is for
+/// `user_message` is for the page, in the backend's language (see
+/// [`crate::lang`]); `Display` is for
 /// tests and never contains secrets or user content.
 #[derive(Debug, Error)]
 pub enum M0Error {
@@ -394,95 +397,162 @@ impl M0Error {
     pub fn user_message(&self) -> String {
         match self {
             M0Error::BadRequest(m) => (*m).to_string(),
-            M0Error::PlanNotFound => {
-                "找不到這個計畫，可能已超過 1 小時或後端已重新啟動，請重新產生計畫。".into()
-            }
-            M0Error::AlreadyApplied => "這個計畫已經部署過（或正在部署），不能重複部署。".into(),
-            M0Error::BudgetExceeded => {
-                "已達到 laoban 本期的 AI token 使用上限，請等下個月或請管理者調高上限。".into()
-            }
-            M0Error::SpendLimit => {
-                "Anthropic 帳號已達花費上限，請管理者到 Anthropic Console 檢查；系統不會自動重試。"
-                    .into()
-            }
-            M0Error::AiInvalidOutput(_) => {
-                "AI 回應的格式不符合要求，沒有寫入任何東西，請再試一次或換個說法。".into()
-            }
+            M0Error::PlanNotFound => tr(
+                "This plan was not found; it may be over 1 hour old or the backend restarted. Please generate the plan again.",
+                "找不到這個計畫，可能已超過 1 小時或後端已重新啟動，請重新產生計畫。",
+            )
+            .into(),
+            M0Error::AlreadyApplied => tr(
+                "This plan has already been deployed (or is being deployed); it cannot be deployed twice.",
+                "這個計畫已經部署過（或正在部署），不能重複部署。",
+            )
+            .into(),
+            M0Error::BudgetExceeded => tr(
+                "laoban's AI token limit for this period is used up. Wait for next month or ask an administrator to raise it.",
+                "已達到 laoban 本期的 AI token 使用上限，請等下個月或請管理者調高上限。",
+            )
+            .into(),
+            M0Error::SpendLimit => tr(
+                "The Anthropic account reached its spend limit. Ask an administrator to check the Anthropic Console; the system does not retry by itself.",
+                "Anthropic 帳號已達花費上限，請管理者到 Anthropic Console 檢查；系統不會自動重試。",
+            )
+            .into(),
+            M0Error::AiInvalidOutput(_) => tr(
+                "The AI's answer was not in the required format; nothing was written. Try again or say it another way.",
+                "AI 回應的格式不符合要求，沒有寫入任何東西，請再試一次或換個說法。",
+            )
+            .into(),
             M0Error::AiUnavailable(m) => (*m).to_string(),
-            M0Error::Github(_) => {
-                "寫入 GitHub 失敗，請稍後再試；若持續失敗請管理者檢查 token 與 repo 設定。".into()
+            M0Error::Github(_) => tr(
+                "Writing to GitHub failed. Try again later; if it keeps failing, ask an administrator to check the token and repository settings.",
+                "寫入 GitHub 失敗，請稍後再試；若持續失敗請管理者檢查 token 與 repo 設定。",
+            )
+            .into(),
+            M0Error::Internal(_) => tr(
+                "An internal error occurred in the backend.",
+                "後端發生內部錯誤。",
+            )
+            .into(),
+            M0Error::AppExists(app) => trf!(
+                en: "An app named {app} already exists. To change it, click \"Edit\" in the app list below; to create another one, choose a different name.",
+                zh: "已經有名為 {app} 的應用。要修改它，請在下方應用清單按「編輯」；要另外建立，請換一個名稱。"
+            ),
+            M0Error::AppNotFound => tr(
+                "This app was not found; it may have been removed.",
+                "找不到這個應用，可能已經被刪除。",
+            )
+            .into(),
+            M0Error::VersionNotFound => {
+                tr("This version was not found.", "找不到這個版本。").into()
             }
-            M0Error::Internal(_) => "後端發生內部錯誤。".into(),
-            M0Error::AppExists(app) => format!(
-                "已經有名為 {app} 的應用。要修改它，請在下方應用清單按「編輯」；要另外建立，請換一個名稱。"
+            M0Error::RoundActive => tr(
+                "A round of opinions is running for this app. To change it, give an opinion on the app's detail page; until this round ends, the app cannot be restored and no other change plan can be made.",
+                "這個應用正在進行一輪意見收斂，修改請到應用的詳細頁提意見；這一輪結束前不能還原或另外產生修改計畫。",
+            )
+            .into(),
+            M0Error::RoundScope(files) => trf!(
+                en: "This round of opinions is working on {files}; these files cannot be edited directly until the round ends. Other files can be edited as usual.",
+                zh: "這一輪意見收斂正在處理 {files}，這一輪結束前不能直接修改這些檔案；其他檔案可以照常修改。"
             ),
-            M0Error::AppNotFound => "找不到這個應用，可能已經被刪除。".into(),
-            M0Error::VersionNotFound => "找不到這個版本。".into(),
-            M0Error::RoundActive => {
-                "這個應用正在進行一輪意見收斂，修改請到應用的詳細頁提意見；這一輪結束前不能還原或另外產生修改計畫。".into()
-            }
-            M0Error::RoundScope(files) => format!(
-                "這一輪意見收斂正在處理 {files}，這一輪結束前不能直接修改這些檔案；其他檔案可以照常修改。"
+            M0Error::MergeConflict(files) => trf!(
+                en: "{files} was also edited directly during this round and conflicts with the AI's change; nothing was deployed. The initiator can converge again.",
+                zh: "這一輪期間 {files} 也被直接修改過，和 AI 的修改衝突，沒有部署。請發起人重新收斂。"
             ),
-            M0Error::MergeConflict(files) => format!(
-                "這一輪期間 {files} 也被直接修改過，和 AI 的修改衝突，沒有部署。請發起人重新收斂。"
-            ),
-            M0Error::ManualEditLost(files) => format!(
-                "AI 的修改會蓋掉這一輪期間對 {files} 的手動修改，沒有部署。請發起人重新收斂；如果手動修改不需要保留，請先把它改回去。"
+            M0Error::ManualEditLost(files) => trf!(
+                en: "The AI's change would overwrite the hand edits to {files} made during this round; nothing was deployed. The initiator can converge again, or undo the hand edit first if it is not needed.",
+                zh: "AI 的修改會蓋掉這一輪期間對 {files} 的手動修改，沒有部署。請發起人重新收斂；如果手動修改不需要保留，請先把它改回去。"
             ),
             M0Error::Round(RoundError::Invalid(m)) => (*m).into(),
             M0Error::Round(RoundError::TooLong { what, max }) => match what {
-                Text::Opinion => format!("一則意見最多 {max} 字，請精簡後再送出。"),
-                Text::Reply => format!("一則回覆最多 {max} 字，請精簡後再送出。"),
+                Text::Opinion => trf!(
+                    en: "An opinion can be at most {max} characters. Please shorten it before sending.",
+                    zh: "一則意見最多 {max} 字，請精簡後再送出。"
+                ),
+                Text::Reply => trf!(
+                    en: "A reply can be at most {max} characters. Please shorten it before sending.",
+                    zh: "一則回覆最多 {max} 字，請精簡後再送出。"
+                ),
             },
             M0Error::Round(RoundError::Full {
                 opinions,
                 replies,
                 chars,
-            }) => format!(
-                "這一輪的意見已滿（最多 {opinions} 則意見、每則 {replies} 則回覆，合計 {chars} 字），請先收斂，或等這一輪結束再開下一輪。"
+            }) => trf!(
+                en: "This round is full (at most {opinions} opinions, {replies} replies each, {chars} characters in all). Please converge it first, or wait for this round to end and start the next one.",
+                zh: "這一輪的意見已滿（最多 {opinions} 則意見、每則 {replies} 則回覆，合計 {chars} 字），請先收斂，或等這一輪結束再開下一輪。"
             ),
-            M0Error::Round(RoundError::WrongState(st)) => format!(
-                "這一輪目前不能這樣做（{}）。請重新整理頁面。",
+            M0Error::Round(RoundError::WrongState(st)) => trf!(
+                en: "This round cannot do that right now ({}). Please refresh the page.",
+                zh: "這一輪目前不能這樣做（{}）。請重新整理頁面。",
                 state_label(*st)
             ),
-            M0Error::Round(RoundError::NotInitiator) => "只有發起這一輪的人可以這樣做。".into(),
-            M0Error::Round(RoundError::NoSuchOpinion) => {
-                "找不到這則意見，請重新整理頁面。".into()
+            M0Error::Round(RoundError::NotInitiator) => tr(
+                "Only the person who started this round can do that.",
+                "只有發起這一輪的人可以這樣做。",
+            )
+            .into(),
+            M0Error::Round(RoundError::NoSuchOpinion) => tr(
+                "This opinion was not found. Please refresh the page.",
+                "找不到這則意見，請重新整理頁面。",
+            )
+            .into(),
+            M0Error::Round(RoundError::NotConfirmer) => tr(
+                "You do not need to confirm this round: you gave no opinion in it, or you have already answered.",
+                "你不需要確認這一輪：你沒有在這一輪提意見，或已經回覆過。",
+            )
+            .into(),
+            M0Error::Unauthenticated => tr(
+                "Your identity could not be verified. Please use the laoban page in Rancher.",
+                "無法確認你的身分：請從 Rancher 的 laoban 頁面操作。",
+            )
+            .into(),
+            M0Error::VersionConflict => tr(
+                "This app got a new version while you were editing. Reload it and make your change again.",
+                "這個應用在你編輯期間有了新版本，請重新讀取後再改。",
+            )
+            .into(),
+            M0Error::InvalidFiles(m) => trf!(
+                en: "The code did not pass the checks: {m}",
+                zh: "程式沒有通過檢查：{m}"
+            ),
+            M0Error::NotEditable => tr(
+                "This app has no laoban edit record (it may have been made by an earlier version), so it cannot be edited. Please generate it again under a new name.",
+                "這個應用沒有 laoban 的編輯紀錄（可能是較早版本產生的），無法編輯；請用新名稱重新產生。",
+            )
+            .into(),
+            M0Error::JobNotFound => tr(
+                "The progress of this job was not found; it may be over 1 hour old or the backend restarted. Check the result in the app list.",
+                "找不到這項工作的進度，可能已超過 1 小時或後端已重新啟動。請到應用清單確認結果。",
+            )
+            .into(),
+            M0Error::Busy => tr(
+                "The backend has too much work right now. Try again later.",
+                "後端目前有太多工作在進行，請稍後再試。",
+            )
+            .into(),
+            M0Error::RoundsUnavailable => tr(
+                "Rounds of opinions are not available right now: the cluster has no laoban Round resource. Ask an administrator to upgrade the laoban-crd chart first.",
+                "意見收斂暫時無法使用：叢集裡沒有 laoban 的 Round 資源。請管理者先升級 laoban-crd chart。",
+            )
+            .into(),
+            M0Error::State(StateError::Conflict) => tr(
+                "Someone else just changed this round. Please refresh the page and try again.",
+                "這一輪剛被別人改過，請重新整理頁面再試一次。",
+            )
+            .into(),
+            M0Error::State(StateError::TooLarge) => tr(
+                "This round's data is over the storage limit; nothing was written. Please shorten the opinions.",
+                "這一輪的資料超過儲存上限，沒有寫入。請精簡意見。",
+            )
+            .into(),
+            M0Error::State(_) => tr(
+                "Saving the round's data failed; nothing was written. Try again later; if it keeps failing, ask an administrator to check the backend's permissions.",
+                "儲存意見收斂的資料失敗，沒有寫入，請稍後再試；若持續失敗請管理者檢查後端的權限。",
+            )
+            .into(),
+            M0Error::PastRoundNotFound => {
+                tr("This round's record was not found.", "找不到這一輪的紀錄。").into()
             }
-            M0Error::Round(RoundError::NotConfirmer) => {
-                "你不需要確認這一輪：你沒有在這一輪提意見，或已經回覆過。".into()
-            }
-            M0Error::Unauthenticated => {
-                "無法確認你的身分：請從 Rancher 的 laoban 頁面操作。".into()
-            }
-            M0Error::VersionConflict => {
-                "這個應用在你編輯期間有了新版本，請重新讀取後再改。".into()
-            }
-            M0Error::InvalidFiles(m) => format!("程式沒有通過檢查：{m}"),
-            M0Error::NotEditable => {
-                "這個應用沒有 laoban 的編輯紀錄（可能是較早版本產生的），無法編輯；請用新名稱重新產生。"
-                    .into()
-            }
-            M0Error::JobNotFound => {
-                "找不到這項工作的進度，可能已超過 1 小時或後端已重新啟動。請到應用清單確認結果。".into()
-            }
-            M0Error::Busy => "後端目前有太多工作在進行，請稍後再試。".into(),
-            M0Error::RoundsUnavailable => {
-                "意見收斂暫時無法使用：叢集裡沒有 laoban 的 Round 資源。請管理者先升級 laoban-crd chart。"
-                    .into()
-            }
-            M0Error::State(StateError::Conflict) => {
-                "這一輪剛被別人改過，請重新整理頁面再試一次。".into()
-            }
-            M0Error::State(StateError::TooLarge) => {
-                "這一輪的資料超過儲存上限，沒有寫入。請精簡意見。".into()
-            }
-            M0Error::State(_) => {
-                "儲存意見收斂的資料失敗，沒有寫入，請稍後再試；若持續失敗請管理者檢查後端的權限。"
-                    .into()
-            }
-            M0Error::PastRoundNotFound => "找不到這一輪的紀錄。".into(),
         }
     }
 }
@@ -494,13 +564,22 @@ impl From<AiError> for M0Error {
             AiError::Provider(p) => match p {
                 ProviderError::SpendLimitReached { .. } => M0Error::SpendLimit,
                 ProviderError::RateLimited { .. } | ProviderError::Overloaded => {
-                    M0Error::AiUnavailable("AI 服務目前忙碌中，請稍後再試。")
+                    M0Error::AiUnavailable(tr(
+                        "The AI service is busy right now. Try again later.",
+                        "AI 服務目前忙碌中，請稍後再試。",
+                    ))
                 }
                 ProviderError::Authentication { .. } => {
-                    M0Error::AiUnavailable("AI 服務認證失敗，請管理者檢查 API 金鑰設定。")
+                    M0Error::AiUnavailable(tr(
+                        "Authentication with the AI service failed. Ask an administrator to check the API key setting.",
+                        "AI 服務認證失敗，請管理者檢查 API 金鑰設定。",
+                    ))
                 }
                 ProviderError::InvalidRequest { .. } | ProviderError::Other { .. } => {
-                    M0Error::AiUnavailable("呼叫 AI 服務失敗，請稍後再試。")
+                    M0Error::AiUnavailable(tr(
+                        "Calling the AI service failed. Try again later.",
+                        "呼叫 AI 服務失敗，請稍後再試。",
+                    ))
                 }
             },
             AiError::Plan(PlanError::Truncated) => {
@@ -816,27 +895,41 @@ impl M0Service {
     ) -> Result<Value, M0Error> {
         let prompt = body.prompt.trim();
         if prompt.is_empty() {
-            return Err(M0Error::BadRequest("請輸入需求。"));
+            return Err(M0Error::BadRequest(tr(
+                "Please enter a request.",
+                "請輸入需求。",
+            )));
         }
         if prompt.chars().count() > max_chars {
-            return Err(M0Error::BadRequest("需求太長，請縮短到 4000 字以內。"));
+            return Err(M0Error::BadRequest(tr(
+                "The request is too long. Please shorten it to 4000 characters or fewer.",
+                "需求太長，請縮短到 4000 字以內。",
+            )));
         }
         let requested_name = match body.app_name.as_deref().map(str::trim) {
             None | Some("") => None,
             Some(n) if valid_app_name(n) => Some(n.to_string()),
             Some(_) => return Err(M0Error::BadRequest(
-                "應用名稱只能用小寫英文字母、數字和連字號，以英文字母開頭，長度 2 到 31 個字元。",
+                tr("An app name can only use lowercase letters, digits and hyphens, must start with a letter, and must be 2 to 31 characters long.", "應用名稱只能用小寫英文字母、數字和連字號，以英文字母開頭，長度 2 到 31 個字元。"),
             )),
         };
 
         let base_name = match body.base_app.as_deref().map(str::trim) {
             None | Some("") => None,
             Some(n) if valid_app_name(n) => Some(n.to_string()),
-            Some(_) => return Err(M0Error::BadRequest("要編輯的應用名稱不正確。")),
+            Some(_) => {
+                return Err(M0Error::BadRequest(tr(
+                    "The name of the app to edit is not valid.",
+                    "要編輯的應用名稱不正確。",
+                )))
+            }
         };
         if let (Some(base), Some(req)) = (&base_name, &requested_name) {
             if base != req {
-                return Err(M0Error::BadRequest("編輯現有應用時不能改名稱。"));
+                return Err(M0Error::BadRequest(tr(
+                    "The name cannot be changed when editing an existing app.",
+                    "編輯現有應用時不能改名稱。",
+                )));
             }
         }
 
@@ -852,9 +945,10 @@ impl M0Service {
                 };
                 require_user(user)?;
                 if current.files.total_bytes() > MAX_EDIT_CODE_BYTES {
-                    return Err(M0Error::BadRequest(
+                    return Err(M0Error::BadRequest(tr(
+                        "This app's code is too large for the trial version to edit with AI.",
                         "這個應用的程式太大，試吃版無法用 AI 編輯。",
-                    ));
+                    )));
                 }
                 // Without the last change's notes: they talk about earlier
                 // opinions, and the AI would repeat them for this change.
@@ -1061,7 +1155,10 @@ impl M0Service {
     /// `GET /api/apps/<name>`: what the page needs to show and change an app.
     pub fn get_app(&self, app: &str, user: Option<&str>) -> Result<Value, M0Error> {
         if !valid_app_name(app) {
-            return Err(M0Error::BadRequest("應用名稱不正確。"));
+            return Err(M0Error::BadRequest(tr(
+                "The app name is not valid.",
+                "應用名稱不正確。",
+            )));
         }
         let m = self.load_app(app)?;
         let mut v = self.app_links(app);
@@ -1184,7 +1281,10 @@ impl M0Service {
         let (kind, message) = if stored.base.is_some() {
             (
                 "edit",
-                commit_message(app, &format!("修改：{masked_prompt}")),
+                commit_message(
+                    app,
+                    &trf!(en: "Change: {masked_prompt}", zh: "修改：{masked_prompt}"),
+                ),
             )
         } else {
             ("create", commit_message(app, &masked_summary))
@@ -1298,10 +1398,16 @@ impl M0Service {
     /// `laoban.json` of `app` as it was in `commit`.
     fn load_version(&self, app: &str, commit: &str) -> Result<AppMeta, M0Error> {
         if !valid_app_name(app) {
-            return Err(M0Error::BadRequest("應用名稱不正確。"));
+            return Err(M0Error::BadRequest(tr(
+                "The app name is not valid.",
+                "應用名稱不正確。",
+            )));
         }
         if !valid_commit(commit) {
-            return Err(M0Error::BadRequest("版本代號不正確。"));
+            return Err(M0Error::BadRequest(tr(
+                "The version ID is not valid.",
+                "版本代號不正確。",
+            )));
         }
         let text = self
             .github
@@ -1392,7 +1498,10 @@ impl M0Service {
     /// rounds can be used, and the limits for a new round.
     pub fn round(&self, app: &str, user: Option<&str>) -> Result<Value, M0Error> {
         if !valid_app_name(app) {
-            return Err(M0Error::BadRequest("應用名稱不正確。"));
+            return Err(M0Error::BadRequest(tr(
+                "The app name is not valid.",
+                "應用名稱不正確。",
+            )));
         }
         Ok(json!({
             "round": self.round_json(app, user),
@@ -1411,11 +1520,18 @@ impl M0Service {
     ) -> Result<Value, M0Error> {
         let user = require_user(user)?;
         if !valid_app_name(app) {
-            return Err(M0Error::BadRequest("應用名稱不正確。"));
+            return Err(M0Error::BadRequest(tr(
+                "The app name is not valid.",
+                "應用名稱不正確。",
+            )));
         }
         self.require_rounds()?;
-        let scope = rounds::parse_scope(body.scope.as_deref().unwrap_or("all"))
-            .ok_or(M0Error::BadRequest("範圍只能是 web、api 或 all。"))?;
+        let scope = rounds::parse_scope(body.scope.as_deref().unwrap_or("all")).ok_or(
+            M0Error::BadRequest(tr(
+                "The scope can only be web, api or all.",
+                "範圍只能是 web、api 或 all。",
+            )),
+        )?;
         // Only apps laoban can change.
         let current = self.load_app(app)?;
         // The files at this commit tell hand edits made during the round.
@@ -1690,7 +1806,7 @@ impl M0Service {
                     None | Some("") => None,
                     Some(id) => {
                         let name = names.get(id).ok_or(M0Error::BadRequest(
-                            "意見針對的元件不在這個應用的架構裡，請重新整理頁面。",
+                            tr("The component the opinion is about is not in this app's architecture. Please refresh the page.", "意見針對的元件不在這個應用的架構裡，請重新整理頁面。"),
                         ))?;
                         Some(rounds::Target {
                             id: id.to_string(),
@@ -1937,7 +2053,7 @@ impl M0Service {
                         r.fail_coded(
                             "planTooLarge",
                             &[],
-                            "AI 產生的修改計畫太大（超過 150 KB），請發起人縮小範圍或精簡意見後重新收斂。",
+                            tr("The AI's change plan is too large (over 150 KB). The initiator can narrow the scope or shorten the opinions and converge again.", "AI 產生的修改計畫太大（超過 150 KB），請發起人縮小範圍或精簡意見後重新收斂。"),
                             &at,
                         )
                     });
@@ -2009,7 +2125,10 @@ impl M0Service {
             Err(M0Error::PlanNotFound) => r.fail_coded(
                 "planMissing",
                 &[],
-                "找不到這一輪的修改計畫，請發起人重新收斂。",
+                tr(
+                    "This round's change plan was not found. The initiator can converge again.",
+                    "找不到這一輪的修改計畫，請發起人重新收斂。",
+                ),
                 &at,
             ),
             Err(e) => {
@@ -2038,7 +2157,10 @@ impl M0Service {
 
     fn check_base(&self, app: &str, base_commit: &str) -> Result<(), M0Error> {
         if !valid_commit(base_commit.trim()) {
-            return Err(M0Error::BadRequest("版本代號不正確。"));
+            return Err(M0Error::BadRequest(tr(
+                "The version ID is not valid.",
+                "版本代號不正確。",
+            )));
         }
         if self.latest_commit(app)? != base_commit.trim() {
             return Err(M0Error::VersionConflict);
@@ -2049,7 +2171,10 @@ impl M0Service {
     /// `GET /api/apps/<name>/files`: the current code, for the editor.
     pub fn files(&self, app: &str) -> Result<Value, M0Error> {
         if !valid_app_name(app) {
-            return Err(M0Error::BadRequest("應用名稱不正確。"));
+            return Err(M0Error::BadRequest(tr(
+                "The app name is not valid.",
+                "應用名稱不正確。",
+            )));
         }
         let m = self.load_app(app)?;
         let commit = self.latest_commit(app)?;
@@ -2065,7 +2190,10 @@ impl M0Service {
         user: Option<&str>,
     ) -> Result<Value, M0Error> {
         if !valid_app_name(app) {
-            return Err(M0Error::BadRequest("應用名稱不正確。"));
+            return Err(M0Error::BadRequest(tr(
+                "The app name is not valid.",
+                "應用名稱不正確。",
+            )));
         }
         require_user(user)?;
         let files = parse_generated(&body.files.to_string())
@@ -2075,7 +2203,10 @@ impl M0Service {
         let current = self.load_app(app)?;
         self.check_base(app, &body.base_commit)?;
         if files == current.files {
-            return Err(M0Error::BadRequest("程式沒有任何變更。"));
+            return Err(M0Error::BadRequest(tr(
+                "The code has no changes.",
+                "程式沒有任何變更。",
+            )));
         }
         // Files the running round is about stay as they are until it ends.
         let blocked = self
@@ -2096,10 +2227,13 @@ impl M0Service {
             .map(str::trim)
             .filter(|n| !n.is_empty())
             .map(|n| n.chars().take(200).collect::<String>())
-            .unwrap_or_else(|| "手動修改程式".into());
+            .unwrap_or_else(|| tr("Edited the code by hand", "手動修改程式").into());
         let request = self.orchestrator.mask_for_ai(&note).text;
         let summary = self.orchestrator.mask_for_ai(&current.plan.summary).text;
-        let message = commit_message(app, &format!("手動修改：{request}"));
+        let message = commit_message(
+            app,
+            &trf!(en: "Hand edit: {request}", zh: "手動修改：{request}"),
+        );
         self.publish(Publish {
             app,
             plan: &current.plan,
@@ -2124,11 +2258,17 @@ impl M0Service {
         user: Option<&str>,
     ) -> Result<Value, M0Error> {
         if !valid_app_name(app) {
-            return Err(M0Error::BadRequest("應用名稱不正確。"));
+            return Err(M0Error::BadRequest(tr(
+                "The app name is not valid.",
+                "應用名稱不正確。",
+            )));
         }
         require_user(user)?;
         if body.positions.is_empty() || body.positions.len() > meta::MAX_LAYOUT_ENTRIES {
-            return Err(M0Error::BadRequest("版面資料不正確。"));
+            return Err(M0Error::BadRequest(tr(
+                "The layout data is not valid.",
+                "版面資料不正確。",
+            )));
         }
         let lock = self.app_lock(app);
         let _one_at_a_time = lock.lock().unwrap_or_else(|e| e.into_inner());
@@ -2142,14 +2282,20 @@ impl M0Service {
         let mut layout = current.layout.clone();
         for (id, pos) in &body.positions {
             if !ids.contains(&id.as_str()) || !pos.valid() {
-                return Err(M0Error::BadRequest("版面資料不正確。"));
+                return Err(M0Error::BadRequest(tr(
+                    "The layout data is not valid.",
+                    "版面資料不正確。",
+                )));
             }
             layout.insert(id.clone(), Pos { x: pos.x, z: pos.z });
         }
         if layout == current.layout {
-            return Err(M0Error::BadRequest("版面沒有任何變更。"));
+            return Err(M0Error::BadRequest(tr(
+                "The layout has no changes.",
+                "版面沒有任何變更。",
+            )));
         }
-        let request = "調整 3D 版面".to_string();
+        let request = tr("Rearranged the 3D layout", "調整 3D 版面").to_string();
         let summary = self.orchestrator.mask_for_ai(&current.plan.summary).text;
         let message = commit_message(app, &request);
         self.publish(Publish {
@@ -2186,17 +2332,20 @@ impl M0Service {
             && target.plan == current.plan
             && target.layout == current.layout
         {
-            return Err(M0Error::BadRequest("目前已經是這個版本的內容。"));
+            return Err(M0Error::BadRequest(tr(
+                "The app already has this version's content.",
+                "目前已經是這個版本的內容。",
+            )));
         }
         let short: String = commit.chars().take(7).collect();
-        let request = format!("還原到 {} 的版本（{short}）", target.updated_at());
+        let request = trf!(en: "Restore to the version of {} ({short})", zh: "還原到 {} 的版本（{short}）", target.updated_at());
         let model = target
             .history
             .last()
             .map(|h| h.model.clone())
             .unwrap_or_default();
         let summary = self.orchestrator.mask_for_ai(&target.plan.summary).text;
-        let message = commit_message(app, &format!("還原：{request}"));
+        let message = commit_message(app, &trf!(en: "Restore: {request}", zh: "還原：{request}"));
         self.publish(Publish {
             app,
             plan: &target.plan,
@@ -2268,13 +2417,13 @@ fn require_user(user: Option<&str>) -> Result<&str, M0Error> {
 
 fn state_label(s: State) -> &'static str {
     match s {
-        State::Collecting => "收集意見中",
-        State::Converging => "AI 收斂中",
-        State::Confirming => "等待確認",
-        State::Applying => "AI 修改程式中",
-        State::Done => "已完成",
-        State::Failed => "失敗",
-        State::Cancelled => "已取消",
+        State::Collecting => tr("Collecting opinions", "收集意見中"),
+        State::Converging => tr("AI converging", "AI 收斂中"),
+        State::Confirming => tr("Waiting for confirmation", "等待確認"),
+        State::Applying => tr("AI changing the code", "AI 修改程式中"),
+        State::Done => tr("Done", "已完成"),
+        State::Failed => tr("Failed", "失敗"),
+        State::Cancelled => tr("Cancelled", "已取消"),
     }
 }
 
@@ -2293,11 +2442,19 @@ fn changed_parts(old: &crate::plan::AppPlan, new: &crate::plan::AppPlan) -> Vec<
 /// A user-facing reason for hand-edited files failing the checks.
 fn files_problem(detail: &str) -> String {
     if detail.contains("handle()") {
-        "handler.py 必須定義 handle(method, path, body)。".into()
+        tr(
+            "handler.py must define handle(method, path, body).",
+            "handler.py 必須定義 handle(method, path, body)。",
+        )
+        .into()
     } else if detail.contains("exceed") {
-        "檔案太大（每個檔 64 KiB、全部 192 KiB 以內）。".into()
+        tr(
+            "The files are too large (at most 64 KiB each and 192 KiB in all).",
+            "檔案太大（每個檔 64 KiB、全部 192 KiB 以內）。",
+        )
+        .into()
     } else {
-        "只能有 index.html、app.js、style.css、handler.py 四個檔，內容都要是文字。".into()
+        tr("Only the four files index.html, app.js, style.css and handler.py are allowed, and all must be text.", "只能有 index.html、app.js、style.css、handler.py 四個檔，內容都要是文字。").into()
     }
 }
 
