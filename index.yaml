@@ -9,6 +9,31 @@ entries:
       catalog.cattle.io/rancher-version: '>= 2.15.0-0 < 2.16.0-0'
       catalog.cattle.io/release-name: laoban
     apiVersion: v2
+    appVersion: 0.1.18
+    created: "2026-10-17T00:09:42.851251882Z"
+    description: laoban backend service for the laoban Rancher UI extension (M0 runs
+      in a downstream cluster).
+    digest: dee0cf3fd6f5771c9997b2e6defe27363f29a77a178b012805c7a37200c951df
+    home: https://github.com/yansheng133/laoban
+    keywords:
+    - rancher
+    - ui-extension
+    kubeVersion: '>= 1.34.0-0'
+    name: laoban
+    sources:
+    - https://github.com/yansheng133/laoban
+    type: application
+    urls:
+    - assets/laoban/laoban-0.1.18.tgz
+    version: 0.1.18
+  - annotations:
+      catalog.cattle.io/display-name: laoban
+      catalog.cattle.io/kube-version: '>= 1.34.0-0 < 1.37.0-0'
+      catalog.cattle.io/namespace: laoban-system
+      catalog.cattle.io/os: linux
+      catalog.cattle.io/rancher-version: '>= 2.15.0-0 < 2.16.0-0'
+      catalog.cattle.io/release-name: laoban
+    apiVersion: v2
     appVersion: 0.1.17
     created: "2026-10-16T15:11:48.711769296Z"
     description: laoban backend service for the laoban Rancher UI extension (M0 runs
@@ -35,6 +60,28 @@ entries:
       catalog.cattle.io/rancher-version: '>= 2.15.0-0 < 2.16.0-0'
       catalog.cattle.io/release-name: laoban-crd
     apiVersion: v2
+    appVersion: 0.1.18
+    created: "2026-10-17T00:09:42.851575819Z"
+    description: CustomResourceDefinitions for laoban (Round, ProjectPolicy, ChangeRequest,
+      ArchitectureVersion).
+    digest: f20284c0f6798406e1b319b501c98a0ead5d451320ce439d339c16333c89ada4
+    home: https://github.com/yansheng133/laoban
+    kubeVersion: '>= 1.34.0-0'
+    name: laoban-crd
+    sources:
+    - https://github.com/yansheng133/laoban
+    type: application
+    urls:
+    - assets/laoban-crd/laoban-crd-0.1.18.tgz
+    version: 0.1.18
+  - annotations:
+      catalog.cattle.io/display-name: laoban CRDs
+      catalog.cattle.io/kube-version: '>= 1.34.0-0 < 1.37.0-0'
+      catalog.cattle.io/namespace: laoban-system
+      catalog.cattle.io/os: linux
+      catalog.cattle.io/rancher-version: '>= 2.15.0-0 < 2.16.0-0'
+      catalog.cattle.io/release-name: laoban-crd
+    apiVersion: v2
     appVersion: 0.1.17
     created: "2026-10-16T15:11:48.711994907Z"
     description: CustomResourceDefinitions for laoban (Round, ProjectPolicy, ChangeRequest,
@@ -50,6 +97,35 @@ entries:
     - assets/laoban-crd/laoban-crd-0.1.17.tgz
     version: 0.1.17
   laoban-ext:
+  - annotations:
+      catalog.cattle.io/certified: community
+      catalog.cattle.io/display-name: laoban
+      catalog.cattle.io/namespace: cattle-ui-plugin-system
+      catalog.cattle.io/os: linux
+      catalog.cattle.io/permits-os: linux, windows
+      catalog.cattle.io/rancher-version: '>= 2.15.0-0 < 2.16.0-0'
+      catalog.cattle.io/scope: management
+      catalog.cattle.io/ui-component: plugins
+      catalog.cattle.io/ui-extensions-version: '>= 3.0.0 < 4.0.0'
+    apiVersion: v2
+    appVersion: 0.1.18
+    created: "2026-10-17T00:09:42.851831677Z"
+    description: 'laoban: describe what you need, review the plan and architecture
+      view, then approve changes'
+    digest: 10014eb0967908420a00754766a182b430c5474665efb710da0ddbbfbbd77d77
+    home: https://github.com/yansheng133/laoban
+    icon: https://raw.githubusercontent.com/yansheng133/laoban/main/docs/images/laoban-icon.svg
+    keywords:
+    - laoban
+    - ai
+    - fleet
+    - gitops
+    - 3d
+    name: laoban-ext
+    type: application
+    urls:
+    - assets/laoban-ext/laoban-ext-0.1.18.tgz
+    version: 0.1.18
   - annotations:
       catalog.cattle.io/certified: rancher
       catalog.cattle.io/display-name: laoban
@@ -71,4 +147,4 @@ entries:
     urls:
     - assets/laoban-ext/laoban-ext-v0.1.17.tgz
     version: v0.1.17
-generated: "2026-10-16T15:11:48.710976658Z"
+generated: "2026-10-17T00:09:42.849812575Z"
