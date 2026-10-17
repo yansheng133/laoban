@@ -884,7 +884,7 @@ export default defineComponent({
                 <span class="laoban-text">{{ c.text }}</span>
                 <!-- Not on one's own comment (report 21, B17); the count still shows. -->
                 <button
-                  v-if="!you || c.by !== you.user"
+                  v-if="!viewOnly && (!you || c.by !== you.user)"
                   type="button"
                   class="btn btn-sm"
                   :class="you && c.supporters.includes(you.user) ? 'role-primary' : 'role-secondary'"

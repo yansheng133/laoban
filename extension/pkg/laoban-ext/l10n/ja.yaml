@@ -149,7 +149,7 @@ laoban:
     objectSend: 送信して再収集
     applying: "AI がコードを変更して GitHub に書き込んでいます（{seconds} 秒）…"
     retry: もう一度収束
-    cancel: この回を取り消す
+    cancel: このラウンドを取り消す
     cancelConfirm: "取り消しますか？このラウンドの意見はすべて無効になります。"
     cancelKeep: 取り消さない
     log: "記録（{count}）"

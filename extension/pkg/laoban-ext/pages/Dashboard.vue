@@ -37,13 +37,14 @@ export default defineComponent({
     const appName = ref('');
 
     const appNameInvalid = computed(() => !!appName.value.trim() && !APP_NAME_PATTERN.test(appName.value.trim()));
-    // A viewer may look but not make apps (report 21, N9).
-    const mayChange = ref(true);
+    // A viewer may look but not make apps (report 21, N9). Unknown (null)
+    // until asked, so a viewer never sees the form flash up (report 23).
+    const mayChange = ref<boolean | null>(null);
 
     onMounted(async() => {
       mayChange.value = await canChangeApps(store);
     });
-    const canPlan = computed(() => mayChange.value && !flow.busy.value && !!prompt.value.trim() && !appNameInvalid.value);
+    const canPlan = computed(() => mayChange.value === true && !flow.busy.value && !!prompt.value.trim() && !appNameInvalid.value);
     const appsRoute = { name: APPS_ROUTE_NAME, params: { product: PRODUCT_NAME, cluster: BLANK_CLUSTER } };
     const detailRoute = computed(() => (flow.applied.value?.appName ? appDetailRoute(flow.applied.value.appName) : null));
 
@@ -117,7 +118,7 @@ export default defineComponent({
         <h2>{{ t('laoban.dashboard.chat.title') }}</h2>
         <!-- Only when the backend answers: otherwise its own error says why. -->
         <p
-          v-if="!mayChange && config"
+          v-if="mayChange === false && config"
           class="laoban-banner-info"
           role="status"
         >
@@ -127,7 +128,7 @@ export default defineComponent({
              without a backend there is nothing to send the request to
              (report 23, N22). -->
         <form
-          v-if="config && mayChange"
+          v-if="config && mayChange === true"
           class="laoban-form"
           data-testid="laoban-plan-form"
           @submit.prevent="generatePlan"
