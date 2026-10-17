@@ -16,6 +16,9 @@ import { bundleReadiness, Readiness } from '../utils/bundle';
 import { deploymentRolledOut, rolloutTargets } from '../utils/rollout';
 import { BUNDLE_POLL_INTERVAL_MS, BUNDLE_POLL_TIMEOUT_MS, FLEET_WORKSPACE } from '../config/backend';
 
+// Without a visible Fleet bundle for this long, the Deployments decide.
+const DEPLOYMENTS_AFTER_MS = 60 * 1000;
+
 import { TRANSLATED_ERRORS } from '../utils/errors';
 
 export type Phase = 'idle' | 'planning' | 'planned' | 'applying' | 'deploying' | 'ready' | 'timeout';
@@ -173,10 +176,13 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
         if (gen !== pollGeneration) {
           return null;
         }
+        // Read fine: an earlier failed poll is over.
+        pollError.value = false;
         if (!deploymentRolledOut(d, target.contentHash)) {
           return false;
         }
       }
+      pollError.value = false;
     } catch (e) {
       if (gen !== pollGeneration) {
         return null;
@@ -188,6 +194,11 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
 
     return true;
   }
+
+  // The caller cannot read Fleet's bundles (see poll); reset per deploy.
+  let bundlesHidden = false;
+  // Waiting on the Deployments alone (shown in the status line).
+  const deploymentsOnly = ref(false);
 
   async function poll(gen: number) {
     if (unmounted || gen !== pollGeneration || !applied.value) {
@@ -205,11 +216,28 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
       if (gen !== pollGeneration) {
         return;
       }
-      pollError.value = true;
+      // Fleet's bundles live in the local cluster's fleet-default namespace,
+      // which project members usually cannot read. Without them, the
+      // Deployments in the app's own namespace (readable with the laoban
+      // user role) tell when the new version runs.
+      if (e instanceof RequestError && e.status === 403) {
+        bundlesHidden = true;
+      } else {
+        pollError.value = true;
+      }
     }
 
     // 'modified': running but drifted from Git; offer the app anyway.
-    if (readiness.value?.state === 'ready' || readiness.value?.state === 'modified') {
+    // Also when the bundle stays out of sight (an empty list for a caller
+    // who may list bundles elsewhere, or Fleet being slow): after a while
+    // the Deployments decide, as above.
+    const unseen = !readiness.value || readiness.value.state === 'missing';
+    const viaDeployments = rolloutTargets(applied.value?.rollout).length > 0 &&
+      (bundlesHidden || (unseen && Date.now() - pollStarted >= DEPLOYMENTS_AFTER_MS));
+
+    deploymentsOnly.value = viaDeployments && unseen;
+
+    if (viaDeployments || readiness.value?.state === 'ready' || readiness.value?.state === 'modified') {
       const done = await rolledOut(gen);
 
       if (done === null) {
@@ -240,6 +268,8 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
     readiness.value = null;
     rollingOut.value = false;
     pollError.value = false;
+    bundlesHidden = false;
+    deploymentsOnly.value = false;
     pollStarted = Date.now();
     phase.value = 'deploying';
     startElapsed();
@@ -359,6 +389,9 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
     case 'deploying': {
       const r = readiness.value;
 
+      if (deploymentsOnly.value) {
+        return t('laoban.dashboard.status.waitingPods', { seconds: elapsed.value });
+      }
       if (!r || r.state === 'missing') {
         return t('laoban.dashboard.status.waitingBundle', { seconds: elapsed.value });
       }

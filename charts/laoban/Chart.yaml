@@ -4,8 +4,8 @@ description: laoban backend service for the laoban Rancher UI extension (M0 runs
 type: application
 # Chart version and app version follow the backend release (Cargo.toml
 # workspace version, the v<version> tag); CI checks they match.
-version: 0.1.19
-appVersion: "0.1.19"
+version: 0.1.20
+appVersion: "0.1.20"
 # Rancher Prime 2.15.2 supports Kubernetes v1.34 to v1.36:
 # https://www.suse.com/suse-rancher/support-matrix/all-supported-versions/rancher-v2-15-2/
 kubeVersion: ">= 1.34.0-0"

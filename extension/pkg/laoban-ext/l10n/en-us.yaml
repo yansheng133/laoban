@@ -437,6 +437,7 @@ laoban:
       planned: Plan ready. Review it, then select Confirm and deploy.
       applying: "The AI is generating code and committing it to GitHub. This usually takes 30 to 60 seconds ({seconds} s so far)…"
       waitingBundle: "Committed. Waiting for Fleet to pick up the change ({seconds} s so far)…"
+      waitingPods: "Committed. Waiting for the new version's pods to start ({seconds} s so far)…"
       deploying: "Fleet is deploying: {ready} / {desired} ready…"
       rollingOut: "Fleet has applied the change; waiting for the new pods to start ({seconds} s)…"
       bundleError: "Fleet reports a deployment error ({ready} / {desired} ready). Still checking…"

@@ -254,11 +254,80 @@ fn disabled_categories_are_left_alone() {
         mask_national_ids: false,
         mask_financial_accounts: false,
         mask_login_accounts_for_ai: false,
+        mask_credentials: false,
         login_accounts: vec!["sam".into()],
         custom_rules: vec![],
     })
     .unwrap();
     let id = with_check_digit("A12345678");
     let text = format!("{id} 4111111111111111 sam");
+    assert_eq!(m.mask(&text, Destination::Ai).text, text);
+}
+
+#[test]
+fn credentials_are_masked_for_both_destinations() {
+    // Synthetic values in the providers' formats, assembled at run time so
+    // secret scanners do not mistake the test for a leak. None is real.
+    let anthropic = format!("{}-ant-api03-{}", "sk", "x".repeat(24));
+    let github = format!("{}_{}", "ghp", "A1b2".repeat(9));
+    let pat = format!("{}_pat_{}", "github", "Z9_".repeat(10));
+    let aws = format!("{}{}", "AKIA", "EXAMPLE".repeat(2) + "00");
+    let aws = aws.as_str();
+    let jwt = [
+        "eyJ",
+        &"a".repeat(12),
+        ".",
+        "eyJ",
+        &"b".repeat(12),
+        ".",
+        &"c".repeat(12),
+    ]
+    .concat();
+    let jwt = jwt.as_str();
+    let kind = "OPENSSH PRIVATE KEY";
+    let pem = format!("-----BEGIN {kind}-----\nAAAAexample\n-----END {kind}-----");
+    let bearer = format!("{}9{}", "q".repeat(16), "w".repeat(15));
+    let text = format!(
+        "key {anthropic}, gh {github}, pat {pat}, aws {aws}, jwt {jwt}\n{pem}\n\
+         Authorization: Bearer {bearer}"
+    );
+    for dest in [Destination::Ai, Destination::Audit] {
+        let out = masker().mask(&text, dest);
+        for secret in [
+            anthropic.as_str(),
+            github.as_str(),
+            pat.as_str(),
+            aws,
+            jwt,
+            "AAAAexample",
+            bearer.as_str(),
+        ] {
+            assert!(!out.text.contains(secret), "{secret} leaked: {}", out.text);
+        }
+        assert!(out.findings.iter().all(|f| f.kind == Kind::Credential));
+    }
+}
+
+#[test]
+fn ordinary_words_are_not_credentials() {
+    let text = "做一個登入頁，要有密碼欄位與忘記密碼連結；token 用量顯示在右上角。\n\
+                密碼：至少八碼並包含大小寫字母。パスワード：8文字以上。max token: 4000\n\
+                def login(password: str):\n    token = request.headers.get(\"Authorization\")\n\
+                const token = localStorage.getItem('t'); headers: { Authorization: 'Bearer ' + token }\n\
+                name: sk-payment-gateway-service; .sk-chase-dot-container {}\n\
+                # Uses Bearer authentication-with-refresh-tokens for the API";
+    let out = masker().mask(text, Destination::Ai);
+    assert_eq!(out.text, text);
+    assert!(out.findings.is_empty());
+}
+
+#[test]
+fn credential_masking_can_be_turned_off() {
+    let m = Masker::new(MaskerConfig {
+        mask_credentials: false,
+        ..MaskerConfig::default()
+    })
+    .unwrap();
+    let text = format!("{}_{}", "ghp", "A1b2".repeat(9));
     assert_eq!(m.mask(&text, Destination::Ai).text, text);
 }

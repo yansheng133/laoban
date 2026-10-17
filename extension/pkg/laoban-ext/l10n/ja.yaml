@@ -439,6 +439,7 @@ laoban:
       planned: 計画ができました。確認して「確認してデプロイ」を選んでください。
       applying: "AI がコードを生成して GitHub にコミットしています。通常 30～60 秒かかります（{seconds} 秒経過）…"
       waitingBundle: "コミットしました。Fleet が変更を取り込むのを待っています（{seconds} 秒経過）…"
+      waitingPods: "書き込みました。新しいバージョンの Pod の起動を待っています（{seconds} 秒経過）…"
       deploying: "Fleet がデプロイしています：{ready} / {desired} 準備完了…"
       rollingOut: "Fleet が適用しました。新しい Pod の起動を待っています（{seconds} 秒）…"
       bundleError: "Fleet がデプロイエラーを報告しています（{ready} / {desired} 準備完了）。確認を続けています…"

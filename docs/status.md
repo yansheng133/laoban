@@ -2,7 +2,7 @@
 
 給接手的人（或其他 Claude 工作階段）快速知道 laoban 做到哪裡。隨每個版本更新；細節以 [m0-design.md](m0-design.md) 與 [Releases](https://github.com/yansheng133/laoban/releases) 為準。
 
-**最後更新**：v0.1.19（2026-10-17）
+**最後更新**：v0.1.20（2026-10-17）
 
 ## 一句話
 
@@ -28,6 +28,9 @@ Rancher UI extension：用一句話做出應用（AI 先給計畫與 3D 架構�
 - 一個 Rancher 只用一套後端；後端單一副本；等待確認的計畫保留 1 小時（`Plan`，v0.1.19 起重啟不遺失）。
 - 存在叢集裡的意見是原文，只有歸檔到 GitHub 的會遮蔽。
 - 本機模型（例如 qwen3-coder）有時不照使用者的語言寫計畫。
+- 產生的應用經 Rancher 代理、在 Rancher 的網址下開啟（待確認是否能帶著觀看者的 Rancher 登入呼叫 Rancher API；見 SECURITY.md）。
+- 產生的應用沒有 NetworkPolicy。
+- 只能用下游叢集（Fleet workspace 固定 `fleet-default`）。
 
 ## 下一步（候選）
 

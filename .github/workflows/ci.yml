@@ -151,6 +151,7 @@ jobs:
           check "github.existingSecret is required" "${m0[@]}" --set github.existingSecret=
           check "github.repo is required" "${m0[@]}" --set github.repo=
           check "config.model is required" "${m0[@]}" --set config.model=
+          check "config.clusterId is required" "${m0[@]}" --set config.clusterId=
           # CRDs: required by ci-values.yaml, and by M0 only when switched on.
           check "install the laoban-crd chart first" -f charts/laoban/ci/ci-values.yaml
           check "install the laoban-crd chart first" "${m0[@]}" --set crds.required=true

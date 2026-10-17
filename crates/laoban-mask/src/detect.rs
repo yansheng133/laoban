@@ -24,6 +24,41 @@ static ACCOUNT: LazyLock<Regex> = LazyLock::new(|| {
     .expect("valid regex")
 });
 
+/// Credentials recognisable on their own: provider key and token formats,
+/// JSON Web Tokens, bearer tokens and PEM private key blocks. These are safe
+/// to apply to code too. Values after words like `password` are not masked:
+/// the same words appear in ordinary requirements and in code (report on
+/// v0.1.20), and masking them corrupts what the AI is asked to change.
+static CREDENTIAL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(concat!(
+        r"(?s)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----",
+        r"|\bsk-ant-[a-z]{3}[0-9]{2}-[A-Za-z0-9_\-]{20,}",
+        r"|\bsk-(?:proj-)?[A-Za-z0-9]{20,}",
+        r"|\bgh[pousr]_[A-Za-z0-9]{20,}",
+        r"|\bgithub_pat_[A-Za-z0-9_]{20,}",
+        r"|\bglpat-[A-Za-z0-9_\-]{20,}",
+        r"|\b(?:AKIA|ASIA)[0-9A-Z]{16}\b",
+        r"|\bAIza[0-9A-Za-z_\-]{35}",
+        r"|\bxox[abprs]-[A-Za-z0-9\-]{10,}",
+        r"|\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}",
+        r"|(?i:\bbearer)\s+(?:[A-Za-z0-9._~+/\-]{10,}[0-9][A-Za-z0-9._~+/\-]*|[A-Za-z0-9._~+/\-]*[0-9][A-Za-z0-9._~+/\-]{10,})=*",
+    ))
+    .expect("valid regex")
+});
+
+pub(crate) fn credentials(text: &str) -> Vec<Finding> {
+    let out: Vec<Finding> = CREDENTIAL
+        .find_iter(text)
+        .map(|m| Finding {
+            kind: Kind::Credential,
+            start: m.start(),
+            end: m.end(),
+            checksum_valid: None,
+        })
+        .collect();
+    out
+}
+
 fn is_ascii_alnum_at(text: &str, idx: usize, before: bool) -> bool {
     let c = if before {
         text[..idx].chars().next_back()

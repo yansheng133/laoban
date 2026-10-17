@@ -50,6 +50,9 @@ pub enum Kind {
     FinancialAccount,
     /// A login account name supplied by the caller.
     LoginAccount,
+    /// A credential: an API key or access token in a known format, a JWT or
+    /// bearer token, or a private key block.
+    Credential,
     /// An administrator-defined rule.
     Custom(String),
 }
@@ -64,6 +67,7 @@ impl Kind {
             Kind::PaymentCard => "[MASKED:CARD]".to_string(),
             Kind::FinancialAccount => "[MASKED:ACCOUNT]".to_string(),
             Kind::LoginAccount => "[MASKED:LOGIN]".to_string(),
+            Kind::Credential => "[MASKED:SECRET]".to_string(),
             Kind::Custom(name) => format!("[MASKED:{}]", custom_token_name(name)),
         }
     }
@@ -119,14 +123,16 @@ pub struct CustomRule {
 }
 
 /// Masking configuration. Defaults match laoban's phase-1 decisions:
-/// national IDs, financial accounts and login accounts (for AI) are masked;
-/// IP addresses are not.
+/// national IDs, financial accounts, credentials and login accounts (for AI)
+/// are masked; IP addresses are not.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MaskerConfig {
     pub mask_national_ids: bool,
     pub mask_financial_accounts: bool,
     pub mask_login_accounts_for_ai: bool,
+    /// API keys, tokens and private keys in known formats (both destinations).
+    pub mask_credentials: bool,
     /// Login account names known to Rancher. Matched case-insensitively.
     pub login_accounts: Vec<String>,
     pub custom_rules: Vec<CustomRule>,
@@ -138,6 +144,7 @@ impl Default for MaskerConfig {
             mask_national_ids: true,
             mask_financial_accounts: true,
             mask_login_accounts_for_ai: true,
+            mask_credentials: true,
             login_accounts: Vec::new(),
             custom_rules: Vec::new(),
         }
@@ -208,6 +215,9 @@ impl Masker {
     pub fn mask(&self, text: &str, destination: Destination) -> Masked {
         let mut findings = Vec::new();
 
+        if self.config.mask_credentials {
+            findings.extend(detect::credentials(text));
+        }
         if self.config.mask_national_ids {
             findings.extend(detect::tw_ids(text));
         }

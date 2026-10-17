@@ -71,7 +71,7 @@ laoban is a community open-source project and is **not covered by SUSE support**
 - The UI is available in Traditional Chinese, English, and Japanese, following the Rancher language setting.
 - Rancher's side menu can be collapsed to leave more room for the workspace.
 - AI work (planning, writing code, consolidation) runs in the background on the backend, and the page polls for progress, so it is not affected by the API server's request limit of about 60 seconds.
-- Sensitive data is masked before being sent to the AI; there is a global token usage cap.
+- Common kinds of sensitive data (Taiwan ID numbers, card and account numbers, API keys and tokens in common formats, private keys) are masked before being sent to the AI. Masking works by recognising formats and cannot catch every secret, so do not put secrets in requests or opinions. There is a global token usage cap.
 - The AI can use the Anthropic API or a local model compatible with the Anthropic Messages API (for example, Ollama).
 - Error responses are also Kubernetes `Status` objects, so `kubectl create --raw` shows the reason as well (the backend writes its messages in Traditional Chinese; the page shows common errors in its own language).
 
