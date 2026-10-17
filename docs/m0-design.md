@@ -85,7 +85,7 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 - 端點路徑是 API 程式（`handler.handle()`）看到的路徑；AI 寫成 `/api/orders` 這種瀏覽器端路徑時，後端會去掉開頭的 `/api`（實測本機模型偶爾會這樣寫，與它產生的程式不一致）。
 - `architecture` 用 `web/viewer-prototype/graph-diff.mjs` 的模型：`node = {id, layer: network|code|data, kind, name, detail: 1..3, parent?, props?, pos:{x,z}}`，`edge = {from, to, kind, label?}`。
 - 試吃版的架構固定是：network 層一個 `service` web、一個 `service` api；code 層一個 `app` web、一個 `app` api，各自可以有 `module`（detail 3）；data 層在 M0 可以有一個 `table` 代表 API 的記憶體資料（`props.storage: "memory"`）。AI 只決定名稱、模組、說明和連線標籤；**位置由後端依層與順序排**，不信任 AI 給的座標。
-- 計畫存在後端記憶體（以 `planId` 為鍵，保留 1 小時，最多 20 筆）。後端重啟就消失，新增應用時可以接受；意見收斂的計畫另外跟著那一輪保存（見「保存與重啟」）。
+- 計畫存在後端記憶體（以 `planId` 為鍵，保留 1 小時，最多 20 筆）。v0.1.19 起，不屬於意見收斂的計畫也寫進 `laoban-system` 的 `Plan` 資源（`plan-<planId>`），後端重啟後讀回，可以照常確認；開始 apply 時刪除、apply 失敗再寫回，所以重啟時正在套用的計畫不會套用第二次（請使用者重新產生）。意見收斂的計畫不寫入，跟著那一輪保存（見「保存與重啟」）。
 
 ### `POST /api/apply`
 
@@ -330,7 +330,7 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 | `LAOBAN_MODEL` | 模型 ID（Anthropic 模型 ID，或本機模型在端點上的名稱） |
 | `LAOBAN_AI_BASE_URL` | 選用。相容 Anthropic Messages API 的端點（例如 Mac 上的 Ollama），只寫 scheme、主機與 port；不設就是 Anthropic API |
 | `LAOBAN_AI_TIMEOUT_SECONDS` | 單次 AI 呼叫上限，30～1800，預設 300 |
-| `LAOBAN_TOKEN_CAP` | 每月 token 上限，預設 2,000,000 |
+| `LAOBAN_TOKEN_CAP` | 每月 token 上限，預設 2,000,000；v0.1.19 起每個 UTC 月份的用量存在 `TokenUsage` 資源（`tokens-YYYY-MM`），重啟不歸零 |
 | `LAOBAN_GITHUB_REPO` | `<owner>/<repo>` |
 | `LAOBAN_GITHUB_TOKEN` | 從 Secret 注入 |
 | `LAOBAN_TARGET_NAMESPACE` | 預設 `laoban-dev` |

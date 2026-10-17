@@ -41,6 +41,18 @@ pub const ROUNDS: Kind = Kind {
     kind: "Round",
 };
 
+/// A plan waiting to be confirmed (outside a round), kept across restarts.
+pub const PLANS: Kind = Kind {
+    plural: "plans",
+    kind: "Plan",
+};
+
+/// The settled AI tokens of one month, kept across restarts.
+pub const TOKEN_USAGES: Kind = Kind {
+    plural: "tokenusages",
+    kind: "TokenUsage",
+};
+
 /// One stored object: its name, version, labels and `spec`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Object {

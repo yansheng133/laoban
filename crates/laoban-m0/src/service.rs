@@ -3,7 +3,7 @@
 //! JSON bodies and maps [`M0Error`] to status codes.
 
 use std::collections::HashMap;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -37,7 +37,10 @@ use crate::trf;
 use crate::{time, InvalidOutput};
 
 mod persist;
+mod saved;
+
 pub use persist::{valid_round_id, ARCHIVE_BRANCH, ARCHIVE_DIR, MAX_PAST_ROUNDS};
+pub use saved::StateUsage;
 
 /// Fleet objects created once by hand (design: Fleet).
 pub const FLEET_WORKSPACE: &str = "fleet-default";
@@ -634,6 +637,14 @@ pub struct M0Service {
     /// head the previous one left, so two apps saving at once do not make
     /// one of them a version conflict. Taken after the app's lock.
     commit_lock: Mutex<()>,
+    /// The stored plans were read back (see `saved`).
+    plans_restored: AtomicBool,
+    /// Unix seconds of the last sweep of expired stored plans.
+    plans_swept_at: AtomicU64,
+    /// The Plan resource is missing (logged once).
+    plans_not_installed: AtomicBool,
+    /// Reading the stored plans failed (logged once).
+    plans_read_failed: AtomicBool,
 }
 
 impl M0Service {
@@ -680,13 +691,21 @@ impl M0Service {
             jobs: Mutex::new(HashMap::new()),
             app_locks: Mutex::new(HashMap::new()),
             commit_lock: Mutex::new(()),
+            plans_restored: AtomicBool::new(false),
+            plans_swept_at: AtomicU64::new(0),
+            plans_not_installed: AtomicBool::new(false),
+            plans_read_failed: AtomicBool::new(false),
         })
     }
 
     /// Keep rounds in `store` instead of memory. Call before serving; the
     /// stored rounds are read by [`M0Service::restore_rounds`] (the round
     /// timer does it first).
+    /// Plans waiting for confirmation and the month's token usage are kept
+    /// there too (v0.1.19).
     pub fn use_state_store(&mut self, store: Arc<dyn StateStore>) {
+        self.budget
+            .use_store(Arc::new(StateUsage::new(Arc::clone(&store))));
         self.state = store;
         self.rounds_ready
             .store(false, std::sync::atomic::Ordering::SeqCst);
@@ -1052,21 +1071,22 @@ impl M0Service {
                 "outputTokens": completion.output_tokens,
             },
         });
-        store.insert(
-            StoredPlan {
-                id,
-                app,
-                plan,
-                masked_prompt: masked.text,
-                model: completion.model,
-                base,
-                label: round
-                    .as_ref()
-                    .map(|r| self.orchestrator.mask_for_ai(&r.label).text),
-                round_start: round.and_then(|r| r.start),
-            },
-            Instant::now(),
-        );
+        let stored = StoredPlan {
+            id,
+            app,
+            plan,
+            masked_prompt: masked.text,
+            model: completion.model,
+            base,
+            label: round
+                .as_ref()
+                .map(|r| self.orchestrator.mask_for_ai(&r.label).text),
+            round_start: round.and_then(|r| r.start),
+        };
+        store.insert(stored.clone(), Instant::now());
+        drop(store);
+        // Kept across a restart (a round's plan is made again instead).
+        self.save_plan(&stored);
         Ok(response)
     }
 
@@ -1188,6 +1208,11 @@ impl M0Service {
                 StoreError::NotFound => M0Error::PlanNotFound,
                 StoreError::AlreadyApplied => M0Error::AlreadyApplied,
             })?;
+        // Gone from storage while it is applied: after a restart in the
+        // middle it cannot be applied a second time.
+        if !from_round {
+            self.forget_plan(&stored);
+        }
         let result = if stored.base.is_some() && !from_round {
             self.check_no_round(&stored.app)
                 .and_then(|()| self.apply_inner(&stored, user))
@@ -1195,6 +1220,10 @@ impl M0Service {
             self.apply_inner(&stored, user)
         };
         self.lock_store().finish_apply(id, result.is_ok());
+        if result.is_err() && !from_round {
+            // It can be confirmed again, so keep it again.
+            self.save_plan(&stored);
+        }
         result
     }
 
@@ -1911,6 +1940,7 @@ impl M0Service {
     pub fn start_round_timer(self: &Arc<Self>) {
         self.attach();
         let _ = self.restore_rounds();
+        self.plans_tick(persist::now_unix());
         let service = Arc::downgrade(self);
         let _ = std::thread::Builder::new()
             .name("laoban-rounds".into())
@@ -1921,6 +1951,7 @@ impl M0Service {
                         let now = persist::now_unix();
                         s.tick(now);
                         s.archive_tick(now);
+                        s.plans_tick(now);
                     }
                     None => return,
                 }

@@ -89,14 +89,14 @@ laoban backend (aggregated API) ── masking ──► AI (Anthropic API or lo
 GitHub repo ──► Fleet ──► app in the target namespace
 ```
 
-The backend writes only its own state resources in `laoban-system` (the `Round` for rounds of opinions, so a round survives a backend restart or upgrade); Fleet handles all app deployment.
+The backend writes only its own state resources in `laoban-system` (`Round` for rounds of opinions, `Plan` for plans waiting for confirmation and `TokenUsage` for the monthly token count, so they survive a backend restart or upgrade); Fleet handles all app deployment.
 
 ## Limitations
 
 - One Rancher uses only one backend: the page finds the first cluster with laoban installed among the clusters the user can see.
 - Generated apps always have two components, web page plus API (Python), deployed in one namespace (default `laoban-dev`) and run under Pod Security restricted.
-- The backend has only one replica; plans are kept in memory, and rounds of opinions are stored in `Round` resources.
-- AI costs are paid by your Anthropic account. The backend has a monthly token cap (default 2,000,000), but usage is kept only in memory and starts again from 0 when the backend restarts; be sure to set a spend limit in the Anthropic Console.
+- The backend has only one replica; rounds of opinions, plans waiting for confirmation and the monthly token usage are stored in `Round`, `Plan` and `TokenUsage` resources in `laoban-system`, so a backend restart does not lose them.
+- AI costs are paid by your Anthropic account. The backend has a monthly token cap (default 2,000,000), but it is only laoban's own count; be sure to set a spend limit in the Anthropic Console.
 - Backend messages are in English by default; set the chart's `config.language: zh-Hant` for Traditional Chinese. The page follows Rancher's language setting.
 
 ## Installation (details)
@@ -122,7 +122,7 @@ The backend writes only its own state resources in `laoban-system` (the `Round` 
 | `crates/laoban-policy` | Deployment review policy engine (for phase 1): decides whether a change can be deployed directly, whether it needs human review, and who reviews it |
 | `crates/laoban-mockhttp` | Local mock HTTP server for tests |
 | `charts/laoban` | Backend Helm chart: Deployment, APIService, user RBAC rules, Role for the backend to store Rounds |
-| `charts/laoban-crd` | laoban CRDs: `Round` (rounds of opinions, required already in the preview), plus ProjectPolicy, ChangeRequest, and ArchitectureVersion for phase 1 |
+| `charts/laoban-crd` | laoban CRDs: `Round`, `Plan` and `TokenUsage` (required already in the preview), plus ProjectPolicy, ChangeRequest, and ArchitectureVersion for phase 1 |
 | `deploy/m0` | Namespaces and Fleet objects to create in advance for the preview |
 | `web/viewer-prototype` | Prototype of the 3D architecture view; the extension's 3D diagram was ported from it |
 | `Containerfile`, `build/` | Container image: SUSE BCI multi-stage build, native x86-64/ARM64 builds, push to GHCR, cosign signing and SBOM |

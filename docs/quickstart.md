@@ -16,7 +16,7 @@
 
 laoban 每次產生計畫或改程式都會呼叫 AI，費用由你的 Anthropic 帳號支付。後端有每月 token 上限（預設 2,000,000），用完就不再呼叫 AI。
 
-> **注意**：目前這個用量只存在後端記憶體裡，**後端重啟（升級、Pod 重建、節點重開機）就從 0 重新計算**。所以它不能當成花費的保障，**請一定要在 [Anthropic Console](https://console.anthropic.com/) 設定花費上限**。
+> **注意**：用量以 UTC 月份計算，存在叢集的 `TokenUsage` 資源裡（`kubectl -n laoban-system get tokenusages`），後端重啟不會歸零。這只是 laoban 自己的計數，不是 Anthropic 的帳單，**請一定也要在 [Anthropic Console](https://console.anthropic.com/) 設定花費上限**。
 
 下面的指令用 `--context downstream` 代表跑 laoban 的叢集、`--context local` 代表 Rancher local 叢集，請換成你自己的 kubeconfig context。
 
@@ -30,7 +30,7 @@ laoban 每次產生計畫或改程式都會呼叫 AI，費用由你的 Anthropic
    - Target：**Helm Repository**（HTTP(S) URL pointing to a Helm chart repository index，預設就是這個）
    - Index URL：`https://yansheng133.github.io/laoban`
    - 按 **Create**。
-3. 存檔後畫面停在 local 叢集的 Apps → Repositories。從左上角選單再回到 **Extensions** → **Available** 分頁，找到 **laoban** → **Install** → 確認版本（最新的，例如 `0.1.18`）→ **Install**。
+3. 存檔後畫面停在 local 叢集的 Apps → Repositories。從左上角選單再回到 **Extensions** → **Available** 分頁，找到 **laoban** → **Install** → 確認版本（最新的，例如 `0.1.19`）→ **Install**。
 4. 安裝完重新整理頁面。**laoban** 出現在左上角選單的 **Global Apps**。
 
 Index URL 打不開時，改用 `https://raw.githubusercontent.com/yansheng133/laoban/gh-pages`，內容一樣。
@@ -51,7 +51,7 @@ Index URL 打不開時，改用 `https://raw.githubusercontent.com/yansheng133/l
 # 後端
 kubectl --context downstream create namespace laoban-system
 # 產生的應用（以 Pod Security restricted 強制）
-kubectl --context downstream apply -f https://raw.githubusercontent.com/yansheng133/laoban/v0.1.18/deploy/m0/namespace-laoban-dev.yaml
+kubectl --context downstream apply -f https://raw.githubusercontent.com/yansheng133/laoban/v0.1.19/deploy/m0/namespace-laoban-dev.yaml
 
 # 金鑰與 token 從檔案讀，不放進 values，也不會留在 shell history
 kubectl --context downstream -n laoban-system create secret generic laoban-anthropic --from-file=api-key=./anthropic-api-key
@@ -96,8 +96,8 @@ config:
 ```bash
 helm repo add laoban https://yansheng133.github.io/laoban
 helm repo update
-helm --kube-context downstream install laoban-crd laoban/laoban-crd -n laoban-system --version 0.1.18
-helm --kube-context downstream install laoban laoban/laoban -n laoban-system -f values-laoban.yaml --version 0.1.18
+helm --kube-context downstream install laoban-crd laoban/laoban-crd -n laoban-system --version 0.1.19
+helm --kube-context downstream install laoban laoban/laoban -n laoban-system -f values-laoban.yaml --version 0.1.19
 ```
 
 發布的 chart 已經填好這個版本的映像檔 digest（`ghcr.io/yansheng133/laoban-server`），不用另外指定。
@@ -123,8 +123,8 @@ kubectl --context local -n fleet-default get clusters.fleet.cattle.io
 下載兩個範本，把 `<owner>` 換成你的 GitHub 帳號、`clusterName: rke2` 換成上面查到的名稱，再套用：
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/yansheng133/laoban/v0.1.18/deploy/m0/fleet-gitrepo.yaml
-curl -fsSLO https://raw.githubusercontent.com/yansheng133/laoban/v0.1.18/deploy/m0/fleet-gitreporestriction.yaml
+curl -fsSLO https://raw.githubusercontent.com/yansheng133/laoban/v0.1.19/deploy/m0/fleet-gitrepo.yaml
+curl -fsSLO https://raw.githubusercontent.com/yansheng133/laoban/v0.1.19/deploy/m0/fleet-gitreporestriction.yaml
 # 編輯 fleet-gitrepo.yaml 之後：
 kubectl --context local apply -f fleet-gitreporestriction.yaml
 kubectl --context local apply -f fleet-gitrepo.yaml
@@ -150,7 +150,7 @@ kubectl --context local apply -f fleet-gitrepo.yaml
 - 用 Rancher Project 管理的話，在 Rancher **local** 叢集套用 Project 角色（要用能管理 local 叢集的 kubeconfig，例如 Rancher 主機上的 `/etc/rancher/rke2/rke2.yaml`；或在 Rancher 介面的 local 叢集 → **Import YAML** 貼上這個檔案），再把成員設成 **laoban user** 或 **laoban viewer**：
 
 ```bash
-kubectl --context local apply -f https://raw.githubusercontent.com/yansheng133/laoban/v0.1.18/deploy/rancher/roletemplate.yaml
+kubectl --context local apply -f https://raw.githubusercontent.com/yansheng133/laoban/v0.1.19/deploy/rancher/roletemplate.yaml
 ```
 
   詳見 [deploy/rancher/README.md](../deploy/rancher/README.md)。
@@ -165,6 +165,8 @@ kubectl --context local apply -f https://raw.githubusercontent.com/yansheng133/l
 | 「寫入 GitHub 失敗」 | token 是否只給了那個 repo 的 Contents: Read and write、repo 是否有 `main` 分支；後端 log：`kubectl --context downstream -n laoban-system logs deploy/laoban` |
 | 部署一直沒好 | Rancher → Continuous Delivery → Git Repos → `laoban-apps` 的狀態；Pod 是否被 Pod Security 擋下 |
 | 意見收斂顯示「請管理者先升級 laoban-crd chart」 | 沒裝 `laoban-crd`，或版本比後端舊 |
+| 後端重啟後 token 用量從 0 開始，或還沒確認的計畫不見了 | `laoban-crd` 比 0.1.19 舊（後端 log 有「not installed」）。先升級 `laoban-crd`，再重啟後端 |
+| 想在月中把 token 用量歸零 | 刪掉當月的紀錄再重啟後端：`kubectl --context downstream -n laoban-system delete tokenusage tokens-YYYY-MM`（UTC 月份），然後 `kubectl --context downstream -n laoban-system rollout restart deploy/laoban` |
 | 升級後第一次 `kubectl get rounds` 報錯，第二次就好 | kubectl 的 discovery 快取還是舊的，不用處理 |
 
 ## 移除

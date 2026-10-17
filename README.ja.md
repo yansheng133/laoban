@@ -89,14 +89,14 @@ laoban バックエンド（aggregated API）── マスク ──► AI（Ant
 GitHub repo ──► Fleet ──► 対象 namespace 内のアプリ
 ```
 
-バックエンドが書き込むのは `laoban-system` 内の自身の状態リソース（意見のラウンドの `Round`。バックエンドの再起動やアップグレード後もラウンドが残るようにするため）だけで、アプリのデプロイはすべて Fleet が担当します。
+バックエンドが書き込むのは `laoban-system` 内の自身の状態リソース（意見のラウンドの `Round`、確認待ちの計画の `Plan`、月間 token 使用量の `TokenUsage`。バックエンドの再起動やアップグレード後も残るようにするため）だけで、アプリのデプロイはすべて Fleet が担当します。
 
 ## 制限事項
 
 - 1 つの Rancher で使うバックエンドは 1 つだけです。ページは、ユーザーから見えるクラスターの中で laoban がインストールされた最初のクラスターを探します。
 - 生成されるアプリは常に Web ページと API の 2 コンポーネント（Python）で、1 つの namespace（デフォルトは `laoban-dev`）にデプロイされ、Pod Security restricted で実行されます。
-- バックエンドのレプリカは 1 つだけです。計画はメモリーに、意見のラウンドは `Round` リソースに保存されます。
-- AI の費用はお使いの Anthropic アカウントに請求されます。バックエンドには月間 token 上限（デフォルト 2,000,000）がありますが、使用量はメモリーにしか保存されず、バックエンドが再起動すると 0 から数え直します。必ず Anthropic Console で支出上限を設定してください。
+- バックエンドのレプリカは 1 つだけです。意見のラウンド、確認待ちの計画、月間 token 使用量は `laoban-system` の `Round`、`Plan`、`TokenUsage` リソースに保存され、バックエンドが再起動しても失われません。
+- AI の費用はお使いの Anthropic アカウントに請求されます。バックエンドには月間 token 上限（デフォルト 2,000,000）がありますが、これは laoban 自身の集計です。必ず Anthropic Console で支出上限を設定してください。
 - バックエンドのメッセージはデフォルトで英語です。chart の `config.language: zh-Hant` で繁体字中国語に変更できます。ページは Rancher の言語設定に従って表示されます。
 
 ## インストール（詳細）
@@ -122,7 +122,7 @@ GitHub repo ──► Fleet ──► 対象 namespace 内のアプリ
 | `crates/laoban-policy` | デプロイ審査ポリシーエンジン（第 1 フェーズ用）：変更をそのままデプロイできるか、人による審査が必要か、誰が審査するかを決定 |
 | `crates/laoban-mockhttp` | テスト用のローカル HTTP モックサーバー |
 | `charts/laoban` | バックエンドの Helm chart：Deployment、APIService、ユーザーの RBAC ルール、バックエンドが Round を保存するための Role |
-| `charts/laoban-crd` | laoban の CRD：`Round`（意見のラウンド。試食版から必須）、および第 1 フェーズ用の ProjectPolicy、ChangeRequest、ArchitectureVersion |
+| `charts/laoban-crd` | laoban の CRD：`Round`、`Plan`、`TokenUsage`（試食版から必須）、および第 1 フェーズ用の ProjectPolicy、ChangeRequest、ArchitectureVersion |
 | `deploy/m0` | 試食版で事前に作成する namespace と Fleet オブジェクト |
 | `web/viewer-prototype` | 3D アーキテクチャビューのプロトタイプ。extension の 3D 図はここから移植 |
 | `Containerfile`、`build/` | コンテナイメージ：SUSE BCI マルチステージビルド、x86-64／ARM64 ネイティブビルド、GHCR へのプッシュ、cosign 署名と SBOM |
