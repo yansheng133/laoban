@@ -1,7 +1,9 @@
 {{- /*
-The backend keeps rounds of 意見收斂 in Round resources (laoban-crd chart) in
-its own namespace, so a round survives a restart. This Role is all it may
-write in the cluster: Round objects in the release namespace. Users cannot
+The backend keeps rounds of 意見收斂 in Round resources, plans waiting to be
+confirmed in Plan resources and the month's AI token usage in TokenUsage
+resources (laoban-crd chart) in its own namespace, so they survive a restart.
+This Role is all it may write in the cluster: those objects in the release
+namespace. Users cannot
 reach them; they go through the backend's API, which checks their RBAC.
 Apps are still deployed by Fleet only.
 */ -}}
@@ -15,7 +17,7 @@ metadata:
     {{- include "laoban.labels" . | nindent 4 }}
 rules:
   - apiGroups: ["laoban.yansheng133.github.io"]
-    resources: ["rounds"]
+    resources: ["rounds", "plans", "tokenusages"]
     verbs: ["get", "list", "create", "update", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

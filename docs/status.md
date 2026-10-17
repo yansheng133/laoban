@@ -2,7 +2,7 @@
 
 給接手的人（或其他 Claude 工作階段）快速知道 laoban 做到哪裡。隨每個版本更新；細節以 [m0-design.md](m0-design.md) 與 [Releases](https://github.com/yansheng133/laoban/releases) 為準。
 
-**最後更新**：v0.1.18（2026-10-17）
+**最後更新**：v0.1.19（2026-10-17）
 
 ## 一句話
 
@@ -24,14 +24,13 @@ Rancher UI extension：用一句話做出應用（AI 先給計畫與 3D 架構�
 ## 已知限制
 
 - 只標示支援 Rancher 2.15；只在 ARM64 上完整驗證過（x86-64 映像檔有建置）。
-- 每月 token 上限只存在後端記憶體，**重啟後歸零**；花費上限要在 Anthropic Console 設。
-- 一個 Rancher 只用一套後端；後端單一副本；計畫存在記憶體（1 小時）。
+- 每月 token 上限是 laoban 自己的計數（`TokenUsage`，v0.1.19 起重啟不歸零）；花費上限仍要在 Anthropic Console 設。
+- 一個 Rancher 只用一套後端；後端單一副本；等待確認的計畫保留 1 小時（`Plan`，v0.1.19 起重啟不遺失）。
 - 存在叢集裡的意見是原文，只有歸檔到 GitHub 的會遮蔽。
 - 本機模型（例如 qwen3-coder）有時不照使用者的語言寫計畫。
 
 ## 下一步（候選）
 
-- token 用量持久化。
 - 第一階段：身分模擬、審查流程、版本 CRD、多人同時編輯（程式碼、3D 版面、意見、計畫）。
 
 ## 開發方式

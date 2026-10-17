@@ -3,6 +3,8 @@
 laoban 的 CustomResourceDefinition，API group `laoban.yansheng133.github.io`，版本 `v1alpha1`：
 
 - `Round`：意見收斂的一輪，由後端寫入（試吃版 v0.1.15 起就要裝）。
+- `Plan`：等待確認的計畫，由後端寫入，1 小時後刪除（v0.1.19 起）。
+- `TokenUsage`：每個 UTC 月份的 token 用量，由後端寫入（v0.1.19 起）。
 - `ProjectPolicy`、`ChangeRequest`、`ArchitectureVersion`：第一階段用。
 
 要比 `laoban` chart 先裝、先升級。沒裝時後端仍會啟動，但意見收斂不能使用。

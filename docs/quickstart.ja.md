@@ -16,7 +16,7 @@
 
 laoban は計画を作成したりコードを変更したりするたびに AI を呼び出し、その費用はお使いの Anthropic アカウントに請求されます。バックエンドには月間 token 上限（デフォルト 2,000,000）があり、使い切ると AI を呼び出さなくなります。
 
-> **注意**：現時点では、この使用量はバックエンドのメモリーにしか保存されず、**バックエンドが再起動する（アップグレード、Pod の再作成、ノードの再起動）と 0 から数え直します**。そのため支出を抑える保証にはなりません。**必ず [Anthropic Console](https://console.anthropic.com/) で支出上限を設定してください**。
+> **注意**：使用量は UTC の月単位で数え、クラスターの `TokenUsage` リソースに保存されます（`kubectl --context downstream -n laoban-system get tokenusages`）。バックエンドが再起動しても 0 には戻りません。ただしこれは laoban 自身の集計で、Anthropic の請求額ではありません。**必ず [Anthropic Console](https://console.anthropic.com/) でも支出上限を設定してください**。
 
 以下のコマンドでは、`--context downstream` が laoban を実行するクラスター、`--context local` が Rancher の local クラスターを表します。ご自身の kubeconfig context に置き換えてください。
 
@@ -30,7 +30,7 @@ laoban は計画を作成したりコードを変更したりするたびに AI 
    - Target：**Helm Repository**（HTTP(S) URL pointing to a Helm chart repository index。デフォルトでこれが選ばれています）
    - Index URL：`https://yansheng133.github.io/laoban`
    - **Create** をクリックします。
-3. 保存すると、画面は local クラスターの Apps → Repositories に移ります。左上のメニューから **Extensions** → **Available** タブに戻り、**laoban** を見つけて → **Install** → バージョン（最新。例：`0.1.18`）を確認 → **Install**。
+3. 保存すると、画面は local クラスターの Apps → Repositories に移ります。左上のメニューから **Extensions** → **Available** タブに戻り、**laoban** を見つけて → **Install** → バージョン（最新。例：`0.1.19`）を確認 → **Install**。
 4. インストール後にページを再読み込みします。**laoban** は左上のメニューの **Global Apps** に表示されます。
 
 Index URL が開けない場合は、代わりに `https://raw.githubusercontent.com/yansheng133/laoban/gh-pages` を使ってください。内容は同じです。
@@ -51,7 +51,7 @@ Index URL が開けない場合は、代わりに `https://raw.githubusercontent
 # バックエンド
 kubectl --context downstream create namespace laoban-system
 # 生成されたアプリ（Pod Security restricted で強制）
-kubectl --context downstream apply -f https://raw.githubusercontent.com/yansheng133/laoban/v0.1.18/deploy/m0/namespace-laoban-dev.yaml
+kubectl --context downstream apply -f https://raw.githubusercontent.com/yansheng133/laoban/v0.1.19/deploy/m0/namespace-laoban-dev.yaml
 
 # key と token はファイルから読み込み、values に含めず、shell history にも残さない
 kubectl --context downstream -n laoban-system create secret generic laoban-anthropic --from-file=api-key=./anthropic-api-key
@@ -96,8 +96,8 @@ config:
 ```bash
 helm repo add laoban https://yansheng133.github.io/laoban
 helm repo update
-helm --kube-context downstream install laoban-crd laoban/laoban-crd -n laoban-system --version 0.1.18
-helm --kube-context downstream install laoban laoban/laoban -n laoban-system -f values-laoban.yaml --version 0.1.18
+helm --kube-context downstream install laoban-crd laoban/laoban-crd -n laoban-system --version 0.1.19
+helm --kube-context downstream install laoban laoban/laoban -n laoban-system -f values-laoban.yaml --version 0.1.19
 ```
 
 公開されている chart には、このバージョンのイメージ digest（`ghcr.io/yansheng133/laoban-server`）がすでに設定されているため、別途指定する必要はありません。
@@ -123,8 +123,8 @@ kubectl --context local -n fleet-default get clusters.fleet.cattle.io
 2 つのテンプレートをダウンロードし、`<owner>` をご自身の GitHub アカウントに、`clusterName: rke2` を上で調べた名前に置き換えてから適用します。
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/yansheng133/laoban/v0.1.18/deploy/m0/fleet-gitrepo.yaml
-curl -fsSLO https://raw.githubusercontent.com/yansheng133/laoban/v0.1.18/deploy/m0/fleet-gitreporestriction.yaml
+curl -fsSLO https://raw.githubusercontent.com/yansheng133/laoban/v0.1.19/deploy/m0/fleet-gitrepo.yaml
+curl -fsSLO https://raw.githubusercontent.com/yansheng133/laoban/v0.1.19/deploy/m0/fleet-gitreporestriction.yaml
 # fleet-gitrepo.yaml を編集した後：
 kubectl --context local apply -f fleet-gitreporestriction.yaml
 kubectl --context local apply -f fleet-gitrepo.yaml
@@ -150,7 +150,7 @@ UI の言語は、Rancher 右上のユーザーメニュー → Preferences で�
 - Rancher Project で管理する場合は、Rancher の **local** クラスターに Project ロールを適用し（local クラスターを管理できる kubeconfig を使います。例：Rancher ホスト上の `/etc/rancher/rke2/rke2.yaml`。または Rancher UI の local クラスター → **Import YAML** にこのファイルを貼り付けます）、メンバーに **laoban user** または **laoban viewer** を割り当てます。
 
 ```bash
-kubectl --context local apply -f https://raw.githubusercontent.com/yansheng133/laoban/v0.1.18/deploy/rancher/roletemplate.yaml
+kubectl --context local apply -f https://raw.githubusercontent.com/yansheng133/laoban/v0.1.19/deploy/rancher/roletemplate.yaml
 ```
 
   詳しくは [deploy/rancher/README.md](../deploy/rancher/README.md) を参照してください。
@@ -165,6 +165,8 @@ kubectl --context local apply -f https://raw.githubusercontent.com/yansheng133/l
 | GitHub への書き込みに失敗する | token にその repo の Contents: Read and write だけが付与されているか、repo に `main` ブランチがあるか。バックエンドのログ：`kubectl --context downstream -n laoban-system logs deploy/laoban` |
 | デプロイがいつまでも完了しない | Rancher → Continuous Delivery → Git Repos → `laoban-apps` のステータス。Pod が Pod Security でブロックされていないか |
 | 意見のラウンドに、管理者に laoban-crd chart のアップグレードを求めるメッセージが表示される | `laoban-crd` がインストールされていないか、バージョンがバックエンドより古い |
+| バックエンドの再起動後に token 使用量が 0 から始まる、または未確認の計画が消える | `laoban-crd` が 0.1.19 より古い（バックエンドのログに「not installed」）。`laoban-crd` をアップグレードすると 30 秒以内に保存が始まる |
+| 月の途中で token 使用量をリセットしたい | その月の記録を削除してバックエンドを再起動する：`kubectl --context downstream -n laoban-system delete tokenusage tokens-YYYY-MM`（UTC の月）、続けて `kubectl --context downstream -n laoban-system rollout restart deploy/laoban` |
 | アップグレード後、最初の `kubectl get rounds` がエラーになり、2 回目は成功する | kubectl の discovery キャッシュが古いままになっているだけなので、対応は不要です |
 
 ## アンインストール

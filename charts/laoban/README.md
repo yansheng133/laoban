@@ -4,14 +4,14 @@ laoban 後端服務的 Helm chart。開發初期，尚未發行。
 
 > 從 Helm repo（`https://yansheng133.github.io/laoban`）安裝的步驟見 [docs/quickstart.md](../../docs/quickstart.md)；發布的 `laoban` chart 已填好該版本的 `image.digest`。下面是 chart 的完整說明，範例以 Sam 的環境為準。
 
-試吃版（M0，見 `docs/m0-design.md`）的部署位置是**下游叢集 `rke2`**（Rancher 叢集 ID `c-m-26kbxk5f`）的 namespace `laoban-system`，不是 Rancher local 叢集。M0 的後端以 aggregated API 提供服務（見下面的「Aggregated API」），自己的權限只有兩項：讀 `kube-system` 的 `extension-apiserver-authentication`，以及在 `laoban-system` 讀寫意見收斂的 `Round` 資源（v0.1.15 起，讓一輪在重啟後還在）。產生的應用由 Fleet 部署（`deploy/m0/`），後端不寫入其他任何東西。身分模擬（impersonation）、第一階段的 CRD、稽核紀錄暫存卷都留到第一階段，chart 裡保留對應的範本，預設關閉。
+試吃版（M0，見 `docs/m0-design.md`）的部署位置是**下游叢集 `rke2`**（Rancher 叢集 ID `c-m-26kbxk5f`）的 namespace `laoban-system`，不是 Rancher local 叢集。M0 的後端以 aggregated API 提供服務（見下面的「Aggregated API」），自己的權限只有兩項：讀 `kube-system` 的 `extension-apiserver-authentication`，以及在 `laoban-system` 讀寫自己的狀態資源：意見收斂的 `Round`（v0.1.15 起）、等待確認的計畫 `Plan` 與每月 token 用量 `TokenUsage`（v0.1.19 起），讓它們在重啟後還在。產生的應用由 Fleet 部署（`deploy/m0/`），後端不寫入其他任何東西。身分模擬（impersonation）、第一階段的 CRD、稽核紀錄暫存卷都留到第一階段，chart 裡保留對應的範本，預設關閉。
 
 ## 三個 chart 的分工
 
 | Chart | 位置 | 內容 | 誰產生 |
 |---|---|---|---|
 | `laoban` | `charts/laoban` | 後端 Deployment、Service、ServiceAccount；第一階段才開的 RBAC（`impersonation.enabled`）與 PVC（`persistence.enabled`） | 手寫（本目錄） |
-| `laoban-crd` | `charts/laoban-crd` | CRD：`Round`（M0 的意見收斂）；`ProjectPolicy`、`ChangeRequest`、`ArchitectureVersion`（第一階段） | 手寫 |
+| `laoban-crd` | `charts/laoban-crd` | CRD：`Round`、`Plan`、`TokenUsage`（M0）；`ProjectPolicy`、`ChangeRequest`、`ArchitectureVersion`（第一階段） | 手寫 |
 | `laoban-ext` | 不在 repo 內 | UI extension 本體 | **由 extension 建置工具產生，不手寫** |
 
 UI extension 的 Helm chart 由 `yarn publish-pkgs`（或官方可重用的 GitHub workflow `build-extension-charts.yml`）依 `pkg/<extension>/package.json` 產生，產出 `assets/`、`charts/`、`extensions/` 與 `index.yaml`［1］。所以 `laoban-ext` 不在這裡手寫，相容性 annotation 寫在 extension 的 `package.json` 的 `rancher.annotations`：
@@ -33,7 +33,7 @@ kubectl --context rke2 label namespace laoban-system pod-security.kubernetes.io/
 kubectl --context rke2 -n laoban-system create secret generic laoban-anthropic --from-file=api-key=./anthropic-api-key
 kubectl --context rke2 -n laoban-system create secret generic laoban-github --from-file=token=./github-token
 
-# 2. CRD（意見收斂的 Round；升級時也要先升級它）
+# 2. CRD（Round、Plan、TokenUsage；升級時也要先升級它）
 helm --kube-context rke2 install laoban-crd charts/laoban-crd -n laoban-system
 
 # 3. 後端（digest 從 image workflow 的 job summary 複製，見 build/README.md）
@@ -42,7 +42,7 @@ helm --kube-context rke2 install laoban charts/laoban -n laoban-system \
   --set image.digest=sha256:<manifest list digest>
 ```
 
-- **先裝或先升級 `laoban-crd`**（v0.1.15 起）：意見收斂存在 `Round` 資源裡。沒裝 CRD 時後端照常啟動、其他功能都能用，只有意見收斂顯示「請管理者先升級 laoban-crd chart」，裝好後 10 秒內恢復。`crds.required` 預設仍是 `false`，所以 render 不會因為沒裝 CRD 而失敗；`Chart.yaml` 也還沒有 `catalog.cattle.io/auto-install: laoban-crd=match`（兩個 chart 的版本號目前一起升，第一階段再加回這個 annotation）。
+- **先裝或先升級 `laoban-crd`**（v0.1.15 起）：意見收斂存在 `Round` 資源裡。沒裝 CRD 時後端照常啟動、其他功能都能用，只有意見收斂顯示「請管理者先升級 laoban-crd chart」，裝好後 10 秒內恢復。v0.1.19 起計畫與 token 用量也存在 CRD 裡；CRD 比後端舊時，這兩項照舊只存在記憶體（後端紀錄會寫一行提醒），升級 CRD 後 30 秒內開始保存。`Plan` 請用 `kubectl get lbplan` 或完整名稱 `plans.laoban.yansheng133.github.io`：RKE2 的 system-upgrade-controller 也有 `plans`。`crds.required` 預設仍是 `false`，所以 render 不會因為沒裝 CRD 而失敗；`Chart.yaml` 也還沒有 `catalog.cattle.io/auto-install: laoban-crd=match`（兩個 chart 的版本號目前一起升，第一階段再加回這個 annotation）。
 - GHCR 套件若還是私有，要先依 `build/README.md` 改成公開，或在 `laoban-system` 建 `kubernetes.io/dockerconfigjson` Secret 並設 `imagePullSecrets`。
 - GitHub token：fine-grained personal access token，Repository access 只選 `laoban-apps` 那一個 repo，Repository permissions 只給 **Contents: Read and write**（Metadata: Read-only 會自動帶上）。後端用 Git Data API 建 blob、tree、commit 並更新 ref，這些都屬於 Contents 權限。
 
@@ -189,11 +189,13 @@ M0 預設 `persistence.enabled: false`：M0 不外送稽核紀錄（只寫後端
 
 ### 為什麼獨立成一個 chart
 
-Rancher charts 的慣例：CRD chart 是「唯一目的就是在主 chart 之前把 CRD 裝進叢集」的 chart，用來處理 CRD 的自動升級，以及讓使用者能用另一個 release 乾淨地移除 CRD［12］。Helm 文件明寫目前不支援用 Helm 升級或刪除 `crds/` 目錄裡的 CRD，並把「CRD 與使用它的資源分成兩個 chart」列為做法之一［16］。laoban 的 CRD 會隨版本演進，所以獨立成 `laoban-crd`，CRD 放在 `templates/` 讓 `helm upgrade` 能更新。M0 只用 `Round`（意見收斂，v0.1.15 起），其他三個是第一階段的：主 chart 預設 `crds.required: false`，`Chart.yaml` 也暫時拿掉 `catalog.cattle.io/auto-install: laoban-crd=match`。第一階段用到 CRD 時，把這個 annotation 加回來讓 Rancher 先裝相同版本的 CRD chart［4］，並設 `crds.required: true`，render 時就會檢查 API 是否存在。
+Rancher charts 的慣例：CRD chart 是「唯一目的就是在主 chart 之前把 CRD 裝進叢集」的 chart，用來處理 CRD 的自動升級，以及讓使用者能用另一個 release 乾淨地移除 CRD［12］。Helm 文件明寫目前不支援用 Helm 升級或刪除 `crds/` 目錄裡的 CRD，並把「CRD 與使用它的資源分成兩個 chart」列為做法之一［16］。laoban 的 CRD 會隨版本演進，所以獨立成 `laoban-crd`，CRD 放在 `templates/` 讓 `helm upgrade` 能更新。M0 用 `Round`（意見收斂，v0.1.15 起）、`Plan` 與 `TokenUsage`（v0.1.19 起），其他三個是第一階段的：主 chart 預設 `crds.required: false`，`Chart.yaml` 也暫時拿掉 `catalog.cattle.io/auto-install: laoban-crd=match`。第一階段用到 CRD 時，把這個 annotation 加回來讓 Rancher 先裝相同版本的 CRD chart［4］，並設 `crds.required: true`，render 時就會檢查 API 是否存在。
 
 CRD 預設加 `helm.sh/resource-policy: keep`（`keepOnUninstall: true`）：刪掉 CRD 會連同所有 ProjectPolicy、ChangeRequest、ArchitectureVersion 與進行中的意見收斂一起刪除。
 
 `Round` 只由後端寫入：`spec.round` 是後端自己的資料（`crates/laoban-m0/src/rounds.rs`），以 `spec.schema` 標示格式版本，schema 只檢查外層欄位（`app`、`state`、`deadline`）。結束的一輪歸檔到應用 repo 的 `laoban-rounds` 分支後，在下一輪開始時刪除。
+
+`Plan` 與 `TokenUsage` 也只由後端寫入（`crates/laoban-m0/src/service/saved.rs`）。`Plan` 是等待確認、不屬於意見收斂的計畫（`plan-<計畫代號>`），只有遮蔽過的使用者文字，修改既有應用時另含當時讀到的程式；開始套用時就刪除（套用失敗再寫回），所以重啟中斷的套用不會重做第二次，1 小時後過期刪除。意見收斂的計畫不寫入，由那一輪重新產生。`TokenUsage` 每個 UTC 月份一筆（`tokens-YYYY-MM`），記錄已結算的 token 數；舊月份保留。
 
 ### API group：`laoban.yansheng133.github.io`
 

@@ -1,0 +1,76 @@
+# Plan: a plan made by the AI that waits to be confirmed (outside a round of
+# 意見收斂), written only by the laoban backend so a restart does not lose it
+# (v0.1.19). spec.plan is the backend's own data (see
+# crates/laoban-m0/src/service/saved.rs); it holds only masked user text and,
+# for a change to an existing app, that app's files as read when the plan was
+# made. Deleted when the plan is applied or after an hour.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: plans.laoban.yansheng133.github.io
+  {{- include "laoban-crd.metadata" . | nindent 2 }}
+spec:
+  group: laoban.yansheng133.github.io
+  scope: Namespaced
+  names:
+    kind: Plan
+    listKind: PlanList
+    plural: plans
+    singular: plan
+    shortNames:
+      - lbplan
+    categories:
+      - laoban
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      additionalPrinterColumns:
+        - name: App
+          type: string
+          jsonPath: .spec.app
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          description: A plan waiting to be confirmed, kept by the laoban backend across restarts.
+          type: object
+          required:
+            - spec
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              required:
+                - schema
+                - id
+                - app
+                - created
+                - plan
+              properties:
+                schema:
+                  description: Shape of spec.plan. The backend reads the shapes it knows.
+                  type: integer
+                  minimum: 1
+                id:
+                  description: The plan ID shown to the user.
+                  type: string
+                  maxLength: 64
+                app:
+                  description: The app (directory under apps/ in the apps repository).
+                  type: string
+                  pattern: '^[a-z][a-z0-9-]{1,30}$'
+                created:
+                  description: Unix seconds; the plan expires an hour later.
+                  type: integer
+                  minimum: 0
+                plan:
+                  description: The plan itself. Written by the backend only.
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true

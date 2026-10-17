@@ -16,7 +16,7 @@ Follow this guide and in about 30 minutes you can build your first app from one 
 
 laoban calls the AI every time it generates a plan or changes code, and the cost is paid by your Anthropic account. The backend has a monthly token cap (default 2,000,000); when it is used up, laoban stops calling the AI.
 
-> **Note**: For now this usage is kept only in the backend's memory, and **it starts again from 0 when the backend restarts (upgrade, Pod re-creation, node reboot)**. So it cannot be relied on to limit spending: **be sure to set a spend limit in the [Anthropic Console](https://console.anthropic.com/)**.
+> **Note**: Usage is counted per UTC month and stored in the cluster in `TokenUsage` resources (`kubectl --context downstream -n laoban-system get tokenusages`), so a backend restart does not reset it. It is laoban's own count, not Anthropic's bill: **be sure to also set a spend limit in the [Anthropic Console](https://console.anthropic.com/)**.
 
 The commands below use `--context downstream` for the cluster that runs laoban and `--context local` for the Rancher local cluster. Replace them with your own kubeconfig contexts.
 
@@ -30,7 +30,7 @@ The steps below follow the Rancher 2.15 screens.
    - Target: **Helm Repository** (HTTP(S) URL pointing to a Helm chart repository index; this is the default)
    - Index URL: `https://yansheng133.github.io/laoban`
    - Click **Create**.
-3. After saving, the screen stays on Apps → Repositories in the local cluster. Go back to **Extensions** from the top-left menu → **Available** tab, find **laoban** → **Install** → confirm the version (the latest, for example `0.1.18`) → **Install**.
+3. After saving, the screen stays on Apps → Repositories in the local cluster. Go back to **Extensions** from the top-left menu → **Available** tab, find **laoban** → **Install** → confirm the version (the latest, for example `0.1.19`) → **Install**.
 4. After installation, reload the page. **laoban** appears under **Global Apps** in the top-left menu.
 
 If the Index URL does not open, use `https://raw.githubusercontent.com/yansheng133/laoban/gh-pages` instead; the content is the same.
@@ -51,7 +51,7 @@ If the Index URL does not open, use `https://raw.githubusercontent.com/yansheng1
 # Backend
 kubectl --context downstream create namespace laoban-system
 # Generated apps (enforced with Pod Security restricted)
-kubectl --context downstream apply -f https://raw.githubusercontent.com/yansheng133/laoban/v0.1.18/deploy/m0/namespace-laoban-dev.yaml
+kubectl --context downstream apply -f https://raw.githubusercontent.com/yansheng133/laoban/v0.1.19/deploy/m0/namespace-laoban-dev.yaml
 
 # Read the key and token from files: they stay out of values and out of shell history
 kubectl --context downstream -n laoban-system create secret generic laoban-anthropic --from-file=api-key=./anthropic-api-key
@@ -96,8 +96,8 @@ Install (CRDs first, then the backend):
 ```bash
 helm repo add laoban https://yansheng133.github.io/laoban
 helm repo update
-helm --kube-context downstream install laoban-crd laoban/laoban-crd -n laoban-system --version 0.1.18
-helm --kube-context downstream install laoban laoban/laoban -n laoban-system -f values-laoban.yaml --version 0.1.18
+helm --kube-context downstream install laoban-crd laoban/laoban-crd -n laoban-system --version 0.1.19
+helm --kube-context downstream install laoban laoban/laoban -n laoban-system -f values-laoban.yaml --version 0.1.19
 ```
 
 The published chart already contains the image digest for this version (`ghcr.io/yansheng133/laoban-server`), so you do not need to specify it.
@@ -123,8 +123,8 @@ kubectl --context local -n fleet-default get clusters.fleet.cattle.io
 Download the two templates, replace `<owner>` with your GitHub account and `clusterName: rke2` with the name you looked up, then apply them:
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/yansheng133/laoban/v0.1.18/deploy/m0/fleet-gitrepo.yaml
-curl -fsSLO https://raw.githubusercontent.com/yansheng133/laoban/v0.1.18/deploy/m0/fleet-gitreporestriction.yaml
+curl -fsSLO https://raw.githubusercontent.com/yansheng133/laoban/v0.1.19/deploy/m0/fleet-gitrepo.yaml
+curl -fsSLO https://raw.githubusercontent.com/yansheng133/laoban/v0.1.19/deploy/m0/fleet-gitreporestriction.yaml
 # After editing fleet-gitrepo.yaml:
 kubectl --context local apply -f fleet-gitreporestriction.yaml
 kubectl --context local apply -f fleet-gitrepo.yaml
@@ -150,7 +150,7 @@ Switch the UI language in the user menu at the top right of Rancher → Preferen
 - If you manage access with Rancher Projects, apply the Project roles in the Rancher **local** cluster (use a kubeconfig that can manage the local cluster, for example `/etc/rancher/rke2/rke2.yaml` on the Rancher host; or paste this file into the local cluster → **Import YAML** in the Rancher UI), then assign members **laoban user** or **laoban viewer**:
 
 ```bash
-kubectl --context local apply -f https://raw.githubusercontent.com/yansheng133/laoban/v0.1.18/deploy/rancher/roletemplate.yaml
+kubectl --context local apply -f https://raw.githubusercontent.com/yansheng133/laoban/v0.1.19/deploy/rancher/roletemplate.yaml
 ```
 
   See [deploy/rancher/README.md](../deploy/rancher/README.md) for details.
@@ -165,6 +165,8 @@ kubectl --context local apply -f https://raw.githubusercontent.com/yansheng133/l
 | Writing to GitHub fails | Whether the token has only Contents: Read and write on that one repo, and whether the repo has a `main` branch; backend log: `kubectl --context downstream -n laoban-system logs deploy/laoban` |
 | Deployment never finishes | Status of `laoban-apps` in Rancher → Continuous Delivery → Git Repos; whether the Pod is blocked by Pod Security |
 | Rounds of opinions show a message asking an administrator to upgrade the laoban-crd chart first | `laoban-crd` is not installed, or its version is older than the backend |
+| After a backend restart the token usage starts from 0, or plans not yet confirmed are gone | `laoban-crd` is older than 0.1.19 (the backend log says "not installed"). After upgrading `laoban-crd`, saving starts within 30 seconds |
+| You want to reset the token usage in the middle of a month | Delete that month's record and restart the backend: `kubectl --context downstream -n laoban-system delete tokenusage tokens-YYYY-MM` (UTC month), then `kubectl --context downstream -n laoban-system rollout restart deploy/laoban` |
 | After an upgrade, the first `kubectl get rounds` reports an error and the second one works | kubectl's discovery cache is still stale; no action needed |
 
 ## Uninstall

@@ -87,14 +87,14 @@ laoban 後端（aggregated API）── 遮蔽 ──► AI（Anthropic API 或�
 GitHub repo ──► Fleet ──► 目標 namespace 裡的應用
 ```
 
-後端只寫入自己在 `laoban-system` 的狀態資源（意見收斂的 `Round`，讓一輪在後端重啟或升級後還在），應用的部署全部由 Fleet 負責。
+後端只寫入自己在 `laoban-system` 的狀態資源（意見收斂的 `Round`、等待確認的計畫 `Plan`、每月 token 用量 `TokenUsage`，讓它們在後端重啟或升級後還在），應用的部署全部由 Fleet 負責。
 
 ## 限制
 
 - 一個 Rancher 只用一套後端：頁面在使用者看得到的叢集裡找第一個裝了 laoban 的。
 - 產生的應用固定是網頁加 API 兩個元件（Python），部署在一個 namespace（預設 `laoban-dev`），以 Pod Security restricted 執行。
-- 後端只有一個副本；計畫存在記憶體，意見收斂存在 `Round` 資源裡。
-- AI 的費用由你的 Anthropic 帳號支付。後端有每月 token 上限（預設 2,000,000），但用量只存在記憶體裡，後端重啟就從 0 重新計算；請一定要在 Anthropic Console 設花費上限。
+- 後端只有一個副本；意見收斂、等待確認的計畫與每月 token 用量存在 `laoban-system` 的 `Round`、`Plan`、`TokenUsage` 資源裡，後端重啟不會遺失。
+- AI 的費用由你的 Anthropic 帳號支付。後端有每月 token 上限（預設 2,000,000），但那只是 laoban 自己的計數；請一定要在 Anthropic Console 設花費上限。
 - 後端訊息預設是英文，chart 的 `config.language: zh-Hant` 改成繁體中文；頁面依 Rancher 的語言設定顯示。
 
 ## 安裝（細節）
@@ -119,8 +119,8 @@ GitHub repo ──► Fleet ──► 目標 namespace 裡的應用
 | `crates/laoban-audit` | 稽核紀錄：遮蔽後輸出 RFC 5424 syslog 訊息、RFC 5425 封框，以及依大小輪替的本機檔案 |
 | `crates/laoban-policy` | 部署審查政策引擎（第一階段用）：決定一次變更能不能直接部署、要不要人工審查、由誰審 |
 | `crates/laoban-mockhttp` | 測試用的本機 HTTP 模擬伺服器 |
-| `charts/laoban` | 後端的 Helm chart：Deployment、APIService、使用者的 RBAC 規則、後端存 Round 的 Role |
-| `charts/laoban-crd` | laoban 的 CRD：`Round`（意見收斂，試吃版就要裝），以及第一階段用的 ProjectPolicy、ChangeRequest、ArchitectureVersion |
+| `charts/laoban` | 後端的 Helm chart：Deployment、APIService、使用者的 RBAC 規則、後端存 Round、Plan、TokenUsage 的 Role |
+| `charts/laoban-crd` | laoban 的 CRD：`Round`、`Plan`、`TokenUsage`（試吃版就要裝），以及第一階段用的 ProjectPolicy、ChangeRequest、ArchitectureVersion |
 | `deploy/m0` | 試吃版要事先建立的 namespace 與 Fleet 物件 |
 | `web/viewer-prototype` | 3D 架構視圖的原型，extension 的 3D 圖由它移植 |
 | `Containerfile`、`build/` | 容器映像檔：SUSE BCI 多階段建置、x86-64／ARM64 原生建置、推送 GHCR、cosign 簽章與 SBOM |

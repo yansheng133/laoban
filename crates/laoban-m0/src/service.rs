@@ -3,7 +3,7 @@
 //! JSON bodies and maps [`M0Error`] to status codes.
 
 use std::collections::HashMap;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -37,7 +37,10 @@ use crate::trf;
 use crate::{time, InvalidOutput};
 
 mod persist;
+mod saved;
+
 pub use persist::{valid_round_id, ARCHIVE_BRANCH, ARCHIVE_DIR, MAX_PAST_ROUNDS};
+pub use saved::StateUsage;
 
 /// Fleet objects created once by hand (design: Fleet).
 pub const FLEET_WORKSPACE: &str = "fleet-default";
@@ -241,6 +244,10 @@ pub enum M0Error {
     PlanNotFound,
     #[error("plan already applied")]
     AlreadyApplied,
+    /// The stored copy of the plan could not be removed before applying,
+    /// so applying could be repeated after a restart; nothing was changed.
+    #[error("the stored plan could not be released for applying")]
+    PlanStoreFailed,
     #[error("token budget exceeded")]
     BudgetExceeded,
     #[error("provider spend limit reached")]
@@ -313,6 +320,7 @@ impl M0Error {
             M0Error::BadRequest(_) => "bad_request",
             M0Error::PlanNotFound => "plan_not_found",
             M0Error::AlreadyApplied => "already_applied",
+            M0Error::PlanStoreFailed => "plan_store_failed",
             M0Error::BudgetExceeded => "budget_exceeded",
             M0Error::SpendLimit => "spend_limit",
             M0Error::AiInvalidOutput(_) => "ai_invalid_output",
@@ -364,6 +372,7 @@ impl M0Error {
             M0Error::BadRequest(_) => 400,
             M0Error::PlanNotFound => 404,
             M0Error::AlreadyApplied => 409,
+            M0Error::PlanStoreFailed => 503,
             M0Error::BudgetExceeded => 429,
             M0Error::SpendLimit => 402,
             M0Error::AiInvalidOutput(_) | M0Error::Github(_) => 502,
@@ -398,8 +407,13 @@ impl M0Error {
         match self {
             M0Error::BadRequest(m) => (*m).to_string(),
             M0Error::PlanNotFound => tr(
-                "This plan was not found; it may be over 1 hour old or the backend restarted. Please generate the plan again.",
-                "找不到這個計畫，可能已超過 1 小時或後端已重新啟動，請重新產生計畫。",
+                "This plan was not found; it may be over 1 hour old. Please generate the plan again.",
+                "找不到這個計畫，可能已超過 1 小時，請重新產生計畫。",
+            )
+            .into(),
+            M0Error::PlanStoreFailed => tr(
+                "The plan could not be prepared for deploying; nothing was changed. Please try again in a moment.",
+                "計畫暫時無法開始部署，沒有任何變更，請稍後再試。",
             )
             .into(),
             M0Error::AlreadyApplied => tr(
@@ -634,6 +648,16 @@ pub struct M0Service {
     /// head the previous one left, so two apps saving at once do not make
     /// one of them a version conflict. Taken after the app's lock.
     commit_lock: Mutex<()>,
+    /// The stored plans were read back (see `saved`).
+    plans_restored: AtomicBool,
+    /// Unix seconds of the last sweep of expired stored plans.
+    plans_swept_at: AtomicU64,
+    /// The Plan resource is missing (logged once).
+    plans_not_installed: AtomicBool,
+    /// Reading the stored plans failed (logged once).
+    plans_read_failed: AtomicBool,
+    /// Plan ID → (made, unix seconds; a copy is in the state store).
+    plan_records: Mutex<HashMap<String, (u64, bool)>>,
 }
 
 impl M0Service {
@@ -680,13 +704,22 @@ impl M0Service {
             jobs: Mutex::new(HashMap::new()),
             app_locks: Mutex::new(HashMap::new()),
             commit_lock: Mutex::new(()),
+            plans_restored: AtomicBool::new(false),
+            plans_swept_at: AtomicU64::new(0),
+            plans_not_installed: AtomicBool::new(false),
+            plans_read_failed: AtomicBool::new(false),
+            plan_records: Mutex::new(HashMap::new()),
         })
     }
 
     /// Keep rounds in `store` instead of memory. Call before serving; the
     /// stored rounds are read by [`M0Service::restore_rounds`] (the round
     /// timer does it first).
+    /// Plans waiting for confirmation and the month's token usage are kept
+    /// there too (v0.1.19).
     pub fn use_state_store(&mut self, store: Arc<dyn StateStore>) {
+        self.budget
+            .use_store(Arc::new(StateUsage::new(Arc::clone(&store))));
         self.state = store;
         self.rounds_ready
             .store(false, std::sync::atomic::Ordering::SeqCst);
@@ -1052,21 +1085,22 @@ impl M0Service {
                 "outputTokens": completion.output_tokens,
             },
         });
-        store.insert(
-            StoredPlan {
-                id,
-                app,
-                plan,
-                masked_prompt: masked.text,
-                model: completion.model,
-                base,
-                label: round
-                    .as_ref()
-                    .map(|r| self.orchestrator.mask_for_ai(&r.label).text),
-                round_start: round.and_then(|r| r.start),
-            },
-            Instant::now(),
-        );
+        let stored = StoredPlan {
+            id,
+            app,
+            plan,
+            masked_prompt: masked.text,
+            model: completion.model,
+            base,
+            label: round
+                .as_ref()
+                .map(|r| self.orchestrator.mask_for_ai(&r.label).text),
+            round_start: round.and_then(|r| r.start),
+        };
+        store.insert(stored.clone(), Instant::now());
+        drop(store);
+        // Kept across a restart (a round's plan is made again instead).
+        self.save_plan(&stored);
         Ok(response)
     }
 
@@ -1188,12 +1222,29 @@ impl M0Service {
                 StoreError::NotFound => M0Error::PlanNotFound,
                 StoreError::AlreadyApplied => M0Error::AlreadyApplied,
             })?;
+        // Gone from storage while it is applied: after a restart in the
+        // middle it cannot be applied a second time. If its stored copy
+        // cannot be removed, do not apply.
+        if !from_round && !self.forget_plan(&stored) {
+            self.lock_store().finish_apply(id, false);
+            return Err(M0Error::PlanStoreFailed);
+        }
         let result = if stored.base.is_some() && !from_round {
             self.check_no_round(&stored.app)
                 .and_then(|()| self.apply_inner(&stored, user))
         } else {
             self.apply_inner(&stored, user)
         };
+        if !from_round {
+            if result.is_ok() {
+                self.plan_applied(&stored);
+            } else {
+                // It can be confirmed again, so keep it again. Written while
+                // the plan is still marked as being applied, so a second
+                // confirm cannot start before the copy exists.
+                self.save_plan(&stored);
+            }
+        }
         self.lock_store().finish_apply(id, result.is_ok());
         result
     }
@@ -1911,6 +1962,7 @@ impl M0Service {
     pub fn start_round_timer(self: &Arc<Self>) {
         self.attach();
         let _ = self.restore_rounds();
+        self.plans_tick(persist::now_unix());
         let service = Arc::downgrade(self);
         let _ = std::thread::Builder::new()
             .name("laoban-rounds".into())
@@ -1921,6 +1973,7 @@ impl M0Service {
                         let now = persist::now_unix();
                         s.tick(now);
                         s.archive_tick(now);
+                        s.plans_tick(now);
                     }
                     None => return,
                 }
@@ -2538,6 +2591,7 @@ mod tests {
         let cases: Vec<(M0Error, &str, u16)> = vec![
             (M0Error::BadRequest("x"), "bad_request", 400),
             (M0Error::PlanNotFound, "plan_not_found", 404),
+            (M0Error::PlanStoreFailed, "plan_store_failed", 503),
             (M0Error::AlreadyApplied, "already_applied", 409),
             (M0Error::BudgetExceeded, "budget_exceeded", 429),
             (M0Error::SpendLimit, "spend_limit", 402),

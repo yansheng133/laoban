@@ -27,7 +27,8 @@ pub mod retry;
 
 pub use audit::{AiAuditEvent, AiAuditSink, MemoryAuditSink};
 pub use budget::{
-    estimate_tokens, BudgetError, FixedPeriod, PeriodClock, Reservation, TokenBudget, UtcMonthClock,
+    estimate_tokens, period_label, BudgetError, FixedPeriod, PeriodClock, Reservation, TokenBudget,
+    UsageStore, UtcMonthClock,
 };
 pub use error::{classify, ApiErrorInfo, ProviderError, SpendLimitKind};
 pub use model::{resolve_model, ModelError, ModelSelection};

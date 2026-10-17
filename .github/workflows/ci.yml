@@ -130,6 +130,10 @@ jobs:
             --kube-version "${KUBE_VERSION}" > rendered/laoban-m0-local.yaml
           helm template laoban-crd charts/laoban-crd -n laoban-system \
             --kube-version "${KUBE_VERSION}" > rendered/laoban-crd.yaml
+          for crd in rounds plans tokenusages; do
+            grep -q "name: ${crd}.laoban.yansheng133.github.io" rendered/laoban-crd.yaml \
+              || { echo "::error::laoban-crd must contain the ${crd} CRD"; exit 1; }
+          done
       - name: Rendering fails without required values
         run: |
           check() {
@@ -189,13 +193,13 @@ jobs:
             fail "M0 render must not contain ClusterRoleBindings or a PVC"
           fi
           if grep -q 'impersonate' "$f"; then fail "M0 render must not grant impersonate"; fi
-          # One Role: Round objects in laoban-system, nothing else.
+          # One Role: Round, Plan and TokenUsage objects in laoban-system, nothing else.
           [ "$(grep -c '^kind: Role$' "$f")" -eq 1 ] || fail "M0: expected exactly one Role (rounds)"
           role=$(awk '/^kind: Role$/{c=1} /^---/{c=0} c' "$f")
           grep -q 'namespace: laoban-system' <<< "$role" || fail "M0: the Role must be in laoban-system"
           [ "$(grep -c 'apiGroups:' <<< "$role")" -eq 1 ] || fail "M0: the Role must have one rule"
           grep -q 'apiGroups: \["laoban.yansheng133.github.io"\]' <<< "$role" || fail "M0: the Role must cover laoban's CRD group only"
-          grep -q 'resources: \["rounds"\]' <<< "$role" || fail "M0: the Role must cover rounds only"
+          grep -q 'resources: \["rounds", "plans", "tokenusages"\]' <<< "$role" || fail "M0: the Role must cover rounds, plans and tokenusages only"
           if grep -qE '"(\*|patch|watch|deletecollection|escalate|bind)"' <<< "$role"; then fail "M0: unexpected verbs in the Role"; fi
           [ "$(grep -c '^kind: RoleBinding$' "$f")" -eq 2 ] || fail "M0: expected exactly two RoleBindings"
           awk '/^kind: RoleBinding$/{c=1} /^---/{c=0} c' "$f" | grep -q 'namespace: kube-system' \

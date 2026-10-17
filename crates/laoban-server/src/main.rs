@@ -82,7 +82,10 @@ fn api_from_env() -> (ApiState, String) {
             let store_status = if std::env::var("KUBERNETES_SERVICE_HOST").is_ok() {
                 match laoban_server::kube::KubeStore::in_cluster() {
                     Ok(store) => {
-                        let line = format!("rounds stored in namespace {}", store.namespace());
+                        let line = format!(
+                            "rounds, plans and token usage stored in namespace {}",
+                            store.namespace()
+                        );
                         service.use_state_store(Arc::new(store));
                         line
                     }
