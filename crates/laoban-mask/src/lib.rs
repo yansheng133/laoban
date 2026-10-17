@@ -50,9 +50,8 @@ pub enum Kind {
     FinancialAccount,
     /// A login account name supplied by the caller.
     LoginAccount,
-    /// A credential: an API key or access token with a known prefix, a
-    /// private key block, or the value after `password=`, `token:` and the
-    /// like.
+    /// A credential: an API key or access token in a known format, a JWT or
+    /// bearer token, or a private key block.
     Credential,
     /// An administrator-defined rule.
     Custom(String),
@@ -132,7 +131,7 @@ pub struct MaskerConfig {
     pub mask_national_ids: bool,
     pub mask_financial_accounts: bool,
     pub mask_login_accounts_for_ai: bool,
-    /// API keys, tokens, private keys and passwords (both destinations).
+    /// API keys, tokens and private keys in known formats (both destinations).
     pub mask_credentials: bool,
     /// Login account names known to Rancher. Matched case-insensitively.
     pub login_accounts: Vec<String>,

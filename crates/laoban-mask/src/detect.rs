@@ -25,7 +25,10 @@ static ACCOUNT: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// Credentials recognisable on their own: provider key and token formats,
-/// JSON Web Tokens, bearer tokens and PEM private key blocks.
+/// JSON Web Tokens, bearer tokens and PEM private key blocks. These are safe
+/// to apply to code too. Values after words like `password` are not masked:
+/// the same words appear in ordinary requirements and in code (report on
+/// v0.1.20), and masking them corrupts what the AI is asked to change.
 static CREDENTIAL: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(concat!(
         r"(?s)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----",
@@ -42,17 +45,8 @@ static CREDENTIAL: LazyLock<Regex> = LazyLock::new(|| {
     .expect("valid regex")
 });
 
-/// A secret-ish key followed by `:`, `=` or `：` and a value. Only the value
-/// is masked.
-static SECRET_VALUE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r#"(?i)(?:\b(?:password|passwd|pwd|passphrase|secret|client[_-]?secret|token|access[_-]?token|api[_-]?key|access[_-]?key|secret[_-]?key|private[_-]?key)|密碼|密码|口令|パスワード)["']?\s*[:=：]\s*["']?([^\s"',;}，。；、）」』]{4,})"#,
-    )
-    .expect("valid regex")
-});
-
 pub(crate) fn credentials(text: &str) -> Vec<Finding> {
-    let mut out: Vec<Finding> = CREDENTIAL
+    let out: Vec<Finding> = CREDENTIAL
         .find_iter(text)
         .map(|m| Finding {
             kind: Kind::Credential,
@@ -61,16 +55,6 @@ pub(crate) fn credentials(text: &str) -> Vec<Finding> {
             checksum_valid: None,
         })
         .collect();
-    for caps in SECRET_VALUE.captures_iter(text) {
-        if let Some(g) = caps.get(1) {
-            out.push(Finding {
-                kind: Kind::Credential,
-                start: g.start(),
-                end: g.end(),
-                checksum_valid: None,
-            });
-        }
-    }
     out
 }
 

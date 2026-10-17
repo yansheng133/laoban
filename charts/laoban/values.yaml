@@ -138,7 +138,7 @@ config:
   tokenCap: 2000000
   # Namespace the generated apps are deployed to by Fleet (LAOBAN_TARGET_NAMESPACE).
   targetNamespace: laoban-dev
-  # Rancher cluster ID of the cluster laoban runs in (c-m-xxxxxxxx, or "local"),
+  # Rancher cluster ID of the downstream cluster laoban runs in (c-m-xxxxxxxx),
   # used to build the "Open app" URLs (LAOBAN_CLUSTER_ID). Required: in the
   # Rancher UI it is the part after /c/ in the address of that cluster.
   clusterId: ""

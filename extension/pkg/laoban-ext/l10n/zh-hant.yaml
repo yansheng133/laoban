@@ -437,6 +437,7 @@ laoban:
       planned: 計畫已產生。確認內容後按「確認並部署」。
       applying: "AI 正在產生程式並寫進 GitHub，通常需要 30～60 秒（已 {seconds} 秒）…"
       waitingBundle: "已寫進 GitHub，等待 Fleet 讀取這次變更（已 {seconds} 秒）…"
+      waitingPods: "已寫入。等待新版本的 Pod 啟動（已等 {seconds} 秒）…"
       deploying: "Fleet 部署中：{ready} / {desired} 就緒…"
       rollingOut: "Fleet 已套用，等新版本的 Pod 啟動（已 {seconds} 秒）…"
       bundleError: "Fleet 回報部署錯誤（{ready} / {desired} 就緒），仍持續確認中…"

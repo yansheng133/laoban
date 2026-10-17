@@ -287,13 +287,9 @@ fn credentials_are_masked_for_both_destinations() {
     let kind = "OPENSSH PRIVATE KEY";
     let pem = format!("-----BEGIN {kind}-----\nAAAAexample\n-----END {kind}-----");
     let bearer = "q".repeat(32);
-    let pw = ["Sup3r", "S3cret!"].concat();
-    let pw2 = ["hunter", "22"].concat();
-    let key = ["k-", "1234567"].concat();
     let text = format!(
         "key {anthropic}, gh {github}, pat {pat}, aws {aws}, jwt {jwt}\n{pem}\n\
-         Authorization: Bearer {bearer}\n\
-         db password={pw} and 資料庫密碼：{pw2}，api_key: \"{key}\""
+         Authorization: Bearer {bearer}"
     );
     for dest in [Destination::Ai, Destination::Audit] {
         let out = masker().mask(&text, dest);
@@ -305,29 +301,19 @@ fn credentials_are_masked_for_both_destinations() {
             jwt,
             "AAAAexample",
             bearer.as_str(),
-            pw.as_str(),
-            pw2.as_str(),
-            key.as_str(),
         ] {
             assert!(!out.text.contains(secret), "{secret} leaked: {}", out.text);
         }
         assert!(out.findings.iter().all(|f| f.kind == Kind::Credential));
-        assert!(
-            out.text.contains("db password=[MASKED:SECRET]"),
-            "{}",
-            out.text
-        );
-        assert!(
-            out.text.contains("資料庫密碼：[MASKED:SECRET]"),
-            "{}",
-            out.text
-        );
     }
 }
 
 #[test]
 fn ordinary_words_are_not_credentials() {
-    let text = "做一個登入頁，要有密碼欄位與忘記密碼連結；token 用量顯示在右上角。";
+    let text = "做一個登入頁，要有密碼欄位與忘記密碼連結；token 用量顯示在右上角。\n\
+                密碼：至少八碼並包含大小寫字母。パスワード：8文字以上。max token: 4000\n\
+                def login(password: str):\n    token = request.headers.get(\"Authorization\")\n\
+                const token = localStorage.getItem('t'); headers: { Authorization: 'Bearer ' + token }";
     let out = masker().mask(text, Destination::Ai);
     assert_eq!(out.text, text);
     assert!(out.findings.is_empty());
@@ -340,6 +326,6 @@ fn credential_masking_can_be_turned_off() {
         ..MaskerConfig::default()
     })
     .unwrap();
-    let text = ["password=", "plain-value"].concat();
+    let text = format!("{}_{}", "ghp", "A1b2".repeat(9));
     assert_eq!(m.mask(&text, Destination::Ai).text, text);
 }
