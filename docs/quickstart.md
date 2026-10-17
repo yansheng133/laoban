@@ -16,7 +16,7 @@
 
 laoban 每次產生計畫或改程式都會呼叫 AI，費用由你的 Anthropic 帳號支付。後端有每月 token 上限（預設 2,000,000），用完就不再呼叫 AI。
 
-> **注意**：用量以 UTC 月份計算，存在叢集的 `TokenUsage` 資源裡（`kubectl -n laoban-system get tokenusages`），後端重啟不會歸零。這只是 laoban 自己的計數，不是 Anthropic 的帳單，**請一定也要在 [Anthropic Console](https://console.anthropic.com/) 設定花費上限**。
+> **注意**：用量以 UTC 月份計算，存在叢集的 `TokenUsage` 資源裡（`kubectl --context downstream -n laoban-system get tokenusages`），後端重啟不會歸零。這只是 laoban 自己的計數，不是 Anthropic 的帳單，**請一定也要在 [Anthropic Console](https://console.anthropic.com/) 設定花費上限**。
 
 下面的指令用 `--context downstream` 代表跑 laoban 的叢集、`--context local` 代表 Rancher local 叢集，請換成你自己的 kubeconfig context。
 
@@ -165,7 +165,7 @@ kubectl --context local apply -f https://raw.githubusercontent.com/yansheng133/l
 | 「寫入 GitHub 失敗」 | token 是否只給了那個 repo 的 Contents: Read and write、repo 是否有 `main` 分支；後端 log：`kubectl --context downstream -n laoban-system logs deploy/laoban` |
 | 部署一直沒好 | Rancher → Continuous Delivery → Git Repos → `laoban-apps` 的狀態；Pod 是否被 Pod Security 擋下 |
 | 意見收斂顯示「請管理者先升級 laoban-crd chart」 | 沒裝 `laoban-crd`，或版本比後端舊 |
-| 後端重啟後 token 用量從 0 開始，或還沒確認的計畫不見了 | `laoban-crd` 比 0.1.19 舊（後端 log 有「not installed」）。先升級 `laoban-crd`，再重啟後端 |
+| 後端重啟後 token 用量從 0 開始，或還沒確認的計畫不見了 | `laoban-crd` 比 0.1.19 舊（後端 log 有「not installed」）。升級 `laoban-crd` 後 30 秒內開始保存 |
 | 想在月中把 token 用量歸零 | 刪掉當月的紀錄再重啟後端：`kubectl --context downstream -n laoban-system delete tokenusage tokens-YYYY-MM`（UTC 月份），然後 `kubectl --context downstream -n laoban-system rollout restart deploy/laoban` |
 | 升級後第一次 `kubectl get rounds` 報錯，第二次就好 | kubectl 的 discovery 快取還是舊的，不用處理 |
 

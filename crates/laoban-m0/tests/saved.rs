@@ -99,11 +99,13 @@ fn a_failed_apply_keeps_the_plan_and_an_applying_one_is_not_kept() {
         .as_str()
         .unwrap()
         .to_string();
+    let made = store.list(PLANS).unwrap()[0].spec["created"].clone();
     assert!(s.apply(&apply_req(&id), None).is_err());
+    let kept = store.list(PLANS).unwrap();
+    assert_eq!(kept.len(), 1, "can be confirmed again");
     assert_eq!(
-        store.list(PLANS).unwrap().len(),
-        1,
-        "can be confirmed again"
+        kept[0].spec["created"], made,
+        "still expires an hour after it was made"
     );
     // A restart now still has it.
     let again = backend(MockProvider::new().then(ok(&files_json())), &github, &store);
@@ -153,4 +155,29 @@ fn without_the_crds_plans_and_usage_stay_in_memory() {
         .to_string();
     assert!(used(&s) > 0);
     assert!(s.apply(&apply_req(&id), None).is_ok());
+}
+
+#[test]
+fn a_plan_whose_stored_copy_cannot_be_deleted_is_not_applied() {
+    let github = github_mock(RefUpdate::Ok);
+    let store = Arc::new(MemoryStore::new());
+    let s = backend(
+        MockProvider::new()
+            .then(ok(&plan_json()))
+            .then(ok(&files_json())),
+        &github,
+        &store,
+    );
+    let id = s.plan(&plan_req("x 需求"), None).unwrap()["planId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    store.fail_next_writes(1);
+    let err = s.apply(&apply_req(&id), None).unwrap_err();
+    assert_eq!((err.code(), err.status()), ("plan_store_failed", 503));
+    assert_eq!(writes(&github), 0, "nothing committed");
+    assert_eq!(store.list(PLANS).unwrap().len(), 1);
+    // Trying again works and leaves nothing behind.
+    assert!(s.apply(&apply_req(&id), None).is_ok());
+    assert!(store.list(PLANS).unwrap().is_empty());
 }

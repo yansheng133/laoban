@@ -121,7 +121,7 @@ The backend writes only its own state resources in `laoban-system` (`Round` for 
 | `crates/laoban-audit` | Audit records: masked RFC 5424 syslog messages, RFC 5425 framing, and size-based rotation of local files |
 | `crates/laoban-policy` | Deployment review policy engine (for phase 1): decides whether a change can be deployed directly, whether it needs human review, and who reviews it |
 | `crates/laoban-mockhttp` | Local mock HTTP server for tests |
-| `charts/laoban` | Backend Helm chart: Deployment, APIService, user RBAC rules, Role for the backend to store Rounds |
+| `charts/laoban` | Backend Helm chart: Deployment, APIService, user RBAC rules, Role for the backend to store Round, Plan and TokenUsage |
 | `charts/laoban-crd` | laoban CRDs: `Round`, `Plan` and `TokenUsage` (required already in the preview), plus ProjectPolicy, ChangeRequest, and ArchitectureVersion for phase 1 |
 | `deploy/m0` | Namespaces and Fleet objects to create in advance for the preview |
 | `web/viewer-prototype` | Prototype of the 3D architecture view; the extension's 3D diagram was ported from it |

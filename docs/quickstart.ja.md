@@ -16,7 +16,7 @@
 
 laoban は計画を作成したりコードを変更したりするたびに AI を呼び出し、その費用はお使いの Anthropic アカウントに請求されます。バックエンドには月間 token 上限（デフォルト 2,000,000）があり、使い切ると AI を呼び出さなくなります。
 
-> **注意**：使用量は UTC の月単位で数え、クラスターの `TokenUsage` リソースに保存されます（`kubectl -n laoban-system get tokenusages`）。バックエンドが再起動しても 0 には戻りません。ただしこれは laoban 自身の集計で、Anthropic の請求額ではありません。**必ず [Anthropic Console](https://console.anthropic.com/) でも支出上限を設定してください**。
+> **注意**：使用量は UTC の月単位で数え、クラスターの `TokenUsage` リソースに保存されます（`kubectl --context downstream -n laoban-system get tokenusages`）。バックエンドが再起動しても 0 には戻りません。ただしこれは laoban 自身の集計で、Anthropic の請求額ではありません。**必ず [Anthropic Console](https://console.anthropic.com/) でも支出上限を設定してください**。
 
 以下のコマンドでは、`--context downstream` が laoban を実行するクラスター、`--context local` が Rancher の local クラスターを表します。ご自身の kubeconfig context に置き換えてください。
 
@@ -165,7 +165,7 @@ kubectl --context local apply -f https://raw.githubusercontent.com/yansheng133/l
 | GitHub への書き込みに失敗する | token にその repo の Contents: Read and write だけが付与されているか、repo に `main` ブランチがあるか。バックエンドのログ：`kubectl --context downstream -n laoban-system logs deploy/laoban` |
 | デプロイがいつまでも完了しない | Rancher → Continuous Delivery → Git Repos → `laoban-apps` のステータス。Pod が Pod Security でブロックされていないか |
 | 意見のラウンドに、管理者に laoban-crd chart のアップグレードを求めるメッセージが表示される | `laoban-crd` がインストールされていないか、バージョンがバックエンドより古い |
-| バックエンドの再起動後に token 使用量が 0 から始まる、または未確認の計画が消える | `laoban-crd` が 0.1.19 より古い（バックエンドのログに「not installed」）。先に `laoban-crd` をアップグレードしてから、バックエンドを再起動する |
+| バックエンドの再起動後に token 使用量が 0 から始まる、または未確認の計画が消える | `laoban-crd` が 0.1.19 より古い（バックエンドのログに「not installed」）。`laoban-crd` をアップグレードすると 30 秒以内に保存が始まる |
 | 月の途中で token 使用量をリセットしたい | その月の記録を削除してバックエンドを再起動する：`kubectl --context downstream -n laoban-system delete tokenusage tokens-YYYY-MM`（UTC の月）、続けて `kubectl --context downstream -n laoban-system rollout restart deploy/laoban` |
 | アップグレード後、最初の `kubectl get rounds` がエラーになり、2 回目は成功する | kubectl の discovery キャッシュが古いままになっているだけなので、対応は不要です |
 

@@ -15,7 +15,7 @@
 //! Failures to write are logged and leave the plan in memory only, as
 //! before; they never fail the request.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -188,36 +188,78 @@ fn log_plan_problem(what: &str, id: &str, e: &dyn std::fmt::Display) {
 }
 
 impl M0Service {
-    /// Write a new plan (outside a round) so a restart keeps it.
+    fn plan_records(&self) -> std::sync::MutexGuard<'_, HashMap<String, (u64, bool)>> {
+        self.plan_records.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Write a plan (outside a round) so a restart keeps it: when it is
+    /// made, and again after a failed apply (with the time it was made, so
+    /// it still expires an hour after that).
     pub(super) fn save_plan(&self, p: &StoredPlan) {
         if !kept(p) {
             return;
         }
-        let spec = match to_spec(p, now_unix()) {
+        let made = *self
+            .plan_records()
+            .entry(p.id.clone())
+            .or_insert((now_unix(), false));
+        let saved = self.write_plan(p, made.0);
+        self.plan_records().insert(p.id.clone(), (made.0, saved));
+    }
+
+    fn write_plan(&self, p: &StoredPlan, made: u64) -> bool {
+        let spec = match to_spec(p, made) {
             Ok(s) => s,
-            Err(e) => return log_plan_problem("saving", &p.id, &e),
+            Err(e) => {
+                log_plan_problem("saving", &p.id, &e);
+                return false;
+            }
         };
         let labels = BTreeMap::from([(APP_LABEL.to_string(), p.app.clone())]);
         match self
             .state
             .create(PLANS, &object_name(&p.id), &labels, &spec)
         {
-            Ok(_) => {}
-            Err(StateError::NotInstalled(_)) => self.note_plans_not_installed(),
-            Err(e) => log_plan_problem("saving", &p.id, &e),
+            Ok(_) | Err(StateError::Exists) => true,
+            Err(StateError::NotInstalled(_)) => {
+                self.note_plans_not_installed();
+                false
+            }
+            Err(e) => {
+                log_plan_problem("saving", &p.id, &e);
+                false
+            }
         }
     }
 
-    /// The apply of a plan starts: its resource goes, so a restart in the
-    /// middle cannot apply it again.
-    pub(super) fn forget_plan(&self, p: &StoredPlan) {
+    /// The apply of a plan starts: its stored copy goes, so a restart in
+    /// the middle cannot apply it again. `false` when a copy exists and
+    /// could not be deleted (the apply must not go ahead).
+    pub(super) fn forget_plan(&self, p: &StoredPlan) -> bool {
         if !kept(p) {
-            return;
+            return true;
+        }
+        let stored = self.plan_records().get(&p.id).is_some_and(|r| r.1);
+        if !stored {
+            return true;
         }
         match self.state.delete(PLANS, &object_name(&p.id)) {
-            Ok(()) | Err(StateError::NotInstalled(_)) => {}
-            Err(e) => log_plan_problem("deleting", &p.id, &e),
+            Ok(()) | Err(StateError::NotInstalled(_)) => {
+                if let Some(r) = self.plan_records().get_mut(&p.id) {
+                    r.1 = false;
+                }
+                true
+            }
+            Err(e) => {
+                log_plan_problem("deleting", &p.id, &e);
+                false
+            }
         }
+    }
+
+    /// The plan was applied; it is never kept again.
+    pub(super) fn plan_applied(&self, p: &StoredPlan) {
+        self.plan_records().remove(&p.id);
     }
 
     fn note_plans_not_installed(&self) {
@@ -259,6 +301,7 @@ impl M0Service {
                     let made = now.checked_sub(age).unwrap_or(now);
                     let mut store = self.lock_store();
                     if !store.contains(&plan.id) {
+                        self.plan_records().insert(plan.id.clone(), (created, true));
                         store.insert(plan, made);
                         restored += 1;
                     }
@@ -283,10 +326,12 @@ impl M0Service {
 
     /// Delete `Plan` resources whose plan has expired.
     pub(super) fn sweep_plans(&self, now_unix: u64) {
+        let ttl = PLAN_TTL.as_secs();
+        self.plan_records()
+            .retain(|_, r| r.0.saturating_add(ttl) > now_unix);
         let Ok(objects) = self.state.list(PLANS) else {
             return;
         };
-        let ttl = PLAN_TTL.as_secs();
         for o in objects {
             let expired = o.spec["created"]
                 .as_u64()

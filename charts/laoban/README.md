@@ -42,7 +42,7 @@ helm --kube-context rke2 install laoban charts/laoban -n laoban-system \
   --set image.digest=sha256:<manifest list digest>
 ```
 
-- **先裝或先升級 `laoban-crd`**（v0.1.15 起）：意見收斂存在 `Round` 資源裡。沒裝 CRD 時後端照常啟動、其他功能都能用，只有意見收斂顯示「請管理者先升級 laoban-crd chart」，裝好後 10 秒內恢復。v0.1.19 起計畫與 token 用量也存在 CRD 裡；CRD 比後端舊時，這兩項照舊只存在記憶體（後端紀錄會寫一行提醒），升級 CRD 後重啟後端就會開始保存。`crds.required` 預設仍是 `false`，所以 render 不會因為沒裝 CRD 而失敗；`Chart.yaml` 也還沒有 `catalog.cattle.io/auto-install: laoban-crd=match`（兩個 chart 的版本號目前一起升，第一階段再加回這個 annotation）。
+- **先裝或先升級 `laoban-crd`**（v0.1.15 起）：意見收斂存在 `Round` 資源裡。沒裝 CRD 時後端照常啟動、其他功能都能用，只有意見收斂顯示「請管理者先升級 laoban-crd chart」，裝好後 10 秒內恢復。v0.1.19 起計畫與 token 用量也存在 CRD 裡；CRD 比後端舊時，這兩項照舊只存在記憶體（後端紀錄會寫一行提醒），升級 CRD 後 30 秒內開始保存。`Plan` 請用 `kubectl get lbplan` 或完整名稱 `plans.laoban.yansheng133.github.io`：RKE2 的 system-upgrade-controller 也有 `plans`。`crds.required` 預設仍是 `false`，所以 render 不會因為沒裝 CRD 而失敗；`Chart.yaml` 也還沒有 `catalog.cattle.io/auto-install: laoban-crd=match`（兩個 chart 的版本號目前一起升，第一階段再加回這個 annotation）。
 - GHCR 套件若還是私有，要先依 `build/README.md` 改成公開，或在 `laoban-system` 建 `kubernetes.io/dockerconfigjson` Secret 並設 `imagePullSecrets`。
 - GitHub token：fine-grained personal access token，Repository access 只選 `laoban-apps` 那一個 repo，Repository permissions 只給 **Contents: Read and write**（Metadata: Read-only 會自動帶上）。後端用 Git Data API 建 blob、tree、commit 並更新 ref，這些都屬於 Contents 權限。
 

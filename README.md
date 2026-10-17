@@ -119,7 +119,7 @@ GitHub repo ──► Fleet ──► 目標 namespace 裡的應用
 | `crates/laoban-audit` | 稽核紀錄：遮蔽後輸出 RFC 5424 syslog 訊息、RFC 5425 封框，以及依大小輪替的本機檔案 |
 | `crates/laoban-policy` | 部署審查政策引擎（第一階段用）：決定一次變更能不能直接部署、要不要人工審查、由誰審 |
 | `crates/laoban-mockhttp` | 測試用的本機 HTTP 模擬伺服器 |
-| `charts/laoban` | 後端的 Helm chart：Deployment、APIService、使用者的 RBAC 規則、後端存 Round 的 Role |
+| `charts/laoban` | 後端的 Helm chart：Deployment、APIService、使用者的 RBAC 規則、後端存 Round、Plan、TokenUsage 的 Role |
 | `charts/laoban-crd` | laoban 的 CRD：`Round`、`Plan`、`TokenUsage`（試吃版就要裝），以及第一階段用的 ProjectPolicy、ChangeRequest、ArchitectureVersion |
 | `deploy/m0` | 試吃版要事先建立的 namespace 與 Fleet 物件 |
 | `web/viewer-prototype` | 3D 架構視圖的原型，extension 的 3D 圖由它移植 |

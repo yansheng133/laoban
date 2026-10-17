@@ -16,7 +16,7 @@ Follow this guide and in about 30 minutes you can build your first app from one 
 
 laoban calls the AI every time it generates a plan or changes code, and the cost is paid by your Anthropic account. The backend has a monthly token cap (default 2,000,000); when it is used up, laoban stops calling the AI.
 
-> **Note**: Usage is counted per UTC month and stored in the cluster in `TokenUsage` resources (`kubectl -n laoban-system get tokenusages`), so a backend restart does not reset it. It is laoban's own count, not Anthropic's bill: **be sure to also set a spend limit in the [Anthropic Console](https://console.anthropic.com/)**.
+> **Note**: Usage is counted per UTC month and stored in the cluster in `TokenUsage` resources (`kubectl --context downstream -n laoban-system get tokenusages`), so a backend restart does not reset it. It is laoban's own count, not Anthropic's bill: **be sure to also set a spend limit in the [Anthropic Console](https://console.anthropic.com/)**.
 
 The commands below use `--context downstream` for the cluster that runs laoban and `--context local` for the Rancher local cluster. Replace them with your own kubeconfig contexts.
 
@@ -165,7 +165,7 @@ kubectl --context local apply -f https://raw.githubusercontent.com/yansheng133/l
 | Writing to GitHub fails | Whether the token has only Contents: Read and write on that one repo, and whether the repo has a `main` branch; backend log: `kubectl --context downstream -n laoban-system logs deploy/laoban` |
 | Deployment never finishes | Status of `laoban-apps` in Rancher → Continuous Delivery → Git Repos; whether the Pod is blocked by Pod Security |
 | Rounds of opinions show a message asking an administrator to upgrade the laoban-crd chart first | `laoban-crd` is not installed, or its version is older than the backend |
-| After a backend restart the token usage starts from 0, or plans not yet confirmed are gone | `laoban-crd` is older than 0.1.19 (the backend log says "not installed"). Upgrade `laoban-crd` first, then restart the backend |
+| After a backend restart the token usage starts from 0, or plans not yet confirmed are gone | `laoban-crd` is older than 0.1.19 (the backend log says "not installed"). After upgrading `laoban-crd`, saving starts within 30 seconds |
 | You want to reset the token usage in the middle of a month | Delete that month's record and restart the backend: `kubectl --context downstream -n laoban-system delete tokenusage tokens-YYYY-MM` (UTC month), then `kubectl --context downstream -n laoban-system rollout restart deploy/laoban` |
 | After an upgrade, the first `kubectl get rounds` reports an error and the second one works | kubectl's discovery cache is still stale; no action needed |
 

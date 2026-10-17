@@ -121,7 +121,7 @@ GitHub repo ──► Fleet ──► 対象 namespace 内のアプリ
 | `crates/laoban-audit` | 監査ログ：マスク後に RFC 5424 syslog メッセージを出力、RFC 5425 フレーミング、サイズによるローカルファイルのローテーション |
 | `crates/laoban-policy` | デプロイ審査ポリシーエンジン（第 1 フェーズ用）：変更をそのままデプロイできるか、人による審査が必要か、誰が審査するかを決定 |
 | `crates/laoban-mockhttp` | テスト用のローカル HTTP モックサーバー |
-| `charts/laoban` | バックエンドの Helm chart：Deployment、APIService、ユーザーの RBAC ルール、バックエンドが Round を保存するための Role |
+| `charts/laoban` | バックエンドの Helm chart：Deployment、APIService、ユーザーの RBAC ルール、バックエンドが Round、Plan、TokenUsage を保存するための Role |
 | `charts/laoban-crd` | laoban の CRD：`Round`、`Plan`、`TokenUsage`（試食版から必須）、および第 1 フェーズ用の ProjectPolicy、ChangeRequest、ArchitectureVersion |
 | `deploy/m0` | 試食版で事前に作成する namespace と Fleet オブジェクト |
 | `web/viewer-prototype` | 3D アーキテクチャビューのプロトタイプ。extension の 3D 図はここから移植 |

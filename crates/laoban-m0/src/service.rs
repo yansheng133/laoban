@@ -244,6 +244,10 @@ pub enum M0Error {
     PlanNotFound,
     #[error("plan already applied")]
     AlreadyApplied,
+    /// The stored copy of the plan could not be removed before applying,
+    /// so applying could be repeated after a restart; nothing was changed.
+    #[error("the stored plan could not be released for applying")]
+    PlanStoreFailed,
     #[error("token budget exceeded")]
     BudgetExceeded,
     #[error("provider spend limit reached")]
@@ -316,6 +320,7 @@ impl M0Error {
             M0Error::BadRequest(_) => "bad_request",
             M0Error::PlanNotFound => "plan_not_found",
             M0Error::AlreadyApplied => "already_applied",
+            M0Error::PlanStoreFailed => "plan_store_failed",
             M0Error::BudgetExceeded => "budget_exceeded",
             M0Error::SpendLimit => "spend_limit",
             M0Error::AiInvalidOutput(_) => "ai_invalid_output",
@@ -367,6 +372,7 @@ impl M0Error {
             M0Error::BadRequest(_) => 400,
             M0Error::PlanNotFound => 404,
             M0Error::AlreadyApplied => 409,
+            M0Error::PlanStoreFailed => 503,
             M0Error::BudgetExceeded => 429,
             M0Error::SpendLimit => 402,
             M0Error::AiInvalidOutput(_) | M0Error::Github(_) => 502,
@@ -401,8 +407,13 @@ impl M0Error {
         match self {
             M0Error::BadRequest(m) => (*m).to_string(),
             M0Error::PlanNotFound => tr(
-                "This plan was not found; it may be over 1 hour old or the backend restarted. Please generate the plan again.",
-                "找不到這個計畫，可能已超過 1 小時或後端已重新啟動，請重新產生計畫。",
+                "This plan was not found; it may be over 1 hour old. Please generate the plan again.",
+                "找不到這個計畫，可能已超過 1 小時，請重新產生計畫。",
+            )
+            .into(),
+            M0Error::PlanStoreFailed => tr(
+                "The plan could not be prepared for deploying; nothing was changed. Please try again in a moment.",
+                "計畫暫時無法開始部署，沒有任何變更，請稍後再試。",
             )
             .into(),
             M0Error::AlreadyApplied => tr(
@@ -645,6 +656,8 @@ pub struct M0Service {
     plans_not_installed: AtomicBool,
     /// Reading the stored plans failed (logged once).
     plans_read_failed: AtomicBool,
+    /// Plan ID → (made, unix seconds; a copy is in the state store).
+    plan_records: Mutex<HashMap<String, (u64, bool)>>,
 }
 
 impl M0Service {
@@ -695,6 +708,7 @@ impl M0Service {
             plans_swept_at: AtomicU64::new(0),
             plans_not_installed: AtomicBool::new(false),
             plans_read_failed: AtomicBool::new(false),
+            plan_records: Mutex::new(HashMap::new()),
         })
     }
 
@@ -1209,9 +1223,11 @@ impl M0Service {
                 StoreError::AlreadyApplied => M0Error::AlreadyApplied,
             })?;
         // Gone from storage while it is applied: after a restart in the
-        // middle it cannot be applied a second time.
-        if !from_round {
-            self.forget_plan(&stored);
+        // middle it cannot be applied a second time. If its stored copy
+        // cannot be removed, do not apply.
+        if !from_round && !self.forget_plan(&stored) {
+            self.lock_store().finish_apply(id, false);
+            return Err(M0Error::PlanStoreFailed);
         }
         let result = if stored.base.is_some() && !from_round {
             self.check_no_round(&stored.app)
@@ -1219,11 +1235,17 @@ impl M0Service {
         } else {
             self.apply_inner(&stored, user)
         };
-        self.lock_store().finish_apply(id, result.is_ok());
-        if result.is_err() && !from_round {
-            // It can be confirmed again, so keep it again.
-            self.save_plan(&stored);
+        if !from_round {
+            if result.is_ok() {
+                self.plan_applied(&stored);
+            } else {
+                // It can be confirmed again, so keep it again. Written while
+                // the plan is still marked as being applied, so a second
+                // confirm cannot start before the copy exists.
+                self.save_plan(&stored);
+            }
         }
+        self.lock_store().finish_apply(id, result.is_ok());
         result
     }
 
@@ -2569,6 +2591,7 @@ mod tests {
         let cases: Vec<(M0Error, &str, u16)> = vec![
             (M0Error::BadRequest("x"), "bad_request", 400),
             (M0Error::PlanNotFound, "plan_not_found", 404),
+            (M0Error::PlanStoreFailed, "plan_store_failed", 503),
             (M0Error::AlreadyApplied, "already_applied", 409),
             (M0Error::BudgetExceeded, "budget_exceeded", 429),
             (M0Error::SpendLimit, "spend_limit", 402),
