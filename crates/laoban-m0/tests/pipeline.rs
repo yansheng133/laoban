@@ -67,6 +67,7 @@ fn happy_path_plan_then_apply() {
         plan["usage"],
         json!({"inputTokens": 120, "outputTokens": 80})
     );
+    assert_eq!(plan["model"], MODEL, "the plan says which model made it");
 
     // Architecture: fixed shape, positions from the backend only.
     let nodes = plan["architecture"]["nodes"].as_array().unwrap();

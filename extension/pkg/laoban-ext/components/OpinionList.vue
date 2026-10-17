@@ -43,6 +43,12 @@ export default defineComponent({
       type:    Boolean,
       default: false,
     },
+    // A viewer: no +1 or reply controls at all (report 23, B24); the
+    // supporters and existing replies are still shown.
+    readOnly: {
+      type:    Boolean,
+      default: false,
+    },
     // Authors may change or take back their opinions now (collecting).
     canEdit: {
       type:    Boolean,
@@ -280,6 +286,7 @@ export default defineComponent({
               </button>
             </template>
             <button
+              v-if="!readOnly"
               type="button"
               class="btn btn-sm"
               :class="supportedByMe(o) ? 'role-primary' : 'role-secondary'"
@@ -295,6 +302,7 @@ export default defineComponent({
               class="text-muted laoban-opinion-supporters"
             >{{ t('laoban.opinions.supportedBy', { names: (o.supporters || []).map(who).join('、') }) }}</span>
             <button
+              v-if="!readOnly || (o.replies || []).length"
               type="button"
               class="btn btn-sm role-link"
               :aria-expanded="open[o.id] ? 'true' : 'false'"

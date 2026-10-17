@@ -265,6 +265,13 @@ fn new_app_with_taken_name() {
     assert!(err.user_message().contains("breakfast"));
     assert!(!err.to_string().contains("breakfast"));
     assert_eq!(h.provider.call_count(), 0);
+    // In the background too: refused at once, no job (report 23, N29).
+    let err = h
+        .service
+        .plan_job(&new_req("x", Some("breakfast")), None)
+        .unwrap_err();
+    assert_eq!((err.status(), err.code()), (409, "app_exists"));
+    assert_eq!(h.provider.call_count(), 0);
 
     // Chosen by the AI: a free variant is used.
     let provider = MockProvider::new().then(ok(&plan_json()));

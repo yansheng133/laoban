@@ -666,6 +666,15 @@ export default defineComponent({
 
     // This round waits for the caller (A): a banner above the round.
     const roundPanel = ref<HTMLElement | null>(null);
+    // Failed rounds read as errors, waiting for you as a warning (report
+    // 23, B23).
+    const bannerClass = (reason: string | null | undefined) => {
+      if (reason === 'youConfirmed') {
+        return 'laoban-banner-info';
+      }
+
+      return reason === 'failed' || reason === 'retry' ? 'laoban-banner-error' : 'laoban-banner-warning';
+    };
     const waitingReason = computed(() => {
       const r = round.round.value;
 
@@ -869,6 +878,7 @@ export default defineComponent({
       draftsShared,
       roundPanel,
       waitingReason,
+      bannerClass,
       messageFor: flow.messageFor,
       canArrange,
       tab,
@@ -958,8 +968,8 @@ export default defineComponent({
         <!-- Under the title, next to the round it is about (report 21, N10). -->
         <div
           v-if="waitingReason"
-          class="laoban-waiting banner"
-          :class="waitingReason === 'youConfirmed' ? 'laoban-banner-info' : 'warning'"
+          class="laoban-waiting"
+          :class="bannerClass(waitingReason)"
           role="status"
           data-testid="laoban-waiting"
         >
@@ -1426,6 +1436,7 @@ export default defineComponent({
               :limits="roundLimits"
               :round-left="roundLeft"
               :can-edit="mayChange && !!roundState.you && roundState.state === 'collecting' && !!roundState.you.canAddOpinion"
+              :read-only="!mayChange"
               @support="roundSupport"
               @reply="roundReply"
               @edit="roundEdit"

@@ -165,7 +165,7 @@ export default defineComponent({
 
     <p
       v-if="waitingCount"
-      class="laoban-apps-waiting banner warning"
+      class="laoban-apps-waiting laoban-banner-warning"
       role="status"
       data-testid="laoban-apps-waiting"
     >

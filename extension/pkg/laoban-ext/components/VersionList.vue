@@ -11,6 +11,7 @@ import { useStore } from 'vuex';
 import { useText } from '../composables/useText';
 import { safeHttpsUrl, VersionEntry } from '../utils/backend';
 import { userLabel } from '../utils/users';
+import { currentUserId } from '../utils/me';
 import { formatDateTime } from '../utils/time';
 import { versionKindKey } from '../utils/versions';
 
@@ -56,9 +57,21 @@ export default defineComponent({
       emit('restore', commit);
     }
 
+    // The signed-in user's own versions read "you", as in past rounds
+    // (report 23, N23).
+    const me = ref('');
+
+    currentUserId(store).then((id) => {
+      me.value = id;
+    });
+
     // Who made the version (verified by the API server), when recorded.
     function byLabel(v: VersionEntry): string {
-      return v.by ? userLabel(store, v.by) : '';
+      if (!v.by) {
+        return '';
+      }
+
+      return me.value && v.by === me.value ? t('laoban.round.you') : userLabel(store, v.by);
     }
 
     return {
@@ -97,7 +110,7 @@ export default defineComponent({
             v-if="v.current"
             class="badge-state bg-success"
           >{{ t('laoban.versions.current') }}</span>
-          <span class="text-muted">{{ formatTime(v.at) }} · {{ kindLabel(v.kind) }}<template v-if="byLabel(v)"> · {{ byLabel(v) }}</template></span>
+          <span class="text-muted">{{ formatTime(v.at) }} · {{ kindLabel(v.kind) }}<template v-if="byLabel(v)"> · {{ byLabel(v) }}</template><template v-if="v.model"> · {{ v.model }}</template></span>
           <a
             v-if="safeHttpsUrl(v.commitUrl)"
             :href="safeHttpsUrl(v.commitUrl)"

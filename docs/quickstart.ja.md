@@ -29,9 +29,9 @@ laoban は計画を作成したりコードを変更したりするたびに AI 
    - Name：`laoban`
    - Target：**Helm Repository**（HTTP(S) URL pointing to a Helm chart repository index。デフォルトでこれが選ばれています）
    - Index URL：`https://yansheng133.github.io/laoban`
-   - **Create** をクリックします。
-3. 保存すると、画面は local クラスターの Apps → Repositories に移ります。左上のメニューから **Extensions** → **Available** タブに戻り、**laoban** を見つけて → **Install** → バージョン（最新。例：`0.1.19`）を確認 → **Install**。
-4. インストール後にページを再読み込みします。**laoban** は左上のメニューの **Global Apps** に表示されます。
+   - 画面下の **Add Repository** をクリックします。
+3. 保存すると、画面は local クラスターの Apps → Repositories に移ります。左上のメニューから **Extensions** → **Available** タブに戻り、**laoban** のカードを見つけて → カード右上の **⋮** → **Install** → バージョン（最新。例：`0.1.19`）を確認 → **Install**。ダイアログに「untrusted authors」の黄色い注意が出ますが、laoban は Rancher 認定ではないコミュニティのプロジェクトだからです。
+4. インストール後、画面上部に **Extensions changed - reload required** が表示されたら **Reload** をクリックします（またはページを再読み込みします）。**laoban** は左上のメニューの **Global Apps** に表示されます。
 
 Index URL が開けない場合は、代わりに `https://raw.githubusercontent.com/yansheng133/laoban/gh-pages` を使ってください。内容は同じです。
 
@@ -177,4 +177,4 @@ helm --kube-context downstream uninstall laoban-crd -n laoban-system
 kubectl --context local -n fleet-default delete gitrepo laoban-apps
 ```
 
-extension は Rancher → Extensions → Installed → laoban → Uninstall で削除します。生成されたアプリは `laoban-dev` とご自身の GitHub repo に残るため、不要になったら各自で削除してください。
+extension は Rancher → Extensions → **Installed** → laoban のカード右上の **⋮** → **Uninstall** で削除します。生成されたアプリは `laoban-dev` とご自身の GitHub repo に残るため、不要になったら各自で削除してください。

@@ -29,6 +29,8 @@ export interface PlanResponse {
   architecture: Architecture;
   maskedFindings?: number;
   usage?: { inputTokens?: number; outputTokens?: number };
+  // The AI model that made the plan.
+  model?: string;
 }
 
 export interface ApplyResponse {

@@ -29,9 +29,9 @@ laoban 每次產生計畫或改程式都會呼叫 AI，費用由你的 Anthropic
    - Name：`laoban`
    - Target：**Helm Repository**（HTTP(S) URL pointing to a Helm chart repository index，預設就是這個）
    - Index URL：`https://yansheng133.github.io/laoban`
-   - 按 **Create**。
-3. 存檔後畫面停在 local 叢集的 Apps → Repositories。從左上角選單再回到 **Extensions** → **Available** 分頁，找到 **laoban** → **Install** → 確認版本（最新的，例如 `0.1.19`）→ **Install**。
-4. 安裝完重新整理頁面。**laoban** 出現在左上角選單的 **Global Apps**。
+   - 按畫面下方的 **Add Repository**。
+3. 存檔後畫面停在 local 叢集的 Apps → Repositories。從左上角選單再回到 **Extensions** → **Available** 分頁，找到 **laoban** 卡片 → 卡片右上角的 **⋮** → **Install** → 確認版本（最新的，例如 `0.1.19`）→ **Install**。對話框會有「untrusted authors」的黃色提醒，因為 laoban 是社群專案，不是 Rancher 認證的 extension。
+4. 安裝完，畫面上方出現 **Extensions changed - reload required**，按 **Reload**（或重新整理頁面）。**laoban** 出現在左上角選單的 **Global Apps**。
 
 Index URL 打不開時，改用 `https://raw.githubusercontent.com/yansheng133/laoban/gh-pages`，內容一樣。
 
@@ -177,4 +177,4 @@ helm --kube-context downstream uninstall laoban-crd -n laoban-system
 kubectl --context local -n fleet-default delete gitrepo laoban-apps
 ```
 
-extension 在 Rancher → Extensions → Installed → laoban → Uninstall。產生的應用留在 `laoban-dev` 與你的 GitHub repo 裡，不再需要時自行刪除。
+extension 在 Rancher → Extensions → **Installed** → laoban 卡片右上角的 **⋮** → **Uninstall**。產生的應用留在 `laoban-dev` 與你的 GitHub repo 裡，不再需要時自行刪除。

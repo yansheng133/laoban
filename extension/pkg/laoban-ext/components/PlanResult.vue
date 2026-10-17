@@ -66,7 +66,9 @@ export default defineComponent({
         v-if="plan.usage"
         class="text-muted"
       >
-        {{ t('laoban.dashboard.plan.usage', { input: formatNumber(plan.usage.inputTokens), output: formatNumber(plan.usage.outputTokens) }) }}
+        {{ plan.model
+          ? t('laoban.dashboard.plan.usageModel', { model: plan.model, input: formatNumber(plan.usage.inputTokens), output: formatNumber(plan.usage.outputTokens) })
+          : t('laoban.dashboard.plan.usage', { input: formatNumber(plan.usage.inputTokens), output: formatNumber(plan.usage.outputTokens) }) }}
       </p>
       <button
         type="button"

@@ -29,9 +29,9 @@ The steps below follow the Rancher 2.15 screens.
    - Name: `laoban`
    - Target: **Helm Repository** (HTTP(S) URL pointing to a Helm chart repository index; this is the default)
    - Index URL: `https://yansheng133.github.io/laoban`
-   - Click **Create**.
-3. After saving, the screen stays on Apps → Repositories in the local cluster. Go back to **Extensions** from the top-left menu → **Available** tab, find **laoban** → **Install** → confirm the version (the latest, for example `0.1.19`) → **Install**.
-4. After installation, reload the page. **laoban** appears under **Global Apps** in the top-left menu.
+   - Click **Add Repository** at the bottom of the screen.
+3. After saving, the screen stays on Apps → Repositories in the local cluster. Go back to **Extensions** from the top-left menu → **Available** tab, find the **laoban** card → **⋮** at the card's top right → **Install** → confirm the version (the latest, for example `0.1.19`) → **Install**. The dialog shows a yellow "untrusted authors" notice because laoban is a community project, not a Rancher-certified extension.
+4. After installation, **Extensions changed - reload required** appears at the top; click **Reload** (or reload the page). **laoban** appears under **Global Apps** in the top-left menu.
 
 If the Index URL does not open, use `https://raw.githubusercontent.com/yansheng133/laoban/gh-pages` instead; the content is the same.
 
@@ -177,4 +177,4 @@ helm --kube-context downstream uninstall laoban-crd -n laoban-system
 kubectl --context local -n fleet-default delete gitrepo laoban-apps
 ```
 
-Remove the extension in Rancher → Extensions → Installed → laoban → Uninstall. The generated apps remain in `laoban-dev` and in your GitHub repo; delete them yourself when you no longer need them.
+Remove the extension in Rancher → Extensions → **Installed** → **⋮** at the top right of the laoban card → **Uninstall**. The generated apps remain in `laoban-dev` and in your GitHub repo; delete them yourself when you no longer need them.
