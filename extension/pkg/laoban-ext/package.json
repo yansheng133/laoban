@@ -1,7 +1,7 @@
 {
   "name": "laoban-ext",
   "description": "laoban: describe what you need, review the plan and architecture view, then approve changes",
-  "version": "0.1.21",
+  "version": "0.1.22",
   "private": false,
   "rancher": {
     "annotations": {
@@ -28,7 +28,7 @@
     "last 2 versions",
     "not dead"
   ],
-  "icon": "https://raw.githubusercontent.com/yansheng133/laoban/v0.1.21/docs/images/laoban-icon.svg",
+  "icon": "https://raw.githubusercontent.com/yansheng133/laoban/v0.1.22/docs/images/laoban-icon.svg",
   "homepage": "https://github.com/yansheng133/laoban",
   "keywords": [
     "laoban",
