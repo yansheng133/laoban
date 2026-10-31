@@ -22,6 +22,9 @@ export default defineComponent({
     commitLink:  { type: String as PropType<string | null>, default: null },
     shortCommit: { type: String, default: '' },
     appLink:     { type: String as PropType<string | null>, default: null },
+    // Why deploying failed, shown next to the button the user just pressed
+    // (report 26, N43: shown only above the plan, out of sight).
+    error:       { type: String, default: '' },
   },
 
   emits: ['apply'],
@@ -85,6 +88,13 @@ export default defineComponent({
         />
         {{ t('laoban.dashboard.plan.apply') }}
       </button>
+      <p
+        v-if="error"
+        class="laoban-error text-error"
+        role="alert"
+      >
+        {{ error }}
+      </p>
     </div>
 
     <div

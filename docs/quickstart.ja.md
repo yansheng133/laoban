@@ -134,8 +134,9 @@ config:
 
 ```bash
 kubectl --context downstream -n laoban-system get pods
-# AVAILABLE が True であること
+# READY が 1/1 であること
 kubectl --context downstream get apiservice v1alpha1.api.laoban.yansheng133.github.io
+# AVAILABLE が True であること
 ```
 
 ## 5. 生成されたアプリを Fleet でデプロイする

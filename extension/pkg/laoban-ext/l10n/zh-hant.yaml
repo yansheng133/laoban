@@ -175,7 +175,7 @@ laoban:
       manualEditLost: "AI 的修改會蓋掉這一輪期間對 {files} 的手動修改，沒有部署。請發起人重新收斂；如果手動修改不需要保留，請先把它改回去。"
       aiInvalidOutput: AI 回應的格式不符合要求，沒有寫入任何東西。請發起人重新收斂。
       aiUnavailable: 呼叫 AI 服務失敗，請稍後由發起人重新收斂。
-      budgetExceeded: 已達到 laoban 本期的 AI token 使用上限，請等下個月或請管理者調高上限。
+      budgetExceeded: "已達到 laoban 本月（UTC）的 AI token 使用上限，請等下個月（UTC），或請管理者調高上限。"
       spendLimit: Anthropic 帳號已達花費上限，請管理者到 Anthropic Console 檢查。
       githubFailed: 寫入 GitHub 失敗，請稍後由發起人重新收斂；若持續失敗請管理者檢查 token 與 repo 設定。
       versionConflict: 這個應用在這段期間有了新版本，沒有部署。請發起人重新收斂。
@@ -268,6 +268,9 @@ laoban:
     sideOpenHint: 關閉放大後，在左邊的意見收斂開一輪，草稿會一起送出。
   errors:
     app_exists: "已經有同名的應用。要修改它，請在應用清單按「編輯」；要另外建立，請換一個名稱。"
+    ai_invalid_output: "AI 回傳的內容格式不正確，沒有寫入任何東西。請再試一次，或換個說法。"
+    plan_not_found: "找不到這份計畫（計畫一小時後失效）。請重新產生計畫。"
+    already_applied: "這份計畫已經部署過了。要做其他修改，請重新產生計畫。"
     forbidden: "你沒有這個操作的權限：需要應用所在 namespace（Rancher Project）的「laoban user」角色或編輯權限，請洽管理者。"
     unauthenticated: "登入已失效，請重新登入 Rancher。"
     unavailable: "laoban 後端目前無法連線（APIService 尚未就緒），請稍後再試或請管理者查看。"
@@ -276,7 +279,7 @@ laoban:
     not_initiator: "只有發起這一輪的人可以這樣做。"
     not_confirmer: "只有在這一輪提過意見的人需要確認。"
     round_state: "這一輪的狀態已經改變，請重新整理頁面。"
-    budget_exceeded: "laoban 這段期間的 AI token 已用完，請等下一期，或請管理者調高上限。"
+    budget_exceeded: "已達到 laoban 本月（UTC）的 AI token 使用上限，請等下個月（UTC），或請管理者調高上限。"
     spend_limit: "Anthropic 帳號已達到花費上限，請管理者到 Anthropic Console 查看。"
     github_failed: "寫入 GitHub 失敗，請稍後再試；若持續失敗，請管理者檢查 token 與 repo 設定。"
     round_not_found: "找不到這一輪的紀錄。"
@@ -434,8 +437,10 @@ laoban:
         data: 資料
     status:
       idle: 輸入需求後按「產生計畫」。
+      viewOnly: "僅供檢視：你可以看應用，但不能建立或修改。"
       planning: "AI 正在產生計畫，通常需要 30～60 秒（已 {seconds} 秒）…"
       planned: 計畫已產生。確認內容後按「確認並部署」。
+      planGone: "這份計畫已經不能部署（超過一小時已失效，或已經用過）。請重新產生計畫。"
       applying: "AI 正在產生程式並寫進 GitHub，通常需要 30～60 秒（已 {seconds} 秒）…"
       waitingBundle: "已寫進 GitHub，等待 Fleet 讀取這次變更（已 {seconds} 秒）…"
       waitingPods: "已寫入。等待新版本的 Pod 啟動（已等 {seconds} 秒）…"

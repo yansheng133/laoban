@@ -175,7 +175,7 @@ laoban:
       manualEditLost: "The AI's change would overwrite the hand edits to {files} made during this round; nothing was deployed. The initiator can converge again, or undo the hand edit first if it is not needed."
       aiInvalidOutput: The AI's answer was not in the required format; nothing was written. The initiator can converge again.
       aiUnavailable: The AI service failed. The initiator can converge again later.
-      budgetExceeded: laoban's AI token limit for this period is used up. Wait for next month or ask an administrator to raise it.
+      budgetExceeded: "laoban's AI token limit for this month (UTC) is used up. Wait for next month (UTC) or ask an administrator to raise it."
       spendLimit: The Anthropic account reached its spend limit. Please ask an administrator to check the Anthropic Console.
       githubFailed: Writing to GitHub failed. The initiator can converge again later; if it keeps failing, ask an administrator to check the token and repository settings.
       versionConflict: The app got a new version meanwhile; nothing was deployed. The initiator can converge again.
@@ -268,6 +268,9 @@ laoban:
     sideOpenHint: Close the enlarged view and start a round on the left; the drafts are sent with it.
   errors:
     app_exists: "An app with this name already exists. To change it, use Edit in the app list; to make another one, choose a different name."
+    ai_invalid_output: "The AI's answer was not in the required format, so nothing was written. Try again, or say it another way."
+    plan_not_found: "This plan can no longer be found (plans expire after an hour). Generate a new plan."
+    already_applied: "This plan has already been deployed. Generate a new plan for another change."
     forbidden: "You don't have permission for this. It needs the laoban user role (or edit) in the Project of the apps' namespace; ask an administrator."
     unauthenticated: "Your Rancher session has ended. Please sign in again."
     unavailable: "The laoban backend can't be reached right now (its APIService is not ready). Try again later or ask an administrator."
@@ -276,7 +279,7 @@ laoban:
     not_initiator: "Only the person who started this round can do that."
     not_confirmer: "Only those who gave an opinion in this round confirm it."
     round_state: "This round has moved on meanwhile. Please refresh the page."
-    budget_exceeded: "laoban's AI token limit for this period is used up. Wait for the next period or ask an administrator to raise it."
+    budget_exceeded: "laoban's AI token limit for this month (UTC) is used up. Wait for next month (UTC) or ask an administrator to raise it."
     spend_limit: "The Anthropic account reached its spend limit. Ask an administrator to check the Anthropic Console."
     github_failed: "Writing to GitHub failed. Try again later; if it keeps failing, ask an administrator to check the token and repository."
     round_not_found: "This round's record was not found."
@@ -434,8 +437,10 @@ laoban:
         data: Data
     status:
       idle: Enter a request and select Generate plan.
+      viewOnly: "View only: you can look at the apps but not make or change them."
       planning: "The AI is generating a plan. This usually takes 30 to 60 seconds ({seconds} s so far)…"
       planned: Plan ready. Review it, then select Confirm and deploy.
+      planGone: "This plan can no longer be deployed (it expired after an hour or was already used). Generate a new plan."
       applying: "The AI is generating code and committing it to GitHub. This usually takes 30 to 60 seconds ({seconds} s so far)…"
       waitingBundle: "Committed. Waiting for Fleet to pick up the change ({seconds} s so far)…"
       waitingPods: "Committed. Waiting for the new version's pods to start ({seconds} s so far)…"

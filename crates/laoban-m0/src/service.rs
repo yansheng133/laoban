@@ -356,13 +356,25 @@ impl M0Error {
     /// Extra detail for the server log, for errors whose cause the user
     /// message hides (which GitHub step failed and how, why the AI call
     /// failed). These messages never contain the token, the API key or the
-    /// user's prompt; AI output (`ai_invalid_output`) is deliberately left out.
+    /// user's prompt. For `ai_invalid_output` only the kind of problem is
+    /// logged (not JSON, a key not allowed, cut off at max_tokens, …), never
+    /// AI output: the check's wording up to the first `:` or `` ` ``, where
+    /// parser messages and quoted values begin (report 25, N45).
     pub fn log_detail(&self) -> Option<String> {
         match self {
             M0Error::Github(_)
             | M0Error::AiUnavailable(_)
             | M0Error::Internal(_)
             | M0Error::State(_) => Some(self.to_string()),
+            M0Error::AiInvalidOutput(InvalidOutput(why)) => {
+                let kind = why.split([':', '`']).next().unwrap_or("").trim();
+                let kind: String = kind.chars().take(120).collect();
+                Some(if kind.is_empty() {
+                    "unknown".into()
+                } else {
+                    kind
+                })
+            }
             _ => None,
         }
     }
@@ -422,8 +434,8 @@ impl M0Error {
             )
             .into(),
             M0Error::BudgetExceeded => tr(
-                "laoban's AI token limit for this period is used up. Wait for next month or ask an administrator to raise it.",
-                "已達到 laoban 本期的 AI token 使用上限，請等下個月或請管理者調高上限。",
+                "laoban's AI token limit for this month (UTC) is used up. Wait for next month (UTC) or ask an administrator to raise it.",
+                "已達到 laoban 本月（UTC）的 AI token 使用上限，請等下個月（UTC），或請管理者調高上限。",
             )
             .into(),
             M0Error::SpendLimit => tr(
@@ -448,8 +460,8 @@ impl M0Error {
             )
             .into(),
             M0Error::AppExists(app) => trf!(
-                en: "An app named {app} already exists. To change it, click \"Edit\" in the app list below; to create another one, choose a different name.",
-                zh: "已經有名為 {app} 的應用。要修改它，請在下方應用清單按「編輯」；要另外建立，請換一個名稱。"
+                en: "An app named {app} already exists. Choose a different name, or change the existing app instead.",
+                zh: "已經有名為 {app} 的應用。請換一個名稱，或改為修改現有的應用。"
             ),
             M0Error::AppNotFound => tr(
                 "This app was not found; it may have been removed.",
@@ -857,6 +869,20 @@ impl M0Service {
 
     /// `POST /api/apply` (or `.../plans/<id>/apply`) with `background`.
     pub fn apply_job(&self, body: &ApplyRequest, user: Option<&str>) -> Result<Value, M0Error> {
+        // Answer now what the job would fail with: an expired or unknown
+        // plan was accepted with 200 and failed later in the background,
+        // leaving the page on "Plan ready" (report 24, N30).
+        {
+            let id = body.plan_id.trim();
+            let mut store = self.lock_store();
+            if !store.is_pending(id, Instant::now()) {
+                return Err(if store.contains(id) {
+                    M0Error::AlreadyApplied
+                } else {
+                    M0Error::PlanNotFound
+                });
+            }
+        }
         let body = body.clone();
         let owner = user.map(str::to_string);
         self.start_job("apply", user, move |s| s.apply(&body, owner.as_deref()))
@@ -1067,7 +1093,8 @@ impl M0Service {
                     }],
                     max_tokens: Some(PLAN_MAX_TOKENS),
                 })?;
-                let plan = parse_app_plan(&completion.content).map_err(M0Error::AiInvalidOutput)?;
+                let mut plan =
+                    parse_app_plan(&completion.content).map_err(M0Error::AiInvalidOutput)?;
                 let app = match requested_name {
                     Some(n) => n,
                     None => match plan.app_name.as_deref() {
@@ -1080,6 +1107,10 @@ impl M0Service {
                         }
                     },
                 };
+                // The plan names the app it is for: the name the user gave
+                // (or the free one chosen), not the AI's suggestion (report
+                // 24, N37: plan.appName water-tracker, app t24-water).
+                plan.app_name = Some(app.clone());
                 (plan, completion, app, None)
             }
         };
@@ -2760,8 +2791,30 @@ mod tests {
             .contains("transport"));
         // AI output is not logged.
         assert_eq!(
-            M0Error::AiInvalidOutput(InvalidOutput("model said x".into())).log_detail(),
-            None
+            M0Error::AiInvalidOutput(InvalidOutput(
+                "files are not JSON: invalid type: string \"secret\", expected map".into()
+            ))
+            .log_detail()
+            .as_deref(),
+            Some("files are not JSON")
+        );
+        assert_eq!(
+            M0Error::AiInvalidOutput(InvalidOutput("plan touches a denied kind `Secret`".into()))
+                .log_detail()
+                .as_deref(),
+            Some("plan touches a denied kind")
+        );
+        assert_eq!(
+            M0Error::AiInvalidOutput(InvalidOutput("web has a key that is not allowed".into()))
+                .log_detail()
+                .as_deref(),
+            Some("web has a key that is not allowed")
+        );
+        assert_eq!(
+            M0Error::AiInvalidOutput(InvalidOutput(": x".into()))
+                .log_detail()
+                .as_deref(),
+            Some("unknown")
         );
         assert_eq!(M0Error::PlanNotFound.log_detail(), None);
     }

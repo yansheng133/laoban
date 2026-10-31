@@ -134,8 +134,9 @@ config:
 
 ```bash
 kubectl --context downstream -n laoban-system get pods
-# AVAILABLE 要是 True
+# READY 要是 1/1
 kubectl --context downstream get apiservice v1alpha1.api.laoban.yansheng133.github.io
+# AVAILABLE 要是 True
 ```
 
 ## 5. 讓 Fleet 部署產生的應用

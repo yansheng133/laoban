@@ -134,8 +134,9 @@ Check that the backend is ready:
 
 ```bash
 kubectl --context downstream -n laoban-system get pods
-# AVAILABLE must be True
+# READY must be 1/1
 kubectl --context downstream get apiservice v1alpha1.api.laoban.yansheng133.github.io
+# AVAILABLE must be True
 ```
 
 ## 5. Let Fleet deploy the generated apps

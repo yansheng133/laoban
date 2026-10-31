@@ -440,7 +440,10 @@ fn bad_requests() {
 #[test]
 fn user_app_name_wins_and_invalid_ai_name_is_502() {
     let provider = MockProvider::new().then(ok(&plan_json()));
-    let h = harness(provider, RefUpdate::Ok, 1_000_000);
+    let mut h = harness(provider, RefUpdate::Ok, 1_000_000);
+    let store = std::sync::Arc::new(laoban_m0::MemoryStore::new());
+    h.service
+        .use_state_store(std::sync::Arc::clone(&store) as std::sync::Arc<dyn laoban_m0::StateStore>);
     let plan = h
         .service
         .plan(
@@ -455,6 +458,13 @@ fn user_app_name_wins_and_invalid_ai_name_is_502() {
         .unwrap();
     assert_eq!(plan["appName"], "my-shop");
     assert_eq!(plan["architecture"]["nodes"][0]["name"], "my-shop-web");
+    // The plan kept in the cluster names the app too, not the AI's
+    // "breakfast" (report 24, N37).
+    let saved = laoban_m0::StateStore::list(&*store, laoban_m0::state::PLANS).unwrap();
+    assert_eq!(saved.len(), 1);
+    let text = saved[0].spec.to_string();
+    assert!(text.contains("\"appName\":\"my-shop\""), "{text}");
+    assert!(!text.contains("\"appName\":\"breakfast\""), "{text}");
 
     let mut bad = serde_json::from_str::<Value>(&plan_json()).unwrap();
     bad["appName"] = json!("Not Valid");
