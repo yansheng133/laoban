@@ -1,0 +1,31 @@
+{
+  "name": "laoban-ext",
+  "description": "laoban: describe what you need, review the plan and architecture view, then approve changes",
+  "version": "0.1.21",
+  "private": false,
+  "rancher": true,
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "three": "0.160.0"
+  },
+  "devDependencies": {
+    "@vue/cli-plugin-babel": "5.0.9",
+    "@vue/cli-service": "5.0.8",
+    "@vue/cli-plugin-typescript": "5.0.9"
+  },
+  "icon": "https://raw.githubusercontent.com/yansheng133/laoban/v0.1.21/docs/images/laoban-icon.svg",
+  "homepage": "https://github.com/yansheng133/laoban",
+  "keywords": [
+    "laoban",
+    "ai",
+    "fleet",
+    "gitops",
+    "3d"
+  ],
+  "files": [
+    "**/*"
+  ],
+  "main": "laoban-ext-0.1.21.umd.min.js"
+}
