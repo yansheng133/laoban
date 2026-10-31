@@ -366,7 +366,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "laoban-ai"
-version = "0.1.20"
+version = "0.1.21"
 dependencies = [
  "laoban-mask",
  "laoban-mockhttp",
@@ -378,7 +378,7 @@ dependencies = [
 
 [[package]]
 name = "laoban-audit"
-version = "0.1.20"
+version = "0.1.21"
 dependencies = [
  "laoban-mask",
  "thiserror",
@@ -386,7 +386,7 @@ dependencies = [
 
 [[package]]
 name = "laoban-m0"
-version = "0.1.20"
+version = "0.1.21"
 dependencies = [
  "laoban-ai",
  "laoban-mask",
@@ -401,7 +401,7 @@ dependencies = [
 
 [[package]]
 name = "laoban-mask"
-version = "0.1.20"
+version = "0.1.21"
 dependencies = [
  "regex",
  "serde",
@@ -411,11 +411,11 @@ dependencies = [
 
 [[package]]
 name = "laoban-mockhttp"
-version = "0.1.20"
+version = "0.1.21"
 
 [[package]]
 name = "laoban-policy"
-version = "0.1.20"
+version = "0.1.21"
 dependencies = [
  "serde",
  "serde_json",
@@ -424,7 +424,7 @@ dependencies = [
 
 [[package]]
 name = "laoban-server"
-version = "0.1.20"
+version = "0.1.21"
 dependencies = [
  "laoban-ai",
  "laoban-m0",

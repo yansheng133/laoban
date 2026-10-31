@@ -2,7 +2,7 @@
 
 給接手的人（或其他 Claude 工作階段）快速知道 laoban 做到哪裡。隨每個版本更新；細節以 [m0-design.md](m0-design.md) 與 [Releases](https://github.com/yansheng133/laoban/releases) 為準。
 
-**最後更新**：v0.1.20（2026-10-17）
+**最後更新**：v0.1.21（2026-10-31）
 
 ## 一句話
 
@@ -14,6 +14,7 @@ Rancher UI extension：用一句話做出應用（AI 先給計畫與 3D 架構�
 |---|---|
 | 安裝 | 公開 Helm repo `https://yansheng133.github.io/laoban`：extension（Rancher → Extensions）與後端兩個 chart（`laoban-crd`、`laoban`）。chart 已帶映像檔 digest。照 [quickstart.md](quickstart.md) |
 | 做新應用 | 一句話 → 計畫、3D 架構圖 → 確認 → 程式寫進 GitHub → Fleet 部署 → 打開應用 |
+| 打開應用 | 設定 `apps.url` 時每個應用有自己的 Ingress 與網址（v0.1.21 起，與 Rancher 不同源）；沒設定時經 Rancher 代理開啟，頁面顯示同網址警告 |
 | 應用的形狀 | 固定兩個元件：網頁加 API（Python，SUSE BCI 映像），一個 namespace，Pod Security restricted |
 | 一起修改（意見收斂） | 一般與針對元件的意見、+1、回覆、改寫、撤回；草稿存在一輪裡（預設分享）；發起人改截止或立即收斂；AI 收斂成計畫；對計畫步驟留言；提意見的人都確認才發布；重啟後一輪還在；結束後歸檔到 `laoban-rounds` 分支，可看過去的輪次 |
 | 版本 | 每一版是一個 commit；比較、還原；手動改程式；3D 圖拖曳存版 |
