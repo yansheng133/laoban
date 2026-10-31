@@ -433,14 +433,21 @@ impl M0Service {
     /// the repository (the app was deleted there). Such a round would stay
     /// forever: its resource is otherwise deleted only when the app's next
     /// round starts. Rounds still open are left alone.
-    pub fn prune_orphan_rounds(&self) {
+    /// Returns how many were deleted.
+    pub fn prune_orphan_rounds(&self) -> usize {
         if !self.rounds_ready() {
-            return;
+            return 0;
         }
         let names = match self.app_names() {
             Ok(n) => n,
             // GitHub unreachable: try again next time, never guess.
-            Err(_) => return,
+            Err(e) => {
+                eprintln!(
+                    "laoban-m0: looking for rounds of deleted apps failed ({}); retrying later",
+                    e.log_detail().unwrap_or_else(|| e.to_string())
+                );
+                return 0;
+            }
         };
         let orphans: Vec<Round> = self
             .rounds()
@@ -452,9 +459,11 @@ impl M0Service {
             })
             .cloned()
             .collect();
+        let mut deleted = 0;
         for r in orphans {
             match self.state.delete(ROUNDS, &object_name(&r)) {
                 Ok(()) => {
+                    deleted += 1;
                     let mut rs = self.rounds();
                     if rs.get(&r.app).is_some_and(|c| c.id == r.id) {
                         rs.remove(&r.app);
@@ -467,6 +476,7 @@ impl M0Service {
                 Err(e) => log_store_problem("deleting", &r, &e),
             }
         }
+        deleted
     }
 
     pub fn archive_tick(&self, now_unix: u64) {

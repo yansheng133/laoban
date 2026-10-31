@@ -731,19 +731,19 @@ fn rounds_of_deleted_apps_are_pruned_once_finished_and_archived() {
         .unwrap();
 
     // The app is still in the repository: nothing to prune.
-    a.service.prune_orphan_rounds();
+    let _ = a.service.prune_orphan_rounds();
     assert_eq!(store.list(ROUNDS).unwrap().len(), 1);
 
     // The app was deleted from the repository, but its round is still open.
     let gone = github_mock_with(RefUpdate::Ok, Vec::new());
     let b = backend(MockProvider::new(), &gone, &store);
-    b.service.prune_orphan_rounds();
+    let _ = b.service.prune_orphan_rounds();
     assert_eq!(store.list(ROUNDS).unwrap().len(), 1, "open rounds are kept");
 
     // Finished but not archived yet: kept.
     a.service.cancel_round("todo", Some("u-a")).unwrap();
     let b = backend(MockProvider::new(), &gone, &store);
-    b.service.prune_orphan_rounds();
+    let _ = b.service.prune_orphan_rounds();
     assert_eq!(
         store.list(ROUNDS).unwrap().len(),
         1,
@@ -754,6 +754,6 @@ fn rounds_of_deleted_apps_are_pruned_once_finished_and_archived() {
     a.service.archive_tick(now());
     assert_eq!(stored(&store)["round"]["archived"], true);
     let b = backend(MockProvider::new(), &gone, &store);
-    b.service.prune_orphan_rounds();
+    assert_eq!(b.service.prune_orphan_rounds(), 1);
     assert!(store.list(ROUNDS).unwrap().is_empty());
 }

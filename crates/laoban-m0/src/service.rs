@@ -2011,7 +2011,7 @@ impl M0Service {
                             s.plans_tick(now);
                             ticks += 1;
                             if ticks % PRUNE_EVERY_TICKS == 0 {
-                                s.prune_orphan_rounds();
+                                let _ = s.prune_orphan_rounds();
                             }
                         }
                         None => return,
@@ -2029,19 +2029,29 @@ impl M0Service {
             .name("laoban-infra-sync".into())
             .spawn(move || loop {
                 let Some(s) = service.upgrade() else { return };
-                match s.sync_infra() {
+                let synced = match s.sync_infra() {
                     Ok(0) => {
                         eprintln!("laoban-m0: app Ingress/NetworkPolicy files match the settings");
-                        return;
+                        true
                     }
                     Ok(n) => {
                         eprintln!("laoban-m0: updated {n} app Ingress/NetworkPolicy file(s) to match the settings");
-                        return;
+                        true
                     }
-                    Err(e) => eprintln!(
-                        "laoban-m0: syncing app Ingress/NetworkPolicy files failed ({}); retrying in {INFRA_SYNC_RETRY_SECS} s",
-                        e.log_detail().unwrap_or_else(|| e.to_string())
-                    ),
+                    Err(e) => {
+                        eprintln!(
+                            "laoban-m0: syncing app Ingress/NetworkPolicy files failed ({}); retrying in {INFRA_SYNC_RETRY_SECS} s",
+                            e.log_detail().unwrap_or_else(|| e.to_string())
+                        );
+                        false
+                    }
+                };
+                if synced {
+                    // Rounds of apps deleted while the backend was down go
+                    // now, not only at the next periodic check.
+                    let n = s.prune_orphan_rounds();
+                    eprintln!("laoban-m0: deleted {n} finished round(s) of apps no longer in the repository");
+                    return;
                 }
                 drop(s);
                 std::thread::sleep(std::time::Duration::from_secs(INFRA_SYNC_RETRY_SECS));
