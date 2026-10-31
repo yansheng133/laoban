@@ -4,9 +4,10 @@
 // version runs, the app link. Shared by the new-app and app detail pages.
 //
 // AI text is rendered with {{ }} only, never v-html.
-import { defineComponent, PropType } from 'vue';
+import { defineComponent, PropType, computed } from 'vue';
 import { useStore } from 'vuex';
 import { useText } from '../composables/useText';
+import { appOnRancherOrigin } from '../utils/backend';
 import type { PlanResponse, ApplyResponse } from '../utils/backend';
 
 export default defineComponent({
@@ -25,12 +26,13 @@ export default defineComponent({
 
   emits: ['apply'],
 
-  setup() {
+  setup(props) {
     const store = useStore();
     const { t } = useText(store);
     const formatNumber = (n: unknown) => (typeof n === 'number' && Number.isFinite(n) ? n.toLocaleString() : '-');
+    const sameOrigin = computed(() => appOnRancherOrigin(props.appLink, window.location.origin));
 
-    return { t, formatNumber };
+    return { t, formatNumber, sameOrigin };
   },
 });
 </script>
@@ -116,6 +118,12 @@ export default defineComponent({
           class="text-error"
         >{{ t('laoban.dashboard.result.badAppUrl') }}</span>
         <slot name="ready" />
+      </p>
+      <p
+        v-if="phase === 'ready' && sameOrigin"
+        class="text-warning laoban-same-origin"
+      >
+        <i class="icon icon-warning" /> {{ t('laoban.dashboard.result.sameOriginWarning') }}
       </p>
     </div>
   </div>

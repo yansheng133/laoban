@@ -147,6 +147,29 @@ config:
   # "en" or "zh-Hant". The page shows most of them in its own language.
   language: en
 
+# Where the generated apps are opened ("Open app").
+apps:
+  # The apps' own address, with {app} in the host name, for example
+  # "https://{app}.apps.example.com/" (LAOBAN_APP_URL). Each app then gets
+  # an Ingress for its host and opens there, on another origin than Rancher.
+  #
+  # Empty (the default): apps open through the Rancher service proxy, on
+  # the Rancher address. The app's page then runs with the viewer's Rancher
+  # login and can call the Rancher API as them; the page warns next to every
+  # "Open app" link. Set this for anything but a trial. See SECURITY.md.
+  #
+  # The host names must resolve to the cluster's ingress controller (for
+  # example a wildcard DNS record *.apps.example.com). A port in the URL is
+  # used in the link only, for a controller reached through a forwarded port.
+  # Apps made before this is set get their Ingress with their next change.
+  url: ""
+  # spec.ingressClassName of the app Ingresses (LAOBAN_APP_INGRESS_CLASS).
+  # Empty: the cluster's default IngressClass.
+  ingressClassName: ""
+  # TLS Secret in config.targetNamespace for the app hosts, e.g. a wildcard
+  # certificate (LAOBAN_APP_TLS_SECRET). Only with an https:// url.
+  tlsSecretName: ""
+
 # Rounds of 意見收斂. They are stored in Round resources (laoban-crd chart) in
 # the release namespace; without that CRD the page says so and rounds wait.
 rounds:

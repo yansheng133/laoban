@@ -1130,7 +1130,12 @@ impl M0Service {
         Ok(response)
     }
 
+    /// The app's own address when `LAOBAN_APP_URL` is set, otherwise the
+    /// Rancher service proxy path (same origin as Rancher).
     fn app_url(&self, app: &str) -> String {
+        if let Some(u) = &self.settings.app_url {
+            return u.url_for(app);
+        }
         format!(
             "/k8s/clusters/{}/api/v1/namespaces/{}/services/http:{app}-web:8080/proxy/",
             self.settings.cluster_id, self.settings.target_namespace
@@ -1404,6 +1409,7 @@ impl M0Service {
             model: &p.model,
             generated_at: &generated_at,
             meta_json: &meta_json,
+            app_url: self.settings.app_url.as_ref(),
         });
         let commit = self.commit_lock.lock().unwrap_or_else(|e| e.into_inner());
         let sha = self

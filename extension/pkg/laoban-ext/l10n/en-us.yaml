@@ -420,6 +420,7 @@ laoban:
       committed: "Committed to GitHub:"
       openApp: Open app
       badAppUrl: The app URL returned by the backend is not valid, so no link is shown.
+      sameOriginWarning: "This app opens on the Rancher address and runs with your Rancher login: its page can use the Rancher API as you. Only open apps you trust, and ask your administrator to give apps their own address (chart value apps.url)."
     arch:
       title: Architecture view
       empty: The 3D architecture of the app appears here after a plan is generated.

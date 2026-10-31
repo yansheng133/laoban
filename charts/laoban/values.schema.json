@@ -314,6 +314,26 @@
         }
       }
     },
+    "apps": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "description": "The apps' own address with {app} in the host, e.g. https://{app}.apps.example.com/ (LAOBAN_APP_URL). Empty: the Rancher service proxy (same origin as Rancher).",
+          "type": "string",
+          "maxLength": 220,
+          "pattern": "^$|^https?://[a-z0-9.-]*\\{app\\}[a-z0-9.-]*(:[0-9]{1,5})?/?$"
+        },
+        "ingressClassName": {
+          "description": "spec.ingressClassName of the app Ingresses (LAOBAN_APP_INGRESS_CLASS).",
+          "$ref": "#/definitions/name"
+        },
+        "tlsSecretName": {
+          "description": "TLS Secret for the app hosts in config.targetNamespace (LAOBAN_APP_TLS_SECRET). Only with an https url.",
+          "$ref": "#/definitions/name"
+        }
+      }
+    },
     "syslog": {
       "type": "object",
       "additionalProperties": false,
