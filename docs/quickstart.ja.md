@@ -31,7 +31,7 @@ laoban は計画を作成したりコードを変更したりするたびに AI 
    - Target：**Helm Repository**（HTTP(S) URL pointing to a Helm chart repository index。デフォルトでこれが選ばれています）
    - Index URL：`https://yansheng133.github.io/laoban`
    - 画面下の **Add Repository** をクリックします。
-3. 保存すると、画面は local クラスターの Apps → Repositories に移ります。左上のメニューから **Extensions** → **Available** タブに戻り、**laoban** のカードを見つけて → カード右上の **⋮** → **Install** → バージョン（最新。例：`0.1.21`）を確認 → **Install**。ダイアログに「untrusted authors」の黄色い注意が出ますが、laoban は Rancher 認定ではないコミュニティのプロジェクトだからです。
+3. 保存すると、画面は local クラスターの Apps → Repositories に移ります。左上のメニューから **Extensions** → **Available** タブに戻り、**laoban** のカードを見つけて → カード右上の **⋮** → **Install** → バージョン（最新。例：`0.1.22`）を確認 → **Install**。ダイアログに「untrusted authors」の黄色い注意が出ますが、laoban は Rancher 認定ではないコミュニティのプロジェクトだからです。
 4. インストール後、画面上部に **Extensions changed - reload required** が表示されたら **Reload** をクリックします（またはページを再読み込みします）。**laoban** は左上のメニューの **Global Apps** に表示されます。
 
 Index URL が開けない場合は、代わりに `https://raw.githubusercontent.com/yansheng133/laoban/gh-pages` を使ってください。内容は同じです。
@@ -52,7 +52,7 @@ Index URL が開けない場合は、代わりに `https://raw.githubusercontent
 # バックエンド
 kubectl --context downstream create namespace laoban-system
 # 生成されたアプリ（Pod Security restricted で強制）
-kubectl --context downstream apply -f https://raw.githubusercontent.com/yansheng133/laoban/v0.1.21/deploy/m0/namespace-laoban-dev.yaml
+kubectl --context downstream apply -f https://raw.githubusercontent.com/yansheng133/laoban/v0.1.22/deploy/m0/namespace-laoban-dev.yaml
 
 # key と token はファイルから読み込み、values に含めず、shell history にも残さない
 kubectl --context downstream -n laoban-system create secret generic laoban-anthropic --from-file=api-key=./anthropic-api-key
@@ -74,8 +74,9 @@ kubectl --context local get clusters.management.cattle.io \
 
 - クラスターの ingress controller を指すワイルドカード DNS レコード（例：`*.apps.example.com`）。
 - https を使う場合は `laoban-dev` にワイルドカード証明書を置き、`apps.tlsSecretName` に設定します。ingress class が既定でなければ `apps.ingressClassName` を設定します。
-- 専用アドレスのアプリは Rancher の権限チェックを通らなくなり、アドレスに届く人なら誰でも開けます。ネットワークや ingress controller の認証で、届く人を制限してください。
-- 設定前からあるアプリは、次の変更（3D レイアウトの変更を含む）で Ingress が追加されます。
+- 専用アドレスのアプリは Rancher の権限チェックを通らなくなり、アドレスに届く人なら誰でも開けます。ログインを必須にするには、`apps.ingressAnnotations` で ingress controller の認証を付けます（例：Traefik の middleware、ingress-nginx の `auth-url`）。値はアプリのリポジトリに書き込まれるため、秘密は入れないでください。
+- バックエンドは起動時に、各アプリの Ingress をこの設定に合わせます（1 つの commit）。設定前からあるアプリにも追加され、アドレスを変えると更新され、`apps.url` を外すと削除されます。
+- 各アプリには既定で NetworkPolicy が付きます（`apps.networkPolicy`）。API は自分の Web Pod からの接続だけを受け付け、どちらも自分の API と DNS にしか接続できません。
 
 `values-laoban.yaml` を作成します（`<...>` を置き換えてください）。
 
@@ -107,8 +108,8 @@ apps:
 ```bash
 helm repo add laoban https://yansheng133.github.io/laoban
 helm repo update
-helm --kube-context downstream install laoban-crd laoban/laoban-crd -n laoban-system --version 0.1.21
-helm --kube-context downstream install laoban laoban/laoban -n laoban-system -f values-laoban.yaml --version 0.1.21
+helm --kube-context downstream install laoban-crd laoban/laoban-crd -n laoban-system --version 0.1.22
+helm --kube-context downstream install laoban laoban/laoban -n laoban-system -f values-laoban.yaml --version 0.1.22
 ```
 
 公開されている chart には、このバージョンのイメージ digest（`ghcr.io/yansheng133/laoban-server`）がすでに設定されているため、別途指定する必要はありません。
@@ -150,8 +151,8 @@ kubectl --context local -n fleet-default get clusters.fleet.cattle.io
 2 つのテンプレートをダウンロードし、`fleet-gitrepo.yaml` の `https://github.com/<owner>/laoban-apps` をご自身の repo に、`clusterName: rke2` を上で調べた名前に置き換えてから適用します。GitRepo 自体の名前（`metadata.name: laoban-apps`）は**変更しないでください**。ページはこの名前でデプロイ状況を追跡します。
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/yansheng133/laoban/v0.1.21/deploy/m0/fleet-gitrepo.yaml
-curl -fsSLO https://raw.githubusercontent.com/yansheng133/laoban/v0.1.21/deploy/m0/fleet-gitreporestriction.yaml
+curl -fsSLO https://raw.githubusercontent.com/yansheng133/laoban/v0.1.22/deploy/m0/fleet-gitrepo.yaml
+curl -fsSLO https://raw.githubusercontent.com/yansheng133/laoban/v0.1.22/deploy/m0/fleet-gitreporestriction.yaml
 # fleet-gitrepo.yaml を編集した後：
 kubectl --context local apply -f fleet-gitreporestriction.yaml
 kubectl --context local apply -f fleet-gitrepo.yaml
@@ -177,7 +178,7 @@ UI の言語は、Rancher 右上のユーザーメニュー → Preferences で�
 - Rancher Project で管理する場合は、Rancher の **local** クラスターに Project ロールを適用し（local クラスターを管理できる kubeconfig を使います。例：Rancher ホスト上の `/etc/rancher/rke2/rke2.yaml`。または Rancher UI の local クラスター → **Import YAML** にこのファイルを貼り付けます）、メンバーに **laoban user** または **laoban viewer** を割り当てます。
 
 ```bash
-kubectl --context local apply -f https://raw.githubusercontent.com/yansheng133/laoban/v0.1.21/deploy/rancher/roletemplate.yaml
+kubectl --context local apply -f https://raw.githubusercontent.com/yansheng133/laoban/v0.1.22/deploy/rancher/roletemplate.yaml
 ```
 
   詳しくは [deploy/rancher/README.md](../deploy/rancher/README.md) を参照してください。

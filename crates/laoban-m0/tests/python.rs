@@ -50,7 +50,7 @@ const CHECK_YAML: &str = r#"
 import json, sys, yaml
 root, expected = sys.argv[1], json.load(open(sys.argv[2], encoding="utf-8"))
 docs = {}
-for name in ["fleet.yaml", "configmap-web.yaml", "configmap-api.yaml", "web.yaml", "api.yaml", "ingress.yaml"]:
+for name in ["fleet.yaml", "configmap-web.yaml", "configmap-api.yaml", "web.yaml", "api.yaml", "ingress.yaml", "networkpolicy.yaml"]:
     with open(f"{root}/{name}", encoding="utf-8") as f:
         docs[name] = list(yaml.safe_load_all(f))
 fleet = docs["fleet.yaml"][0]
@@ -99,6 +99,19 @@ assert ing["spec"] == {
 }, ing["spec"]
 web_svc = docs["web.yaml"][1]
 assert web_svc["metadata"]["name"] == "tricky-web" and web_svc["spec"]["ports"][0]["name"] == "http"
+assert ing["metadata"]["annotations"] == {"example.com/auth": "on"}, ing["metadata"]
+api_np, web_np = docs["networkpolicy.yaml"]
+sel = lambda c: {"matchLabels": {"app.kubernetes.io/name": f"tricky-{c}", "laoban.io/app": "tricky"}}
+dns = {"to": [{"namespaceSelector": {}}], "ports": [{"port": 53, "protocol": "UDP"}, {"port": 53, "protocol": "TCP"}]}
+assert api_np["spec"] == {"podSelector": sel("api"), "policyTypes": ["Ingress", "Egress"],
+    "ingress": [{"from": [{"podSelector": sel("web")}], "ports": [{"port": 8080, "protocol": "TCP"}]}],
+    "egress": [dns]}, api_np["spec"]
+assert web_np["spec"] == {"podSelector": sel("web"), "policyTypes": ["Egress"],
+    "egress": [{"to": [{"podSelector": sel("api")}], "ports": [{"port": 8080, "protocol": "TCP"}]}, dns]}, web_np["spec"]
+# The selectors must match the pods' labels.
+for name, np in (("api.yaml", api_np), ("web.yaml", web_np)):
+    pod_labels = docs[name][0]["spec"]["template"]["metadata"]["labels"]
+    assert all(pod_labels.get(k) == v for k, v in np["spec"]["podSelector"]["matchLabels"].items()), (name, pod_labels)
 print("YAML OK")
 "#;
 
@@ -130,7 +143,11 @@ fn rendered_manifests_round_trip_through_a_yaml_parser() {
             port: String::new(),
             ingress_class: Some("traefik".into()),
             tls_secret: Some("apps-tls".into()),
+            annotations: [("example.com/auth".to_string(), "on".to_string())]
+                .into_iter()
+                .collect(),
         }),
+        network_policy: true,
     });
     let dir = temp_dir("yaml");
     for f in &rendered {

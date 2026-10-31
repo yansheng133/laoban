@@ -72,11 +72,25 @@ describe('bundleReadiness', () => {
     })], PREFIX).state).toBe('pending');
   });
 
-  it('is pending when the bundle was built from another commit', () => {
+  it('waits for Fleet while every bundle is from another commit, without its old counts', () => {
     const b = bundle(PREFIX, { ready: 1, commit: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' });
+    const r = bundleReadiness([b], PREFIX, 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
 
-    expect(bundleReadiness([b], PREFIX, 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb').state).toBe('pending');
+    // Not "1 / 1 ready" from the old version (report 26 N39).
+    expect(r.state).toBe('missing');
+    expect(r.ready).toBe(0);
     expect(bundleReadiness([b], PREFIX, 'aaaaaaa').state).toBe('ready');
+  });
+
+  it('is pending when only some bundles are from another commit', () => {
+    const bundles = [
+      bundle(PREFIX, { ready: 1, commit: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' }),
+      bundle(`${ PREFIX }-extra`, { ready: 1, commit: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' }),
+    ];
+    const r = bundleReadiness(bundles, PREFIX, 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
+
+    expect(r.state).toBe('pending');
+    expect(r.ready).toBe(1);
   });
 
   it('reports error when Fleet counts apply errors', () => {

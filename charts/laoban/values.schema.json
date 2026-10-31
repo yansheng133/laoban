@@ -331,6 +331,23 @@
         "tlsSecretName": {
           "description": "TLS Secret for the app hosts in config.targetNamespace (LAOBAN_APP_TLS_SECRET). Only with an https url.",
           "$ref": "#/definitions/name"
+        },
+        "ingressAnnotations": {
+          "description": "Annotations for every app Ingress (LAOBAN_APP_INGRESS_ANNOTATIONS), e.g. an ingress controller's authentication. Only with url; no secrets (written into the apps repository).",
+          "type": "object",
+          "maxProperties": 20,
+          "propertyNames": {
+            "maxLength": 317,
+            "pattern": "^([a-z0-9]([-a-z0-9.]*[a-z0-9])?/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        },
+        "networkPolicy": {
+          "description": "NetworkPolicies for every app (LAOBAN_APP_NETWORK_POLICY): the API accepts only the app's web pods; both reach only the app's API and DNS.",
+          "type": "boolean"
         }
       }
     },

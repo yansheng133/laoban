@@ -64,7 +64,7 @@ function sameCommit(a: string, b: string): boolean {
 }
 
 /** Readiness of a single bundle. */
-export function bundleState(b: Bundle, commit?: string): { state: Exclude<ReadinessState, 'missing'>; ready: number; desired: number; message: string } {
+export function bundleState(b: Bundle, commit?: string): { state: Exclude<ReadinessState, 'missing'>; ready: number; desired: number; message: string; stale?: boolean } {
   const summary = b.status?.summary || {};
   const desired = Number(summary.desiredReady) || 0;
   const ready = Number(summary.ready) || 0;
@@ -74,9 +74,11 @@ export function bundleState(b: Bundle, commit?: string): { state: Exclude<Readin
   // Built from an older commit: the new one has not been applied yet.
   const label = b.metadata?.labels?.[FLEET_COMMIT_LABEL];
 
+  // Its counts describe the old version, so they are not passed on (they
+  // showed "1 / 1 ready" before dropping to "0 / 1", report 26 N39).
   if (commit && label && !sameCommit(label, commit)) {
     return {
-      state: 'pending', ready, desired, message
+      state: 'pending', ready: 0, desired, message: '', stale: true
     };
   }
 
@@ -135,6 +137,14 @@ export function bundleReadiness(bundles: Bundle[], prefix: string, commit?: stri
   }
 
   const states = matching.map((b) => bundleState(b, commit));
+
+  // Every bundle is still from an older commit: for the page, Fleet has
+  // not picked up the change yet.
+  if (states.every((s) => s.stale)) {
+    return {
+      state: 'missing', matched: matching.length, ready: 0, desired: 0, message: ''
+    };
+  }
   const ready = states.reduce((n, s) => n + s.ready, 0);
   const desired = states.reduce((n, s) => n + s.desired, 0);
   const message = states.map((s) => s.message).find(Boolean) || '';

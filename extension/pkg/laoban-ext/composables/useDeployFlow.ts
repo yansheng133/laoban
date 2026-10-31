@@ -237,7 +237,12 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
 
     deploymentsOnly.value = viaDeployments && unseen;
 
-    if (viaDeployments || readiness.value?.state === 'ready' || readiness.value?.state === 'modified') {
+    // 'pending' at the new commit: Fleet can stay "0 / 1 ready" for minutes
+    // while an old pod terminates (report 26 N40). The new version may
+    // already run; the Deployments tell.
+    const atNewCommit = readiness.value?.state === 'pending';
+
+    if (viaDeployments || atNewCommit || readiness.value?.state === 'ready' || readiness.value?.state === 'modified') {
       const done = await rolledOut(gen);
 
       if (done === null) {

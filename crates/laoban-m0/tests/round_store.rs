@@ -720,3 +720,40 @@ fn a_later_read_does_not_restart_work_in_memory() {
     assert_eq!(state(&round_of(&a)), "collecting");
     assert_eq!(a.provider.call_count(), 0);
 }
+
+#[test]
+fn rounds_of_deleted_apps_are_pruned_once_finished_and_archived() {
+    let github = github_mock_with(RefUpdate::Ok, todo_app());
+    let store = Arc::new(MemoryStore::new());
+    let a = backend(MockProvider::new(), &github, &store);
+    a.service
+        .open_round("todo", &open(30), Some("u-a"))
+        .unwrap();
+
+    // The app is still in the repository: nothing to prune.
+    let _ = a.service.prune_orphan_rounds();
+    assert_eq!(store.list(ROUNDS).unwrap().len(), 1);
+
+    // The app was deleted from the repository, but its round is still open.
+    let gone = github_mock_with(RefUpdate::Ok, Vec::new());
+    let b = backend(MockProvider::new(), &gone, &store);
+    let _ = b.service.prune_orphan_rounds();
+    assert_eq!(store.list(ROUNDS).unwrap().len(), 1, "open rounds are kept");
+
+    // Finished but not archived yet: kept.
+    a.service.cancel_round("todo", Some("u-a")).unwrap();
+    let b = backend(MockProvider::new(), &gone, &store);
+    let _ = b.service.prune_orphan_rounds();
+    assert_eq!(
+        store.list(ROUNDS).unwrap().len(),
+        1,
+        "unarchived rounds are kept"
+    );
+
+    // Archived: deleted.
+    a.service.archive_tick(now());
+    assert_eq!(stored(&store)["round"]["archived"], true);
+    let b = backend(MockProvider::new(), &gone, &store);
+    assert_eq!(b.service.prune_orphan_rounds(), 1);
+    assert!(store.list(ROUNDS).unwrap().is_empty());
+}

@@ -171,9 +171,15 @@ spec:
             - name: LAOBAN_APP_TLS_SECRET
               value: {{ . | quote }}
             {{- end }}
-            {{- else if or .ingressClassName .tlsSecretName }}
-            {{- fail "apps.ingressClassName and apps.tlsSecretName need apps.url" }}
+            {{- with .ingressAnnotations }}
+            - name: LAOBAN_APP_INGRESS_ANNOTATIONS
+              value: {{ toJson . | quote }}
             {{- end }}
+            {{- else if or .ingressClassName .tlsSecretName .ingressAnnotations }}
+            {{- fail "apps.ingressClassName, apps.tlsSecretName and apps.ingressAnnotations need apps.url" }}
+            {{- end }}
+            - name: LAOBAN_APP_NETWORK_POLICY
+              value: {{ ternary "true" "false" (ne .networkPolicy false) | quote }}
             {{- end }}
             {{- range $roundLimits }}
             {{- $v := get $limits (index . 0) }}

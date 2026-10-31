@@ -161,7 +161,8 @@ apps:
   # The host names must resolve to the cluster's ingress controller (for
   # example a wildcard DNS record *.apps.example.com). A port in the URL is
   # used in the link only, for a controller reached through a forwarded port.
-  # Apps made before this is set get their Ingress with their next change.
+  # When the backend starts it brings every app's Ingress (and NetworkPolicy)
+  # file in the apps repository in line with these settings, in one commit.
   url: ""
   # spec.ingressClassName of the app Ingresses (LAOBAN_APP_INGRESS_CLASS).
   # Empty: the cluster's default IngressClass.
@@ -169,6 +170,21 @@ apps:
   # TLS Secret in config.targetNamespace for the app hosts, e.g. a wildcard
   # certificate (LAOBAN_APP_TLS_SECRET). Only with an https:// url.
   tlsSecretName: ""
+  # Annotations for every app Ingress (LAOBAN_APP_INGRESS_ANNOTATIONS), to
+  # put the apps behind your ingress controller's authentication. Apps on
+  # their own address are not behind Rancher's permission check: anyone who
+  # can reach the address can open them. Examples:
+  #   Traefik:       traefik.ingress.kubernetes.io/router.middlewares: laoban-dev-auth@kubernetescrd
+  #   ingress-nginx: nginx.ingress.kubernetes.io/auth-url: https://auth.example.com/check
+  # The values are written into the apps repository: no secrets here.
+  # Only with url.
+  ingressAnnotations: {}
+  # NetworkPolicies for every app (LAOBAN_APP_NETWORK_POLICY): the app's API
+  # accepts connections only from the app's own web pods, and both reach
+  # nothing but the app's API and the cluster DNS, so generated code cannot
+  # call other services. Needs a CNI that enforces NetworkPolicy (RKE2's
+  # Canal, Calico and Cilium do).
+  networkPolicy: true
 
 # Rounds of 意見收斂. They are stored in Round resources (laoban-crd chart) in
 # the release namespace; without that CRD the page says so and rounds wait.

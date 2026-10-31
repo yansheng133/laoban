@@ -342,8 +342,20 @@ impl GithubCommitter {
     /// Commit `files` on top of the branch head and move the branch.
     /// Returns the new commit SHA.
     pub fn commit(&self, files: &[CommitFile], message: &str) -> Result<String, GithubError> {
+        self.commit_changes(files, &[], message)
+    }
+
+    /// Like [`commit`](Self::commit), also deleting the files at `deletes`
+    /// (paths that exist on the branch; GitHub refuses to delete a missing
+    /// path).
+    pub fn commit_changes(
+        &self,
+        files: &[CommitFile],
+        deletes: &[String],
+        message: &str,
+    ) -> Result<String, GithubError> {
         let branch = self.config.branch.clone();
-        self.commit_on(&branch, files, message, false)
+        self.commit_on(&branch, files, deletes, message, false)
     }
 
     /// Commit `files` on `branch` (another branch than the apps', such as
@@ -359,18 +371,19 @@ impl GithubCommitter {
         if !safe_ref(branch) || branch == self.config.branch {
             return Err(GithubError::BadPath);
         }
-        self.commit_on(branch, files, message, true)
+        self.commit_on(branch, files, &[], message, true)
     }
 
     fn commit_on(
         &self,
         branch: &str,
         files: &[CommitFile],
+        deletes: &[String],
         message: &str,
         create: bool,
     ) -> Result<String, GithubError> {
-        for f in files {
-            if !safe_path(&f.path) {
+        for path in files.iter().map(|f| &f.path).chain(deletes) {
+            if !safe_path(path) {
                 return Err(GithubError::BadPath);
             }
         }
@@ -408,6 +421,10 @@ impl GithubCommitter {
             )?;
             let sha = sha_at(&blob["sha"], "create blob")?;
             entries.push(json!({ "path": f.path, "mode": "100644", "type": "blob", "sha": sha }));
+        }
+        // A null sha removes the path from the base tree.
+        for path in deletes {
+            entries.push(json!({ "path": path, "mode": "100644", "type": "blob", "sha": null }));
         }
 
         let tree_body = match &base {
