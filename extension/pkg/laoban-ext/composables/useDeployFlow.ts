@@ -95,7 +95,10 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
   let unmounted = false;
 
   const busy = computed(() => phase.value === 'planning' || phase.value === 'applying');
-  const canApply = computed(() => !busy.value && !!plan.value && !applied.value);
+  // The plan expired or was already used (report 24, N30): it cannot be
+  // deployed any more; a new one has to be generated.
+  const planGone = ref(false);
+  const canApply = computed(() => !busy.value && !!plan.value && !applied.value && !planGone.value);
   const steps = computed(() => {
     const list = plan.value?.steps;
 
@@ -287,6 +290,7 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
     stopElapsed();
     errorText.value = '';
     plan.value = null;
+    planGone.value = false;
     applied.value = null;
     readiness.value = null;
     rollingOut.value = false;
@@ -300,6 +304,7 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
     }
     reset();
     phase.value = 'planning';
+    planGone.value = false;
     startElapsed();
     try {
       plan.value = await createPlan(store, prompt.trim(), opts.appName || undefined, aiRequestTimeoutMs(config.value), opts.baseApp);
@@ -324,6 +329,7 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
       applied.value = await applyPlan(store, plan.value.planId, aiRequestTimeoutMs(config.value));
     } catch (e) {
       errorText.value = fail(e);
+      planGone.value = e instanceof RequestError && (e.code === 'plan_not_found' || e.code === 'already_applied');
       phase.value = 'planned';
       stopElapsed();
 
@@ -381,7 +387,7 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
     case 'planning':
       return t('laoban.dashboard.status.planning', { seconds: elapsed.value });
     case 'planned':
-      return t('laoban.dashboard.status.planned');
+      return planGone.value ? t('laoban.dashboard.status.planGone') : t('laoban.dashboard.status.planned');
     case 'applying':
       if (directKind.value === 'restore') {
         return t('laoban.versions.restoring', { seconds: elapsed.value });
@@ -423,10 +429,26 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
   const showStatusMessage = computed(() => !!readiness.value?.message &&
     (phase.value === 'deploying' || (phase.value === 'ready' && readiness.value?.state === 'modified')));
 
+  // Settings such as the token cap change with a helm upgrade while the
+  // page stays open: read them again when the user comes back to the tab
+  // (report 24, N31).
+  function onFocus() {
+    if (!busy.value) {
+      loadConfig();
+    }
+  }
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('focus', onFocus);
+  }
+
   onBeforeUnmount(() => {
     unmounted = true;
     stopPolling();
     stopElapsed();
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('focus', onFocus);
+    }
   });
 
   return {

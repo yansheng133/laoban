@@ -31,7 +31,7 @@ laoban は計画を作成したりコードを変更したりするたびに AI 
    - Target：**Helm Repository**（HTTP(S) URL pointing to a Helm chart repository index。デフォルトでこれが選ばれています）
    - Index URL：`https://yansheng133.github.io/laoban`
    - 画面下の **Add Repository** をクリックします。
-3. 保存すると、画面は local クラスターの Apps → Repositories に移ります。左上のメニューから **Extensions** → **Available** タブに戻り、**laoban** のカードを見つけて → カード右上の **⋮** → **Install** → バージョン（最新。例：`0.1.22`）を確認 → **Install**。ダイアログに「untrusted authors」の黄色い注意が出ますが、laoban は Rancher 認定ではないコミュニティのプロジェクトだからです。
+3. 保存すると、画面は local クラスターの Apps → Repositories に移ります。左上のメニューから **Extensions** → **Available** タブに戻り、**laoban** のカードを見つけて → カード右上の **⋮** → **Install** → バージョン（最新。例：`0.1.23`）を確認 → **Install**。ダイアログに「untrusted authors」の黄色い注意が出ますが、laoban は Rancher 認定ではないコミュニティのプロジェクトだからです。
 4. インストール後、画面上部に **Extensions changed - reload required** が表示されたら **Reload** をクリックします（またはページを再読み込みします）。**laoban** は左上のメニューの **Global Apps** に表示されます。
 
 Index URL が開けない場合は、代わりに `https://raw.githubusercontent.com/yansheng133/laoban/gh-pages` を使ってください。内容は同じです。
@@ -52,7 +52,7 @@ Index URL が開けない場合は、代わりに `https://raw.githubusercontent
 # バックエンド
 kubectl --context downstream create namespace laoban-system
 # 生成されたアプリ（Pod Security restricted で強制）
-kubectl --context downstream apply -f https://raw.githubusercontent.com/yansheng133/laoban/v0.1.22/deploy/m0/namespace-laoban-dev.yaml
+kubectl --context downstream apply -f https://raw.githubusercontent.com/yansheng133/laoban/v0.1.23/deploy/m0/namespace-laoban-dev.yaml
 
 # key と token はファイルから読み込み、values に含めず、shell history にも残さない
 kubectl --context downstream -n laoban-system create secret generic laoban-anthropic --from-file=api-key=./anthropic-api-key
@@ -108,8 +108,8 @@ apps:
 ```bash
 helm repo add laoban https://yansheng133.github.io/laoban
 helm repo update
-helm --kube-context downstream install laoban-crd laoban/laoban-crd -n laoban-system --version 0.1.22
-helm --kube-context downstream install laoban laoban/laoban -n laoban-system -f values-laoban.yaml --version 0.1.22
+helm --kube-context downstream install laoban-crd laoban/laoban-crd -n laoban-system --version 0.1.23
+helm --kube-context downstream install laoban laoban/laoban -n laoban-system -f values-laoban.yaml --version 0.1.23
 ```
 
 公開されている chart には、このバージョンのイメージ digest（`ghcr.io/yansheng133/laoban-server`）がすでに設定されているため、別途指定する必要はありません。
@@ -134,8 +134,9 @@ config:
 
 ```bash
 kubectl --context downstream -n laoban-system get pods
-# AVAILABLE が True であること
+# READY が 1/1 であること
 kubectl --context downstream get apiservice v1alpha1.api.laoban.yansheng133.github.io
+# AVAILABLE が True であること
 ```
 
 ## 5. 生成されたアプリを Fleet でデプロイする
@@ -151,8 +152,8 @@ kubectl --context local -n fleet-default get clusters.fleet.cattle.io
 2 つのテンプレートをダウンロードし、`fleet-gitrepo.yaml` の `https://github.com/<owner>/laoban-apps` をご自身の repo に、`clusterName: rke2` を上で調べた名前に置き換えてから適用します。GitRepo 自体の名前（`metadata.name: laoban-apps`）は**変更しないでください**。ページはこの名前でデプロイ状況を追跡します。
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/yansheng133/laoban/v0.1.22/deploy/m0/fleet-gitrepo.yaml
-curl -fsSLO https://raw.githubusercontent.com/yansheng133/laoban/v0.1.22/deploy/m0/fleet-gitreporestriction.yaml
+curl -fsSLO https://raw.githubusercontent.com/yansheng133/laoban/v0.1.23/deploy/m0/fleet-gitrepo.yaml
+curl -fsSLO https://raw.githubusercontent.com/yansheng133/laoban/v0.1.23/deploy/m0/fleet-gitreporestriction.yaml
 # fleet-gitrepo.yaml を編集した後：
 kubectl --context local apply -f fleet-gitreporestriction.yaml
 kubectl --context local apply -f fleet-gitrepo.yaml
@@ -178,7 +179,7 @@ UI の言語は、Rancher 右上のユーザーメニュー → Preferences で�
 - Rancher Project で管理する場合は、Rancher の **local** クラスターに Project ロールを適用し（local クラスターを管理できる kubeconfig を使います。例：Rancher ホスト上の `/etc/rancher/rke2/rke2.yaml`。または Rancher UI の local クラスター → **Import YAML** にこのファイルを貼り付けます）、メンバーに **laoban user** または **laoban viewer** を割り当てます。
 
 ```bash
-kubectl --context local apply -f https://raw.githubusercontent.com/yansheng133/laoban/v0.1.22/deploy/rancher/roletemplate.yaml
+kubectl --context local apply -f https://raw.githubusercontent.com/yansheng133/laoban/v0.1.23/deploy/rancher/roletemplate.yaml
 ```
 
   詳しくは [deploy/rancher/README.md](../deploy/rancher/README.md) を参照してください。

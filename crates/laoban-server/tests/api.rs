@@ -657,6 +657,25 @@ fn background_plan_and_apply_are_jobs() {
     assert_eq!(done["state"], "done", "{done}");
     assert_eq!(done["result"]["commit"], COMMIT);
 
+    // Applied once: a second background apply is refused right away, not
+    // accepted and failed later (report 24, N30). So is an unknown plan.
+    let (status, err) = post_as(
+        r.addr,
+        &format!("/api/plans/{plan_id}/apply"),
+        r#"{"background":true}"#,
+        "u-a",
+    );
+    assert_eq!(status, 409, "{err}");
+    assert_eq!(err["error"]["code"], "already_applied");
+    let (status, err) = post_as(
+        r.addr,
+        "/api/plans/p-20261031-000000/apply",
+        r#"{"background":true}"#,
+        "u-a",
+    );
+    assert_eq!(status, 404, "{err}");
+    assert_eq!(err["error"]["code"], "plan_not_found");
+
     // A failure is kept with the error the request would have returned.
     let (_, job) = post_as(
         r.addr,

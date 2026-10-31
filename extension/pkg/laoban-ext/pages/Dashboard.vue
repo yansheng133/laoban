@@ -54,6 +54,9 @@ export default defineComponent({
       }
     }
 
+    // Without the form, "Enter a request…" points at nothing (report 24, N34).
+    const statusText = computed(() => (mayChange.value === false && flow.phase.value === 'idle' ? t('laoban.dashboard.status.viewOnly') : flow.statusText.value));
+
     const formatNumber = (n: unknown) => (typeof n === 'number' && Number.isFinite(n) ? n.toLocaleString() : '-');
 
     onMounted(flow.loadConfig);
@@ -66,6 +69,7 @@ export default defineComponent({
       appNameInvalid,
       canPlan,
       mayChange,
+      statusText,
       appsRoute,
       detailRoute,
       generatePlan,
@@ -180,8 +184,9 @@ export default defineComponent({
           </button>
         </form>
 
+        <!-- With a plan on screen the error goes next to its deploy button. -->
         <p
-          v-if="errorText"
+          v-if="errorText && !plan"
           class="laoban-error text-error"
           role="alert"
         >
@@ -190,6 +195,7 @@ export default defineComponent({
 
         <PlanResult
           :plan="plan"
+          :error="plan ? errorText : ''"
           :steps="steps"
           :applied="applied"
           :phase="phase"
