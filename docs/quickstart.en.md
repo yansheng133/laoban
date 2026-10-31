@@ -31,7 +31,7 @@ The steps below follow the Rancher 2.15 screens.
    - Target: **Helm Repository** (HTTP(S) URL pointing to a Helm chart repository index; this is the default)
    - Index URL: `https://yansheng133.github.io/laoban`
    - Click **Add Repository** at the bottom of the screen.
-3. After saving, the screen stays on Apps → Repositories in the local cluster. Go back to **Extensions** from the top-left menu → **Available** tab, find the **laoban** card → **⋮** at the card's top right → **Install** → confirm the version (the latest, for example `0.1.22`) → **Install**. The dialog shows a yellow "untrusted authors" notice because laoban is a community project, not a Rancher-certified extension.
+3. After saving, the screen stays on Apps → Repositories in the local cluster. Go back to **Extensions** from the top-left menu → **Available** tab, find the **laoban** card → **⋮** at the card's top right → **Install** → confirm the version (the latest, for example `0.1.23`) → **Install**. The dialog shows a yellow "untrusted authors" notice because laoban is a community project, not a Rancher-certified extension.
 4. After installation, **Extensions changed - reload required** appears at the top; click **Reload** (or reload the page). **laoban** appears under **Global Apps** in the top-left menu.
 
 If the Index URL does not open, use `https://raw.githubusercontent.com/yansheng133/laoban/gh-pages` instead; the content is the same.
@@ -52,7 +52,7 @@ If the Index URL does not open, use `https://raw.githubusercontent.com/yansheng1
 # Backend
 kubectl --context downstream create namespace laoban-system
 # Generated apps (enforced with Pod Security restricted)
-kubectl --context downstream apply -f https://raw.githubusercontent.com/yansheng133/laoban/v0.1.22/deploy/m0/namespace-laoban-dev.yaml
+kubectl --context downstream apply -f https://raw.githubusercontent.com/yansheng133/laoban/v0.1.23/deploy/m0/namespace-laoban-dev.yaml
 
 # Read the key and token from files: they stay out of values and out of shell history
 kubectl --context downstream -n laoban-system create secret generic laoban-anthropic --from-file=api-key=./anthropic-api-key
@@ -108,8 +108,8 @@ Install (CRDs first, then the backend):
 ```bash
 helm repo add laoban https://yansheng133.github.io/laoban
 helm repo update
-helm --kube-context downstream install laoban-crd laoban/laoban-crd -n laoban-system --version 0.1.22
-helm --kube-context downstream install laoban laoban/laoban -n laoban-system -f values-laoban.yaml --version 0.1.22
+helm --kube-context downstream install laoban-crd laoban/laoban-crd -n laoban-system --version 0.1.23
+helm --kube-context downstream install laoban laoban/laoban -n laoban-system -f values-laoban.yaml --version 0.1.23
 ```
 
 The published chart already contains the image digest for this version (`ghcr.io/yansheng133/laoban-server`), so you do not need to specify it.
@@ -152,8 +152,8 @@ kubectl --context local -n fleet-default get clusters.fleet.cattle.io
 Download the two templates. In `fleet-gitrepo.yaml`, replace `https://github.com/<owner>/laoban-apps` with your repo and `clusterName: rke2` with the name you looked up, then apply them. **Do not change** the GitRepo's own name (`metadata.name: laoban-apps`): the page tracks deployments by that name:
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/yansheng133/laoban/v0.1.22/deploy/m0/fleet-gitrepo.yaml
-curl -fsSLO https://raw.githubusercontent.com/yansheng133/laoban/v0.1.22/deploy/m0/fleet-gitreporestriction.yaml
+curl -fsSLO https://raw.githubusercontent.com/yansheng133/laoban/v0.1.23/deploy/m0/fleet-gitrepo.yaml
+curl -fsSLO https://raw.githubusercontent.com/yansheng133/laoban/v0.1.23/deploy/m0/fleet-gitreporestriction.yaml
 # After editing fleet-gitrepo.yaml:
 kubectl --context local apply -f fleet-gitreporestriction.yaml
 kubectl --context local apply -f fleet-gitrepo.yaml
@@ -179,7 +179,7 @@ Switch the UI language in the user menu at the top right of Rancher → Preferen
 - If you manage access with Rancher Projects, apply the Project roles in the Rancher **local** cluster (use a kubeconfig that can manage the local cluster, for example `/etc/rancher/rke2/rke2.yaml` on the Rancher host; or paste this file into the local cluster → **Import YAML** in the Rancher UI), then assign members **laoban user** or **laoban viewer**:
 
 ```bash
-kubectl --context local apply -f https://raw.githubusercontent.com/yansheng133/laoban/v0.1.22/deploy/rancher/roletemplate.yaml
+kubectl --context local apply -f https://raw.githubusercontent.com/yansheng133/laoban/v0.1.23/deploy/rancher/roletemplate.yaml
 ```
 
   See [deploy/rancher/README.md](../deploy/rancher/README.md) for details.

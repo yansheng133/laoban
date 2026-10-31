@@ -31,7 +31,7 @@ laoban 每次產生計畫或改程式都會呼叫 AI，費用由你的 Anthropic
    - Target：**Helm Repository**（HTTP(S) URL pointing to a Helm chart repository index，預設就是這個）
    - Index URL：`https://yansheng133.github.io/laoban`
    - 按畫面下方的 **Add Repository**。
-3. 存檔後畫面停在 local 叢集的 Apps → Repositories。從左上角選單再回到 **Extensions** → **Available** 分頁，找到 **laoban** 卡片 → 卡片右上角的 **⋮** → **Install** → 確認版本（最新的，例如 `0.1.22`）→ **Install**。對話框會有「untrusted authors」的黃色提醒，因為 laoban 是社群專案，不是 Rancher 認證的 extension。
+3. 存檔後畫面停在 local 叢集的 Apps → Repositories。從左上角選單再回到 **Extensions** → **Available** 分頁，找到 **laoban** 卡片 → 卡片右上角的 **⋮** → **Install** → 確認版本（最新的，例如 `0.1.23`）→ **Install**。對話框會有「untrusted authors」的黃色提醒，因為 laoban 是社群專案，不是 Rancher 認證的 extension。
 4. 安裝完，畫面上方出現 **Extensions changed - reload required**，按 **Reload**（或重新整理頁面）。**laoban** 出現在左上角選單的 **Global Apps**。
 
 Index URL 打不開時，改用 `https://raw.githubusercontent.com/yansheng133/laoban/gh-pages`，內容一樣。
@@ -52,7 +52,7 @@ Index URL 打不開時，改用 `https://raw.githubusercontent.com/yansheng133/l
 # 後端
 kubectl --context downstream create namespace laoban-system
 # 產生的應用（以 Pod Security restricted 強制）
-kubectl --context downstream apply -f https://raw.githubusercontent.com/yansheng133/laoban/v0.1.22/deploy/m0/namespace-laoban-dev.yaml
+kubectl --context downstream apply -f https://raw.githubusercontent.com/yansheng133/laoban/v0.1.23/deploy/m0/namespace-laoban-dev.yaml
 
 # 金鑰與 token 從檔案讀，不放進 values，也不會留在 shell history
 kubectl --context downstream -n laoban-system create secret generic laoban-anthropic --from-file=api-key=./anthropic-api-key
@@ -108,8 +108,8 @@ apps:
 ```bash
 helm repo add laoban https://yansheng133.github.io/laoban
 helm repo update
-helm --kube-context downstream install laoban-crd laoban/laoban-crd -n laoban-system --version 0.1.22
-helm --kube-context downstream install laoban laoban/laoban -n laoban-system -f values-laoban.yaml --version 0.1.22
+helm --kube-context downstream install laoban-crd laoban/laoban-crd -n laoban-system --version 0.1.23
+helm --kube-context downstream install laoban laoban/laoban -n laoban-system -f values-laoban.yaml --version 0.1.23
 ```
 
 發布的 chart 已經填好這個版本的映像檔 digest（`ghcr.io/yansheng133/laoban-server`），不用另外指定。
@@ -152,8 +152,8 @@ kubectl --context local -n fleet-default get clusters.fleet.cattle.io
 下載兩個範本，在 `fleet-gitrepo.yaml` 裡把 `https://github.com/<owner>/laoban-apps` 換成你的 repo、`clusterName: rke2` 換成上面查到的名稱，再套用。GitRepo 本身的名稱（`metadata.name: laoban-apps`）**不要改**，頁面用這個名稱追蹤部署狀態：
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/yansheng133/laoban/v0.1.22/deploy/m0/fleet-gitrepo.yaml
-curl -fsSLO https://raw.githubusercontent.com/yansheng133/laoban/v0.1.22/deploy/m0/fleet-gitreporestriction.yaml
+curl -fsSLO https://raw.githubusercontent.com/yansheng133/laoban/v0.1.23/deploy/m0/fleet-gitrepo.yaml
+curl -fsSLO https://raw.githubusercontent.com/yansheng133/laoban/v0.1.23/deploy/m0/fleet-gitreporestriction.yaml
 # 編輯 fleet-gitrepo.yaml 之後：
 kubectl --context local apply -f fleet-gitreporestriction.yaml
 kubectl --context local apply -f fleet-gitrepo.yaml
@@ -179,7 +179,7 @@ kubectl --context local apply -f fleet-gitrepo.yaml
 - 用 Rancher Project 管理的話，在 Rancher **local** 叢集套用 Project 角色（要用能管理 local 叢集的 kubeconfig，例如 Rancher 主機上的 `/etc/rancher/rke2/rke2.yaml`；或在 Rancher 介面的 local 叢集 → **Import YAML** 貼上這個檔案），再把成員設成 **laoban user** 或 **laoban viewer**：
 
 ```bash
-kubectl --context local apply -f https://raw.githubusercontent.com/yansheng133/laoban/v0.1.22/deploy/rancher/roletemplate.yaml
+kubectl --context local apply -f https://raw.githubusercontent.com/yansheng133/laoban/v0.1.23/deploy/rancher/roletemplate.yaml
 ```
 
   詳見 [deploy/rancher/README.md](../deploy/rancher/README.md)。

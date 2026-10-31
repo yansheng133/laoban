@@ -4,8 +4,8 @@ description: CustomResourceDefinitions for laoban (Round, Plan, TokenUsage, Proj
 type: application
 # Keep in step with charts/laoban: catalog.cattle.io/auto-install "laoban-crd=match"
 # installs the CRD chart with the same version as the main chart.
-version: 0.1.22
-appVersion: "0.1.22"
+version: 0.1.23
+appVersion: "0.1.23"
 kubeVersion: ">= 1.34.0-0"
 home: https://github.com/yansheng133/laoban
 sources:
