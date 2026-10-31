@@ -64,13 +64,19 @@ fn own_app_host_adds_ingress_and_link() {
         .plan(&plan_req("做一個早餐店點餐頁面"), None)
         .unwrap();
     let applied = h.service.apply(&apply_req(&plan_id(&plan)), None).unwrap();
-    assert_eq!(applied["appUrl"], "https://breakfast.apps.example.com:8443/");
+    assert_eq!(
+        applied["appUrl"],
+        "https://breakfast.apps.example.com:8443/"
+    );
     let blobs = blob_contents(&h.github);
     assert_eq!(blobs.len(), 9);
     let ing = blobs.last().unwrap();
     assert!(ing.contains("kind: Ingress"), "{ing}");
     // The port is only for the link; the Ingress matches the host name.
-    assert!(ing.contains("- host: \"breakfast.apps.example.com\"\n"), "{ing}");
+    assert!(
+        ing.contains("- host: \"breakfast.apps.example.com\"\n"),
+        "{ing}"
+    );
     assert!(ing.contains("name: \"breakfast-web\""), "{ing}");
 }
 

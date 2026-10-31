@@ -178,9 +178,9 @@ fn parse_app_url(v: &str) -> Option<AppUrl> {
     // Every label must be a DNS label once {app} is replaced by a name.
     let probe = host.replace("{app}", "a");
     if probe.contains(['{', '}'])
-        || !probe.split('.').all(|l| {
-            !l.is_empty() && l.len() <= 63 && !l.starts_with('-') && !l.ends_with('-')
-        })
+        || !probe
+            .split('.')
+            .all(|l| !l.is_empty() && l.len() <= 63 && !l.starts_with('-') && !l.ends_with('-'))
     {
         return None;
     }
@@ -458,7 +458,11 @@ mod tests {
             (ENV_APP_URL, "http://{app}.apps.localhost:8480"),
             (ENV_APP_INGRESS_CLASS, "traefik"),
         ]);
-        let u = from_env_with(env(&pairs)).unwrap().settings.app_url.unwrap();
+        let u = from_env_with(env(&pairs))
+            .unwrap()
+            .settings
+            .app_url
+            .unwrap();
         assert_eq!(u.url_for("todo"), "http://todo.apps.localhost:8480/");
         assert_eq!(u.host_for("todo"), "todo.apps.localhost");
         assert_eq!(u.ingress_class.as_deref(), Some("traefik"));
@@ -475,7 +479,11 @@ mod tests {
             (ENV_APP_URL, "https://laoban-{app}.apps.example.com/"),
             (ENV_APP_TLS_SECRET, "apps-tls"),
         ]);
-        let u = from_env_with(env(&pairs)).unwrap().settings.app_url.unwrap();
+        let u = from_env_with(env(&pairs))
+            .unwrap()
+            .settings
+            .app_url
+            .unwrap();
         assert_eq!(u.url_for("todo"), "https://laoban-todo.apps.example.com/");
         assert_eq!(u.tls_secret.as_deref(), Some("apps-tls"));
     }

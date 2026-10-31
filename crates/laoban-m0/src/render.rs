@@ -535,9 +535,20 @@ mod tests {
         };
         let plain = ingress("todo", &u);
         assert!(plain.contains("kind: Ingress"), "{plain}");
-        assert!(plain.contains("- host: \"todo.apps.example.com\""), "{plain}");
-        assert!(plain.contains("name: \"todo-web\"\n                port:\n                  name: http"), "{plain}");
-        assert!(!plain.contains("ingressClassName") && !plain.contains("tls:"), "{plain}");
+        assert!(
+            plain.contains("- host: \"todo.apps.example.com\""),
+            "{plain}"
+        );
+        assert!(
+            plain.contains(
+                "name: \"todo-web\"\n                port:\n                  name: http"
+            ),
+            "{plain}"
+        );
+        assert!(
+            !plain.contains("ingressClassName") && !plain.contains("tls:"),
+            "{plain}"
+        );
         assert!(!plain.contains("managed-by"), "{plain}");
         u.ingress_class = Some("traefik".into());
         u.tls_secret = Some("apps-tls".into());

@@ -68,7 +68,14 @@ kubectl --context local get clusters.management.cattle.io \
   -o custom-columns=ID:.metadata.name,NAME:.spec.displayName
 ```
 
-`clusterId` は必須で、「アプリを開く」の URL を組み立てるためだけに使います（アプリは Rancher のプロキシ経由で開きます）。ページがバックエンドを見つけるのには不要です。クラスター ID を調べるには local クラスターの権限が必要です。Rancher UI でそのクラスターを開き、アドレスバーの `/c/` の後ろの部分を見ても確認できます（例：`c-m-xxxxxxxx`）。
+`clusterId` は必須で、`apps.url` を設定しないときに「アプリを開く」の URL を組み立てるために使います（アプリは Rancher のプロキシ経由で開きます）。ページがバックエンドを見つけるのには不要です。クラスター ID を調べるには local クラスターの権限が必要です。Rancher UI でそのクラスターを開き、アドレスバーの `/c/` の後ろの部分を見ても確認できます（例：`c-m-xxxxxxxx`）。
+
+**アプリには専用のアドレス（`apps.url`）を設定してください。** 設定しないと、アプリは Rancher のプロキシ経由で Rancher と同じアドレスで開かれます。アプリを開いた人の Rancher ログインのままアプリのページが動き、その人として Rancher API を呼び出せます（管理者が開けば管理者の権限です）。`apps.url` を設定すると（`{app}` はアプリ名に置き換わります）、アプリごとに Ingress が作られ、専用のアドレスで開かれるため、ブラウザーは Rancher のログインをアプリに渡しません。必要なもの：
+
+- クラスターの ingress controller を指すワイルドカード DNS レコード（例：`*.apps.example.com`）。
+- https を使う場合は `laoban-dev` にワイルドカード証明書を置き、`apps.tlsSecretName` に設定します。ingress class が既定でなければ `apps.ingressClassName` を設定します。
+- 専用アドレスのアプリは Rancher の権限チェックを通らなくなり、アドレスに届く人なら誰でも開けます。ネットワークや ingress controller の認証で、届く人を制限してください。
+- 設定前からあるアプリは、次の変更（3D レイアウトの変更を含む）で Ingress が追加されます。
 
 `values-laoban.yaml` を作成します（`<...>` を置き換えてください）。
 
@@ -88,6 +95,9 @@ config:
   targetNamespace: laoban-dev
   # 上で調べたクラスター ID
   clusterId: <c-m-xxxxxxxx>
+# アプリ専用のアドレス（強く推奨。下の説明を参照）
+apps:
+  url: https://{app}.apps.<あなたのドメイン>/
   # バックエンドのメッセージの言語：en（デフォルト）または zh-Hant
   language: en
 ```

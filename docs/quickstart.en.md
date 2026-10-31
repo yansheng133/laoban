@@ -68,7 +68,14 @@ kubectl --context local get clusters.management.cattle.io \
   -o custom-columns=ID:.metadata.name,NAME:.spec.displayName
 ```
 
-`clusterId` is required and is used only to build the **Open app** URL (apps are opened through the Rancher proxy); the page does not need it to find the backend. Looking up the cluster ID requires access to the local cluster; alternatively, open that cluster in the Rancher UI, and the part after `/c/` in the address bar is the ID (for example, `c-m-xxxxxxxx`).
+`clusterId` is required and, when `apps.url` is not set, is used to build the **Open app** URL (apps are opened through the Rancher proxy); the page does not need it to find the backend. Looking up the cluster ID requires access to the local cluster; alternatively, open that cluster in the Rancher UI, and the part after `/c/` in the address bar is the ID (for example, `c-m-xxxxxxxx`).
+
+**Give the apps their own address (`apps.url`).** Without it, apps are opened through the Rancher proxy, on Rancher's own address: whoever opens an app runs the app's page with their Rancher login, and the page can call the Rancher API as them (as an administrator, when an administrator opens it). With `apps.url` set (`{app}` becomes the app name), each app gets an Ingress and opens on its own address, and the browser does not give it the Rancher login. You need:
+
+- A wildcard DNS record pointing to the cluster's ingress controller, for example `*.apps.example.com`.
+- For https, a wildcard certificate in `laoban-dev`, set as `apps.tlsSecretName`; set `apps.ingressClassName` if the class is not the default.
+- Apps on their own address are no longer behind Rancher's permission check: anyone who can reach the address can open them. Control who can reach them with the network or the ingress controller's authentication.
+- Apps made before the setting get their Ingress with their next change (a 3D layout change counts).
 
 Create `values-laoban.yaml` (replace the `<...>` parts):
 
@@ -88,6 +95,9 @@ config:
   targetNamespace: laoban-dev
   # Cluster ID looked up above
   clusterId: <c-m-xxxxxxxx>
+# The apps' own address (strongly recommended, see below)
+apps:
+  url: https://{app}.apps.<your domain>/
   # Language of backend messages: en (default) or zh-Hant
   language: en
 ```
