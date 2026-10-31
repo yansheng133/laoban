@@ -250,7 +250,15 @@ jobs:
                   res |= {x.strip().strip('"') for x in line.split(",")}
               verbs = re.findall(r'verbs: \[([^\]]*)\]', doc)
               return res, {v.strip().strip('"') for v in verbs[0].split(",")}
-          rt = docs(open("deploy/rancher/roletemplate.yaml").read())
+          # Project members also need to read the app's Deployments (B26);
+          # edit/view have that already, so the chart has no such rule.
+          DEPLOY_RULE = '  - apiGroups: ["apps"]\n    resources: ["deployments"]\n    verbs: ["get", "list", "watch"]\n'
+          rt = [d + "\n" for d in docs(open("deploy/rancher/roletemplate.yaml").read())]
+          for d in rt:
+              if DEPLOY_RULE not in d:
+                  print("::error::each RoleTemplate must read Deployments (get, list, watch)")
+                  sys.exit(1)
+          rt = [d.replace(DEPLOY_RULE, "") for d in rt]
           chart = open("rendered/laoban-m0.yaml").read()
           roles = {}
           for d in docs(chart):

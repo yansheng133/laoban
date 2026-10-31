@@ -54,11 +54,6 @@ rules:
       - plans
       - plans/apply
     verbs: ["get", "list", "create"]
-  # The page reads the app's Deployments to tell when a new version runs
-  # (Fleet's bundles live on the local cluster, out of reach for members).
-  - apiGroups: ["apps"]
-    resources: ["deployments"]
-    verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -71,10 +66,5 @@ rules:
   - apiGroups: ["api.laoban.yansheng133.github.io"]
     resources: ["config", "apps", "apps/versions", "apps/files", "apps/round", "apps/rounds", "waitingrounds"]
     verbs: ["get", "list"]
-  # The page reads the app's Deployments to tell when a new version runs
-  # (Fleet's bundles live on the local cluster, out of reach for members).
-  - apiGroups: ["apps"]
-    resources: ["deployments"]
-    verbs: ["get", "list", "watch"]
 {{- end }}
 {{- end }}

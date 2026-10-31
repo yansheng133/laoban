@@ -9,8 +9,10 @@
 # "laoban user" or "laoban viewer". Rancher puts the rules into every
 # namespace of that Project.
 #
-# Keep the rules in step with charts/laoban/templates/aggregated-rbac.yaml
-# (CI compares them).
+# Keep the laoban API rules in step with charts/laoban/templates/aggregated-rbac.yaml
+# (CI compares them). The Deployment rule has no counterpart there: the
+# built-in edit/view roles, which those ClusterRoles aggregate into, already
+# read Deployments; Rancher project roles do not.
 apiVersion: management.cattle.io/v3
 kind: RoleTemplate
 metadata:
@@ -37,7 +39,8 @@ rules:
       - plans/apply
     verbs: ["get", "list", "create"]
   # The page reads the app's Deployments to tell when a new version runs
-  # (Fleet's bundles live on the local cluster, out of reach for members).
+  # (Fleet's bundles live on the local cluster, out of reach for members;
+  # report 26, B26).
   - apiGroups: ["apps"]
     resources: ["deployments"]
     verbs: ["get", "list", "watch"]
@@ -57,7 +60,8 @@ rules:
     resources: ["config", "apps", "apps/versions", "apps/files", "apps/round", "apps/rounds", "waitingrounds"]
     verbs: ["get", "list"]
   # The page reads the app's Deployments to tell when a new version runs
-  # (Fleet's bundles live on the local cluster, out of reach for members).
+  # (Fleet's bundles live on the local cluster, out of reach for members;
+  # report 26, B26).
   - apiGroups: ["apps"]
     resources: ["deployments"]
     verbs: ["get", "list", "watch"]
