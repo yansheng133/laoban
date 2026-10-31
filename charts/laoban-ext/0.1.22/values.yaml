@@ -1,0 +1,16 @@
+nameOverride: ""
+fullnameOverride: ""
+plugin:
+  enabled: true
+  versionOverride: ""
+  endpoint: >-
+    https://raw.githubusercontent.com/yansheng133/laoban/gh-pages/extensions/laoban-ext/0.1.22
+  compressedEndpoint: >-
+    https://raw.githubusercontent.com/yansheng133/laoban/gh-pages/extensions/laoban-ext/0.1.22.tgz
+  noCache: false
+  noAuth: false
+  metadata:
+    catalog.cattle.io/rancher-version: ">= 2.15.0-0 < 2.16.0-0"
+    catalog.cattle.io/ui-extensions-version: ">= 3.0.0 < 4.0.0"
+    catalog.cattle.io/display-name: laoban
+    catalog.cattle.io/certified: community
