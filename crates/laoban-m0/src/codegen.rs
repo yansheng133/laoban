@@ -75,6 +75,22 @@ fn exact_object<'a>(
     Ok(obj)
 }
 
+/// The `api` object, accepting one Python file under another name (models
+/// sometimes call it after a module of the plan, such as `server.py`) as
+/// `handler.py`. Its content must still define `handle()`, checked later.
+fn api_object(v: &Value) -> Result<serde_json::Map<String, Value>, InvalidOutput> {
+    if let Some(obj) = v.as_object() {
+        if let [(key, content)] = obj.iter().collect::<Vec<_>>()[..] {
+            if key != "handler.py" && key.ends_with(".py") && !key.contains('/') {
+                return Ok([("handler.py".to_string(), content.clone())]
+                    .into_iter()
+                    .collect());
+            }
+        }
+    }
+    exact_object(v, "api", &["handler.py"]).cloned()
+}
+
 fn file(obj: &serde_json::Map<String, Value>, key: &str) -> Result<String, InvalidOutput> {
     let s = obj[key]
         .as_str()
@@ -93,12 +109,12 @@ pub fn parse_generated(text: &str) -> Result<GeneratedFiles, InvalidOutput> {
         .map_err(|e| InvalidOutput(format!("files are not JSON: {e}")))?;
     let top = exact_object(&v, "response", &["web", "api"])?;
     let web = exact_object(&top["web"], "web", &["index.html", "app.js", "style.css"])?;
-    let api = exact_object(&top["api"], "api", &["handler.py"])?;
+    let api = api_object(&top["api"])?;
     let files = GeneratedFiles {
         index_html: file(web, "index.html")?,
         app_js: file(web, "app.js")?,
         style_css: file(web, "style.css")?,
-        handler_py: file(api, "handler.py")?,
+        handler_py: file(&api, "handler.py")?,
     };
     if files.total_bytes() > MAX_TOTAL_BYTES {
         return Err(InvalidOutput(format!(
@@ -272,6 +288,24 @@ mod tests {
         let f = parse_generated(&ok().to_string()).unwrap();
         assert_eq!(f.app_js, "x");
         assert!(parse_generated(&format!("```json\n{}\n```", ok())).is_ok());
+    }
+
+    #[test]
+    fn accepts_one_api_file_under_another_name() {
+        let renamed = json!({"web": {"index.html": "<p>", "app.js": "x", "style.css": "y"},
+                             "api": {"server.py": "def handle(m, p, b):\n    return 200, {}\n"}});
+        let f = parse_generated(&renamed.to_string()).unwrap();
+        assert!(f.handler_py.contains("def handle("));
+        // Still refused: not Python, a path, or without handle().
+        for (key, body) in [
+            ("server.js", "def handle(m, p, b): pass"),
+            ("a/server.py", "def handle(m, p, b): pass"),
+            ("server.py", "print(1)"),
+        ] {
+            let mut v = renamed.clone();
+            v["api"] = json!({ key: body });
+            assert!(parse_generated(&v.to_string()).is_err(), "{key}");
+        }
     }
 
     #[test]

@@ -864,7 +864,9 @@ export default defineComponent({
             :key="i"
           >
             <span class="laoban-text">{{ s }}</span>
+            <!-- Nothing to read and nothing to write: no button (report 24, N35). -->
             <button
+              v-if="commentsOf(i + 1).length || (you && you.canComment)"
               type="button"
               class="btn btn-sm role-link"
               :aria-expanded="stepOpen[i + 1] ? 'true' : 'false'"

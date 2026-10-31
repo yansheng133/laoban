@@ -429,6 +429,46 @@ impl M0Service {
     /// Archive finished rounds that are not archived yet, and delete the
     /// resources of replaced rounds once archived. Called by the round
     /// timer (and tests); failures are retried with a growing pause.
+    /// Delete the finished, archived rounds of apps that are no longer in
+    /// the repository (the app was deleted there). Such a round would stay
+    /// forever: its resource is otherwise deleted only when the app's next
+    /// round starts. Rounds still open are left alone.
+    pub fn prune_orphan_rounds(&self) {
+        if !self.rounds_ready() {
+            return;
+        }
+        let names = match self.app_names() {
+            Ok(n) => n,
+            // GitHub unreachable: try again next time, never guess.
+            Err(_) => return,
+        };
+        let orphans: Vec<Round> = self
+            .rounds()
+            .values()
+            .filter(|r| {
+                !names.contains(&r.app)
+                    && matches!(r.state, State::Done | State::Cancelled)
+                    && r.archived
+            })
+            .cloned()
+            .collect();
+        for r in orphans {
+            match self.state.delete(ROUNDS, &object_name(&r)) {
+                Ok(()) => {
+                    let mut rs = self.rounds();
+                    if rs.get(&r.app).is_some_and(|c| c.id == r.id) {
+                        rs.remove(&r.app);
+                    }
+                    eprintln!(
+                        "laoban-m0: deleted round {} of {}: the app is no longer in the repository",
+                        r.id, r.app
+                    );
+                }
+                Err(e) => log_store_problem("deleting", &r, &e),
+            }
+        }
+    }
+
     pub fn archive_tick(&self, now_unix: u64) {
         if !self.rounds_ready() {
             return;

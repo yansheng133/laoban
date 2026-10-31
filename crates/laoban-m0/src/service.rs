@@ -22,14 +22,14 @@ use crate::codegen::{
     CODEGEN_INSTRUCTIONS, EDIT_CODEGEN_INSTRUCTIONS, MANUAL_EDITS_INSTRUCTIONS,
 };
 use crate::config::M0Settings;
-use crate::github::{GithubCommitter, GithubError};
+use crate::github::{CommitFile, GithubCommitter, GithubError};
 use crate::lang::tr;
 use crate::meta::{self, AppMeta, HistoryEntry, Layout, Pos, META_FILE};
 use crate::plan::{
     architecture_with_layout, carry_layout, parse_app_plan, valid_app_name, EDIT_PLAN_INSTRUCTIONS,
     PLAN_INSTRUCTIONS, ROUND_PLAN_INSTRUCTIONS,
 };
-use crate::render::{render, rollout_hashes, RenderInput};
+use crate::render::{infra_files, render, rollout_hashes, RenderInput};
 use crate::rounds::{self, Limits, Part, PlanRecipe, Round, RoundError, RoundPlan, State, Text};
 use crate::state::{MemoryStore, StateError, StateStore};
 use crate::store::{BaseApp, PlanStore, StoreError, StoredPlan};
@@ -1410,6 +1410,7 @@ impl M0Service {
             generated_at: &generated_at,
             meta_json: &meta_json,
             app_url: self.settings.app_url.as_ref(),
+            network_policy: self.settings.app_network_policy,
         });
         let commit = self.commit_lock.lock().unwrap_or_else(|e| e.into_inner());
         let sha = self
@@ -1998,18 +1999,104 @@ impl M0Service {
         let service = Arc::downgrade(self);
         let _ = std::thread::Builder::new()
             .name("laoban-rounds".into())
-            .spawn(move || loop {
-                std::thread::sleep(std::time::Duration::from_secs(10));
-                match service.upgrade() {
-                    Some(s) => {
-                        let now = persist::now_unix();
-                        s.tick(now);
-                        s.archive_tick(now);
-                        s.plans_tick(now);
+            .spawn(move || {
+                let mut ticks: u64 = 0;
+                loop {
+                    std::thread::sleep(std::time::Duration::from_secs(10));
+                    match service.upgrade() {
+                        Some(s) => {
+                            let now = persist::now_unix();
+                            s.tick(now);
+                            s.archive_tick(now);
+                            s.plans_tick(now);
+                            ticks += 1;
+                            if ticks % PRUNE_EVERY_TICKS == 0 {
+                                s.prune_orphan_rounds();
+                            }
+                        }
+                        None => return,
                     }
-                    None => return,
                 }
             });
+        self.start_infra_sync();
+    }
+
+    /// Run [`sync_infra`](Self::sync_infra) in the background until it
+    /// succeeds once (GitHub may be unreachable at startup).
+    fn start_infra_sync(self: &Arc<Self>) {
+        let service = Arc::downgrade(self);
+        let _ = std::thread::Builder::new()
+            .name("laoban-infra-sync".into())
+            .spawn(move || loop {
+                let Some(s) = service.upgrade() else { return };
+                match s.sync_infra() {
+                    Ok(0) => {
+                        eprintln!("laoban-m0: app Ingress/NetworkPolicy files match the settings");
+                        return;
+                    }
+                    Ok(n) => {
+                        eprintln!("laoban-m0: updated {n} app Ingress/NetworkPolicy file(s) to match the settings");
+                        return;
+                    }
+                    Err(e) => eprintln!(
+                        "laoban-m0: syncing app Ingress/NetworkPolicy files failed ({}); retrying in {INFRA_SYNC_RETRY_SECS} s",
+                        e.log_detail().unwrap_or_else(|| e.to_string())
+                    ),
+                }
+                drop(s);
+                std::thread::sleep(std::time::Duration::from_secs(INFRA_SYNC_RETRY_SECS));
+            });
+    }
+
+    /// Bring every app's Ingress and NetworkPolicy files in the repository
+    /// in line with the settings (`LAOBAN_APP_URL`, its Ingress options and
+    /// `LAOBAN_APP_NETWORK_POLICY`): write missing or outdated ones, delete
+    /// the ones the settings no longer want, in one commit. These files
+    /// depend only on the app name and the settings, so a changed setting
+    /// reaches every app without touching its code. Returns how many files
+    /// changed.
+    pub fn sync_infra(&self) -> Result<usize, M0Error> {
+        let s = &self.settings;
+        let branch = self.github.config().branch.clone();
+        let mut files = Vec::new();
+        let mut deletes = Vec::new();
+        for app in self.app_names()? {
+            if !valid_app_name(&app) {
+                continue;
+            }
+            let dir = format!("{APPS_DIR}/{app}");
+            let present = self
+                .github
+                .list_files_at(&dir, &branch)
+                .map_err(M0Error::Github)?;
+            for (name, want) in infra_files(&app, s.app_url.as_ref(), s.app_network_policy) {
+                let path = format!("{dir}/{name}");
+                let exists = present.iter().any(|f| f == name);
+                match want {
+                    Some(content) => {
+                        let current = if exists {
+                            self.github.read_file(&path).map_err(M0Error::Github)?
+                        } else {
+                            None
+                        };
+                        if current.as_deref() != Some(content.as_str()) {
+                            files.push(CommitFile { path, content });
+                        }
+                    }
+                    None if exists => deletes.push(path),
+                    None => {}
+                }
+            }
+        }
+        let changed = files.len() + deletes.len();
+        if changed == 0 {
+            return Ok(0);
+        }
+        let _commit = self.commit_lock.lock().unwrap_or_else(|e| e.into_inner());
+        self.github
+            .commit_changes(&files, &deletes, INFRA_SYNC_MESSAGE)
+            .map_err(M0Error::Github)?;
+        Ok(changed)
     }
 
     /// Mark a due round converging (written before anything else).
@@ -2565,6 +2652,14 @@ pub fn unused_name(name: &str, existing: &[String]) -> Option<String> {
 
 /// `laoban: <app> — <first 60 characters of the summary>` plus the
 /// `Generated-by: laoban` trailer.
+/// Commit message of [`M0Service::sync_infra`].
+pub const INFRA_SYNC_MESSAGE: &str =
+    "laoban: sync app Ingress and NetworkPolicy files with the backend settings\n\nGenerated-by: laoban\n";
+/// Retry a failed startup sync after this many seconds.
+const INFRA_SYNC_RETRY_SECS: u64 = 60;
+/// Look for rounds of deleted apps every this many 10-second ticks.
+const PRUNE_EVERY_TICKS: u64 = 60;
+
 pub fn commit_message(app: &str, summary: &str) -> String {
     let one_line: String = summary
         .split_whitespace()

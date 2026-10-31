@@ -74,8 +74,9 @@ kubectl --context local get clusters.management.cattle.io \
 
 - 一個指到叢集 ingress controller 的萬用 DNS 紀錄，例如 `*.apps.example.com`。
 - 要用 https 的話，在 `laoban-dev` 放一張萬用憑證，設 `apps.tlsSecretName`；ingress class 不是預設的，設 `apps.ingressClassName`。
-- 用了自己網址的應用不再經過 Rancher 權限檢查，網路上連得到的人都能打開；請用網路或 ingress 的驗證機制控制誰連得到。
-- 設定前就有的應用，下次修改（包括調整 3D 版面）時才會加上 Ingress。
+- 用了自己網址的應用不再經過 Rancher 權限檢查，網路上連得到的人都能打開。要加登入，用 `apps.ingressAnnotations` 掛上 ingress controller 的驗證（例如 Traefik 的 middleware、ingress-nginx 的 `auth-url`）；這些值會寫進放應用的 repo，不要放秘密。
+- 後端啟動時會把每個應用的 Ingress 對齊這些設定（一個 commit）：設定前就有的應用也會補上，改了網址會更新，拿掉 `apps.url` 會刪除。
+- 每個應用預設有 NetworkPolicy（`apps.networkPolicy`）：API 只接受自己網頁的連線，兩者都只能連自己的 API 和 DNS。
 
 建立 `values-laoban.yaml`（把 `<...>` 換掉）：
 

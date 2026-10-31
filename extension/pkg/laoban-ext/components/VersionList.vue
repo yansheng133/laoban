@@ -10,7 +10,7 @@ import {
 import { useStore } from 'vuex';
 import { useText } from '../composables/useText';
 import { safeHttpsUrl, VersionEntry } from '../utils/backend';
-import { userLabel } from '../utils/users';
+import { userLabel, withUserNames } from '../utils/users';
 import { currentUserId } from '../utils/me';
 import { formatDateTime } from '../utils/time';
 import { versionKindKey } from '../utils/versions';
@@ -74,8 +74,13 @@ export default defineComponent({
       return me.value && v.by === me.value ? t('laoban.round.you') : userLabel(store, v.by);
     }
 
+    // "(u-abc12) …" in requests made by rounds: names where known (N41).
+    function requestText(v: VersionEntry): string {
+      return withUserNames(store, v.request || '');
+    }
+
     return {
-      t, confirming, formatTime, kindLabel, confirm, safeHttpsUrl, byLabel, showAll, shown, hidden
+      t, confirming, formatTime, kindLabel, confirm, safeHttpsUrl, byLabel, requestText, showAll, shown, hidden
     };
   },
 });
@@ -123,7 +128,7 @@ export default defineComponent({
           v-if="v.request"
           class="laoban-text laoban-version-request"
         >
-          {{ v.request }}
+          {{ requestText(v) }}
         </p>
         <div class="laoban-version-actions">
           <button

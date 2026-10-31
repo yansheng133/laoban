@@ -1,4 +1,4 @@
-# Rancher project roles for laoban (v0.1.16): give members of a Rancher
+# Rancher project roles for laoban (v0.1.16; Deployments read-only since v0.1.22): give members of a Rancher
 # Project the same rights in its namespaces as the built-in edit / view
 # roles give through charts/laoban (laoban-api-edit, laoban-api-view).
 #
@@ -36,6 +36,11 @@ rules:
       - plans
       - plans/apply
     verbs: ["get", "list", "create"]
+  # The page reads the app's Deployments to tell when a new version runs
+  # (Fleet's bundles live on the local cluster, out of reach for members).
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch"]
 ---
 apiVersion: management.cattle.io/v3
 kind: RoleTemplate
@@ -51,3 +56,8 @@ rules:
   - apiGroups: ["api.laoban.yansheng133.github.io"]
     resources: ["config", "apps", "apps/versions", "apps/files", "apps/round", "apps/rounds", "waitingrounds"]
     verbs: ["get", "list"]
+  # The page reads the app's Deployments to tell when a new version runs
+  # (Fleet's bundles live on the local cluster, out of reach for members).
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch"]

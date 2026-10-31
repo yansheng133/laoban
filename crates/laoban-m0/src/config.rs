@@ -1,6 +1,7 @@
 //! Configuration from environment variables (see the M0 design, 設定).
 //! Errors name the variable, never its value.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::OnceLock;
 
@@ -26,6 +27,15 @@ pub const ENV_APP_INGRESS_CLASS: &str = "LAOBAN_APP_INGRESS_CLASS";
 /// TLS Secret (in the target namespace) for the app Ingresses, for example
 /// a wildcard certificate. Only with an `https://` app URL.
 pub const ENV_APP_TLS_SECRET: &str = "LAOBAN_APP_TLS_SECRET";
+/// JSON object of annotations for the app Ingresses, for example an
+/// ingress controller's authentication settings. Only with an app URL.
+pub const ENV_APP_INGRESS_ANNOTATIONS: &str = "LAOBAN_APP_INGRESS_ANNOTATIONS";
+/// `true`: each app gets NetworkPolicies (the API accepts only its own web
+/// pods; both reach nothing but their API and DNS). Default `false`.
+pub const ENV_APP_NETWORK_POLICY: &str = "LAOBAN_APP_NETWORK_POLICY";
+/// Most annotations accepted, and the longest value.
+pub const MAX_INGRESS_ANNOTATIONS: usize = 20;
+pub const MAX_ANNOTATION_VALUE: usize = 4096;
 /// Base URL of an Anthropic Messages API compatible endpoint (for example a
 /// local Ollama server). Unset means the Anthropic API itself.
 pub const ENV_AI_BASE_URL: &str = "LAOBAN_AI_BASE_URL";
@@ -60,6 +70,8 @@ pub struct M0Settings {
     /// Own address for each app (`LAOBAN_APP_URL`). `None`: the Rancher
     /// service proxy.
     pub app_url: Option<AppUrl>,
+    /// NetworkPolicies for each app (`LAOBAN_APP_NETWORK_POLICY`).
+    pub app_network_policy: bool,
 }
 
 /// Where the generated apps are opened when they have their own host.
@@ -74,6 +86,8 @@ pub struct AppUrl {
     pub port: String,
     pub ingress_class: Option<String>,
     pub tls_secret: Option<String>,
+    /// `metadata.annotations` of the app Ingresses.
+    pub annotations: BTreeMap<String, String>,
 }
 
 impl AppUrl {
@@ -194,7 +208,42 @@ fn parse_app_url(v: &str) -> Option<AppUrl> {
         port: port.to_string(),
         ingress_class: None,
         tls_secret: None,
+        annotations: BTreeMap::new(),
     })
+}
+
+/// A JSON object of Kubernetes annotations: qualified names (optional DNS
+/// subdomain prefix, name of at most 63 characters) to strings without
+/// control characters other than newlines and tabs.
+fn parse_annotations(v: &str) -> Option<BTreeMap<String, String>> {
+    static PREFIX: OnceLock<Regex> = OnceLock::new();
+    static NAME: OnceLock<Regex> = OnceLock::new();
+    let map: BTreeMap<String, String> = serde_json::from_str(v).ok()?;
+    if map.len() > MAX_INGRESS_ANNOTATIONS {
+        return None;
+    }
+    for (k, v) in &map {
+        let (prefix, name) = match k.split_once('/') {
+            Some((p, n)) => (Some(p), n),
+            None => (None, k.as_str()),
+        };
+        let prefix_ok = prefix.map_or(true, |p| {
+            p.len() <= 253
+                && re(
+                    &PREFIX,
+                    r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$",
+                )
+                .is_match(p)
+        });
+        let name_ok = name.len() <= 63
+            && re(&NAME, r"^[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$").is_match(name);
+        let value_ok = v.len() <= MAX_ANNOTATION_VALUE
+            && v.chars().all(|c| c == '\n' || c == '\t' || !c.is_control());
+        if !(prefix_ok && name_ok && value_ok) {
+            return None;
+        }
+    }
+    Some(map)
 }
 
 /// Read configuration through `get` (use `|k| std::env::var(k).ok()`).
@@ -311,11 +360,23 @@ pub fn from_env_with(get: impl Fn(&str) -> Option<String>) -> Result<EnvConfig, 
     if tls_secret.is_some() && app_url.as_ref().is_some_and(|u| u.scheme != "https") {
         return Err(ConfigError::Invalid(ENV_APP_TLS_SECRET));
     }
+    let annotations = match value(ENV_APP_INGRESS_ANNOTATIONS) {
+        None => BTreeMap::new(),
+        Some(v) => parse_annotations(&v)
+            .filter(|_| app_url.is_some())
+            .ok_or(ConfigError::Invalid(ENV_APP_INGRESS_ANNOTATIONS))?,
+    };
     let app_url = app_url.map(|u| AppUrl {
         ingress_class,
         tls_secret,
+        annotations,
         ..u
     });
+    let app_network_policy = match value(ENV_APP_NETWORK_POLICY).as_deref() {
+        None | Some("false") => false,
+        Some("true") => true,
+        Some(_) => return Err(ConfigError::Invalid(ENV_APP_NETWORK_POLICY)),
+    };
 
     let mut round_limits = crate::rounds::Limits::default();
     for (var, slot) in [
@@ -345,6 +406,7 @@ pub fn from_env_with(get: impl Fn(&str) -> Option<String>) -> Result<EnvConfig, 
             cluster_id,
             ai_timeout_secs,
             app_url,
+            app_network_policy,
         },
         ai: AiEndpoint { base_url },
         anthropic_api_key: key.map(Secret),
@@ -436,6 +498,8 @@ mod tests {
             (ENV_APP_URL, "https://{app}.example.com:70000/"),
             (ENV_APP_INGRESS_CLASS, "traefik"),
             (ENV_APP_TLS_SECRET, "apps-tls"),
+            (ENV_APP_INGRESS_ANNOTATIONS, "{\"a\":\"b\"}"),
+            (ENV_APP_NETWORK_POLICY, "yes"),
         ] {
             let mut pairs = FULL.to_vec();
             pairs.push((k, v));
@@ -486,6 +550,41 @@ mod tests {
             .unwrap();
         assert_eq!(u.url_for("todo"), "https://laoban-todo.apps.example.com/");
         assert_eq!(u.tls_secret.as_deref(), Some("apps-tls"));
+    }
+
+    #[test]
+    fn ingress_annotations_and_network_policy() {
+        let c = from_env_with(env(FULL)).unwrap();
+        assert!(!c.settings.app_network_policy);
+        let mut base = FULL.to_vec();
+        base.extend([
+            (ENV_APP_URL, "https://{app}.apps.example.com/"),
+            (ENV_APP_NETWORK_POLICY, "true"),
+        ]);
+        let mut good = base.clone();
+        good.push((
+            ENV_APP_INGRESS_ANNOTATIONS,
+            r#"{"traefik.ingress.kubernetes.io/router.middlewares":"laoban-dev-auth@kubernetescrd","nginx.ingress.kubernetes.io/auth-url":"https://auth.example.com/check"}"#,
+        ));
+        let s = from_env_with(env(&good)).unwrap().settings;
+        assert!(s.app_network_policy);
+        assert_eq!(s.app_url.unwrap().annotations.len(), 2);
+        for bad in [
+            "[]",
+            r#"{"a":1}"#,
+            r#"{"Bad_Prefix.com/x":"v"}"#,
+            r#"{"a/b/c":"v"}"#,
+            r#"{"-x":"v"}"#,
+            "{\"x\":\"\\u0007\"}",
+        ] {
+            let mut pairs = base.clone();
+            pairs.push((ENV_APP_INGRESS_ANNOTATIONS, bad));
+            assert_eq!(
+                from_env_with(env(&pairs)).unwrap_err(),
+                ConfigError::Invalid(ENV_APP_INGRESS_ANNOTATIONS),
+                "{bad}"
+            );
+        }
     }
 
     #[test]

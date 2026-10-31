@@ -39,6 +39,7 @@ pub fn settings(token_cap: u64) -> M0Settings {
         cluster_id: "c-m-test0001".into(),
         ai_timeout_secs: 300,
         app_url: None,
+        app_network_policy: false,
     }
 }
 
@@ -70,6 +71,17 @@ pub fn github_mock_versions(
     update: RefUpdate,
     apps: Vec<(String, Option<String>)>,
     versions: Vec<Version>,
+) -> MockServer {
+    github_mock_files(update, apps, versions, Vec::new())
+}
+
+/// Like [`github_mock_versions`], plus other files on the main branch:
+/// `(path, content)`, listed in their directory and readable.
+pub fn github_mock_files(
+    update: RefUpdate,
+    apps: Vec<(String, Option<String>)>,
+    versions: Vec<Version>,
+    files: Vec<(String, String)>,
 ) -> MockServer {
     let blobs = Arc::new(AtomicUsize::new(0));
     let commits = Arc::new(AtomicUsize::new(0));
@@ -195,6 +207,24 @@ pub fn github_mock_versions(
                     .map(|(n, _)| json!({"name": n, "path": format!("apps/{n}"), "type": "dir"}))
                     .collect();
                 list.push(json!({"name": ".gitkeep", "path": "apps/.gitkeep", "type": "file"}));
+                return Reply::json(200, serde_json::Value::Array(list).to_string());
+            }
+            if let Some((_, content)) = files.iter().find(|(f, _)| f == path) {
+                if r.header("accept") != Some("application/vnd.github.raw+json") {
+                    return Reply::json(415, r#"{"message":"want raw"}"#);
+                }
+                return Reply::json(200, content.clone());
+            }
+            if let Some((n, meta)) = apps.iter().find(|(n, _)| path == format!("apps/{n}")) {
+                let prefix = format!("apps/{n}/");
+                let mut list: Vec<serde_json::Value> = files
+                    .iter()
+                    .filter_map(|(f, _)| f.strip_prefix(&prefix))
+                    .map(|f| json!({"name": f, "path": format!("{prefix}{f}"), "type": "file"}))
+                    .collect();
+                if meta.is_some() {
+                    list.push(json!({"name": "laoban.json", "path": format!("{prefix}laoban.json"), "type": "file"}));
+                }
                 return Reply::json(200, serde_json::Value::Array(list).to_string());
             }
             for (n, meta) in apps.iter() {

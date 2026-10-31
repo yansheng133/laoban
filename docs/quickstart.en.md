@@ -74,8 +74,9 @@ kubectl --context local get clusters.management.cattle.io \
 
 - A wildcard DNS record pointing to the cluster's ingress controller, for example `*.apps.example.com`.
 - For https, a wildcard certificate in `laoban-dev`, set as `apps.tlsSecretName`; set `apps.ingressClassName` if the class is not the default.
-- Apps on their own address are no longer behind Rancher's permission check: anyone who can reach the address can open them. Control who can reach them with the network or the ingress controller's authentication.
-- Apps made before the setting get their Ingress with their next change (a 3D layout change counts).
+- Apps on their own address are no longer behind Rancher's permission check: anyone who can reach the address can open them. To require a login, attach your ingress controller's authentication with `apps.ingressAnnotations` (for example a Traefik middleware or ingress-nginx `auth-url`); the values are written into the apps repository, so no secrets.
+- When the backend starts, it brings every app's Ingress in line with these settings in one commit: apps made earlier get one, a changed address is updated, and removing `apps.url` deletes them.
+- Each app gets NetworkPolicies by default (`apps.networkPolicy`): the API accepts only the app's own web pods, and both reach only the app's API and DNS.
 
 Create `values-laoban.yaml` (replace the `<...>` parts):
 

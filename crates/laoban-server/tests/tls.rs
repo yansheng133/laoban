@@ -54,6 +54,7 @@ fn settings() -> M0Settings {
         cluster_id: "c-m-test0001".into(),
         ai_timeout_secs: 300,
         app_url: None,
+        app_network_policy: false,
     }
 }
 

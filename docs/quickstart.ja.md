@@ -74,8 +74,9 @@ kubectl --context local get clusters.management.cattle.io \
 
 - クラスターの ingress controller を指すワイルドカード DNS レコード（例：`*.apps.example.com`）。
 - https を使う場合は `laoban-dev` にワイルドカード証明書を置き、`apps.tlsSecretName` に設定します。ingress class が既定でなければ `apps.ingressClassName` を設定します。
-- 専用アドレスのアプリは Rancher の権限チェックを通らなくなり、アドレスに届く人なら誰でも開けます。ネットワークや ingress controller の認証で、届く人を制限してください。
-- 設定前からあるアプリは、次の変更（3D レイアウトの変更を含む）で Ingress が追加されます。
+- 専用アドレスのアプリは Rancher の権限チェックを通らなくなり、アドレスに届く人なら誰でも開けます。ログインを必須にするには、`apps.ingressAnnotations` で ingress controller の認証を付けます（例：Traefik の middleware、ingress-nginx の `auth-url`）。値はアプリのリポジトリに書き込まれるため、秘密は入れないでください。
+- バックエンドは起動時に、各アプリの Ingress をこの設定に合わせます（1 つの commit）。設定前からあるアプリにも追加され、アドレスを変えると更新され、`apps.url` を外すと削除されます。
+- 各アプリには既定で NetworkPolicy が付きます（`apps.networkPolicy`）。API は自分の Web Pod からの接続だけを受け付け、どちらも自分の API と DNS にしか接続できません。
 
 `values-laoban.yaml` を作成します（`<...>` を置き換えてください）。
 

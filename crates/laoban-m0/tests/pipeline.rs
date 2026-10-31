@@ -57,6 +57,7 @@ fn own_app_host_adds_ingress_and_link() {
         port: ":8443".into(),
         ingress_class: None,
         tls_secret: None,
+        annotations: Default::default(),
     });
     let h = harness_settings(provider, RefUpdate::Ok, s, Vec::new(), Vec::new());
     let plan = h
