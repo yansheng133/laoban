@@ -2,7 +2,7 @@ import {
   describe, it, expect, afterEach, jest
 } from '@jest/globals';
 import {
-  parseBackendError, resolveAppUrl, safeHttpsUrl, backendUrl, aiRequestTimeoutMs, ConfigResponse,
+  parseBackendError, resolveAppUrl, appOnRancherOrigin, safeHttpsUrl, backendUrl, aiRequestTimeoutMs, ConfigResponse,
   createPlan, getApp, listApps, listVersions, getVersion, restoreVersion, applyPlan,
   runJob, getRound, openRound, roundAction, addOpinions, supportOpinion, replyToOpinion, getFiles, saveFiles, saveLayout, parseKubeStatus
 } from '../backend';
@@ -44,10 +44,27 @@ describe('resolveAppUrl', () => {
       .toBe('https://rancher.example.com/k8s/clusters/c-m-26kbxk5f/api/v1/namespaces/laoban-dev/services/http:breakfast-web:8080/proxy/');
   });
 
-  it('rejects anything that could leave the origin or run script', () => {
-    for (const bad of ['//evil.example.com/x', 'https://evil.example.com/', 'javascript:alert(1)', 'k8s/x', '/\\evil.example.com', '', null, 42]) {
+  it('accepts the app\'s own http(s) host', () => {
+    expect(resolveAppUrl('https://breakfast.apps.example.com/', origin)).toBe('https://breakfast.apps.example.com/');
+    expect(resolveAppUrl('http://breakfast.apps.localhost:8480/', origin)).toBe('http://breakfast.apps.localhost:8480/');
+  });
+
+  it('rejects anything that could run script or is not a link', () => {
+    for (const bad of ['//evil.example.com/x', 'javascript:alert(1)', 'data:text/html,x', 'k8s/x', '/\\evil.example.com',
+      'https://user:pw@apps.example.com/', 'ftp://apps.example.com/', '', null, 42]) {
       expect(resolveAppUrl(bad, origin)).toBeNull();
     }
+  });
+});
+
+describe('appOnRancherOrigin', () => {
+  const origin = 'https://rancher.example.com';
+
+  it('is true only for links on the Rancher origin', () => {
+    expect(appOnRancherOrigin(resolveAppUrl('/k8s/clusters/c/api/v1/namespaces/n/services/http:a-web:8080/proxy/', origin), origin)).toBe(true);
+    expect(appOnRancherOrigin('https://a.apps.example.com/', origin)).toBe(false);
+    expect(appOnRancherOrigin('https://rancher.example.com:8443/', origin)).toBe(false);
+    expect(appOnRancherOrigin(null, origin)).toBe(false);
   });
 });
 

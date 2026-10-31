@@ -53,6 +53,7 @@ fn settings() -> M0Settings {
         target_namespace: "laoban-dev".into(),
         cluster_id: "c-m-test0001".into(),
         ai_timeout_secs: 300,
+        app_url: None,
     }
 }
 

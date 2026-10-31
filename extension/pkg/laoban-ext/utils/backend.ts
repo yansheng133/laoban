@@ -745,20 +745,45 @@ export async function listBundles(store: StoreLike): Promise<Bundle[]> {
 }
 
 /**
- * Turn the backend's appUrl into an absolute URL on the Rancher origin.
- * Only same-origin absolute paths ("/k8s/...") are accepted; anything else
- * (another host, "//host", "javascript:") returns null.
+ * Turn the backend's appUrl into an absolute URL. Accepted: a path on the
+ * Rancher origin ("/k8s/...", the Rancher service proxy) or an absolute
+ * http(s) URL (the app's own host, chart value apps.url). Anything else
+ * ("//host", "javascript:", relative paths) returns null.
  */
 export function resolveAppUrl(appUrl: unknown, origin: string): string | null {
-  if (typeof appUrl !== 'string' || !appUrl.startsWith('/') || appUrl.startsWith('//') || appUrl.includes('\\')) {
+  if (typeof appUrl !== 'string' || appUrl.includes('\\')) {
     return null;
   }
   try {
+    if (/^https?:\/\//i.test(appUrl)) {
+      const u = new URL(appUrl);
+
+      return u.username || u.password ? null : u.toString();
+    }
+    if (!appUrl.startsWith('/') || appUrl.startsWith('//')) {
+      return null;
+    }
     const u = new URL(appUrl, origin);
 
     return u.origin === new URL(origin).origin ? u.toString() : null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Whether the app link opens on the Rancher origin. Such an app runs with
+ * the viewer's Rancher login: its script can call the Rancher API as the
+ * viewer (B25). The page warns next to the link.
+ */
+export function appOnRancherOrigin(link: string | null, origin: string): boolean {
+  if (!link) {
+    return false;
+  }
+  try {
+    return new URL(link).origin === new URL(origin).origin;
+  } catch {
+    return false;
   }
 }
 

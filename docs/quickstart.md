@@ -68,7 +68,14 @@ kubectl --context local get clusters.management.cattle.io \
   -o custom-columns=ID:.metadata.name,NAME:.spec.displayName
 ```
 
-`clusterId` 必填，用來組「打開應用」的網址（應用經 Rancher 代理開啟）；頁面找後端不需要它。查叢集 ID 需要 local 叢集的權限，也可以在 Rancher 介面打開那個叢集，網址列 `/c/` 後面那一段就是（例如 `c-m-xxxxxxxx`）。
+`clusterId` 必填，在沒有設定 `apps.url` 時用來組「打開應用」的網址（應用經 Rancher 代理開啟）；頁面找後端不需要它。查叢集 ID 需要 local 叢集的權限，也可以在 Rancher 介面打開那個叢集，網址列 `/c/` 後面那一段就是（例如 `c-m-xxxxxxxx`）。
+
+**應用要放在自己的網址（`apps.url`）。** 沒設定時，應用經 Rancher 代理開啟，跟 Rancher 同一個網址：誰打開應用，應用頁面裡的程式就帶著那個人的 Rancher 登入，能用他的身分呼叫 Rancher API（管理者打開時就是管理者權限）。設定 `apps.url`（`{app}` 會換成應用名稱）後，每個應用多一個 Ingress，從自己的網址打開，瀏覽器不會把 Rancher 的登入給它。需要準備：
+
+- 一個指到叢集 ingress controller 的萬用 DNS 紀錄，例如 `*.apps.example.com`。
+- 要用 https 的話，在 `laoban-dev` 放一張萬用憑證，設 `apps.tlsSecretName`；ingress class 不是預設的，設 `apps.ingressClassName`。
+- 用了自己網址的應用不再經過 Rancher 權限檢查，網路上連得到的人都能打開；請用網路或 ingress 的驗證機制控制誰連得到。
+- 設定前就有的應用，下次修改（包括調整 3D 版面）時才會加上 Ingress。
 
 建立 `values-laoban.yaml`（把 `<...>` 換掉）：
 
@@ -88,6 +95,9 @@ config:
   targetNamespace: laoban-dev
   # 上面查到的叢集 ID
   clusterId: <c-m-xxxxxxxx>
+# 應用自己的網址（強烈建議設定，見下方說明）
+apps:
+  url: https://{app}.apps.<你的網域>/
   # 後端訊息的語言：en（預設）或 zh-Hant
   language: en
 ```

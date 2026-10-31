@@ -156,6 +156,25 @@ spec:
               value: {{ required "config.clusterId is required: the Rancher ID of the cluster laoban runs in (the part after /c/ in its Rancher address, for example c-m-abcd1234)" .Values.config.clusterId | quote }}
             - name: LAOBAN_LANGUAGE
               value: {{ .Values.config.language | default "en" | quote }}
+            {{- with .Values.apps }}
+            {{- if .url }}
+            - name: LAOBAN_APP_URL
+              value: {{ .url | quote }}
+            {{- with .ingressClassName }}
+            - name: LAOBAN_APP_INGRESS_CLASS
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .tlsSecretName }}
+            {{- if not (hasPrefix "https://" $.Values.apps.url) }}
+            {{- fail "apps.tlsSecretName needs an https:// apps.url" }}
+            {{- end }}
+            - name: LAOBAN_APP_TLS_SECRET
+              value: {{ . | quote }}
+            {{- end }}
+            {{- else if or .ingressClassName .tlsSecretName }}
+            {{- fail "apps.ingressClassName and apps.tlsSecretName need apps.url" }}
+            {{- end }}
+            {{- end }}
             {{- range $roundLimits }}
             {{- $v := get $limits (index . 0) }}
             {{- if not (or (kindIs "invalid" $v) (and (kindIs "string" $v) (eq $v ""))) }}

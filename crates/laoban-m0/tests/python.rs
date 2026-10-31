@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use laoban_m0::codegen::GeneratedFiles;
+use laoban_m0::config::AppUrl;
 use laoban_m0::render::{render, RenderInput, MAIN_PY, SERVER_PY};
 
 fn python_has(module: &str) -> bool {
@@ -49,7 +50,7 @@ const CHECK_YAML: &str = r#"
 import json, sys, yaml
 root, expected = sys.argv[1], json.load(open(sys.argv[2], encoding="utf-8"))
 docs = {}
-for name in ["fleet.yaml", "configmap-web.yaml", "configmap-api.yaml", "web.yaml", "api.yaml"]:
+for name in ["fleet.yaml", "configmap-web.yaml", "configmap-api.yaml", "web.yaml", "api.yaml", "ingress.yaml"]:
     with open(f"{root}/{name}", encoding="utf-8") as f:
         docs[name] = list(yaml.safe_load_all(f))
 fleet = docs["fleet.yaml"][0]
@@ -87,6 +88,17 @@ for name in ("web.yaml", "api.yaml"):
     assert svc["spec"]["ports"][0]["port"] == 8080
     assert svc["spec"]["selector"] == dep["spec"]["selector"]["matchLabels"]
     assert all(dep["spec"]["selector"]["matchLabels"][k] == v for k, v in pod["metadata"]["labels"].items() if k in dep["spec"]["selector"]["matchLabels"])
+ing = docs["ingress.yaml"][0]
+assert ing["kind"] == "Ingress" and ing["metadata"]["name"] == "tricky-web", ing["metadata"]
+assert "app.kubernetes.io/managed-by" not in ing["metadata"]["labels"], ing["metadata"]
+assert ing["spec"] == {
+    "ingressClassName": "traefik",
+    "tls": [{"hosts": ["tricky.apps.example.com"], "secretName": "apps-tls"}],
+    "rules": [{"host": "tricky.apps.example.com", "http": {"paths": [{"path": "/", "pathType": "Prefix",
+        "backend": {"service": {"name": "tricky-web", "port": {"name": "http"}}}}]}}],
+}, ing["spec"]
+web_svc = docs["web.yaml"][1]
+assert web_svc["metadata"]["name"] == "tricky-web" and web_svc["spec"]["ports"][0]["name"] == "http"
 print("YAML OK")
 "#;
 
@@ -112,6 +124,13 @@ fn rendered_manifests_round_trip_through_a_yaml_parser() {
         model: "model-a-test",
         generated_at: "2026-10-13T00:00:00Z",
         meta_json: "{}\n",
+        app_url: Some(&AppUrl {
+            scheme: "https".into(),
+            host: "{app}.apps.example.com".into(),
+            port: String::new(),
+            ingress_class: Some("traefik".into()),
+            tls_secret: Some("apps-tls".into()),
+        }),
     });
     let dir = temp_dir("yaml");
     for f in &rendered {

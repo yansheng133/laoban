@@ -43,6 +43,43 @@ fn call_sequence(h: &Harness) -> Vec<String> {
         .collect()
 }
 
+/// With `LAOBAN_APP_URL` the app gets an Ingress on its own host and the
+/// link points there, off the Rancher origin.
+#[test]
+fn own_app_host_adds_ingress_and_link() {
+    let provider = MockProvider::new()
+        .then(ok(&plan_json()))
+        .then(ok(&files_json()));
+    let mut s = settings(1_000_000);
+    s.app_url = Some(laoban_m0::config::AppUrl {
+        scheme: "https".into(),
+        host: "{app}.apps.example.com".into(),
+        port: ":8443".into(),
+        ingress_class: None,
+        tls_secret: None,
+    });
+    let h = harness_settings(provider, RefUpdate::Ok, s, Vec::new(), Vec::new());
+    let plan = h
+        .service
+        .plan(&plan_req("做一個早餐店點餐頁面"), None)
+        .unwrap();
+    let applied = h.service.apply(&apply_req(&plan_id(&plan)), None).unwrap();
+    assert_eq!(
+        applied["appUrl"],
+        "https://breakfast.apps.example.com:8443/"
+    );
+    let blobs = blob_contents(&h.github);
+    assert_eq!(blobs.len(), 9);
+    let ing = blobs.last().unwrap();
+    assert!(ing.contains("kind: Ingress"), "{ing}");
+    // The port is only for the link; the Ingress matches the host name.
+    assert!(
+        ing.contains("- host: \"breakfast.apps.example.com\"\n"),
+        "{ing}"
+    );
+    assert!(ing.contains("name: \"breakfast-web\""), "{ing}");
+}
+
 #[test]
 fn happy_path_plan_then_apply() {
     let provider = MockProvider::new()

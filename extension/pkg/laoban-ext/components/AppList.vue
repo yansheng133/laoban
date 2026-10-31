@@ -11,7 +11,7 @@ import { useStore } from 'vuex';
 import { errorText as errorFor } from '../utils/errors';
 import { useText } from '../composables/useText';
 import {
-  listApps, listBundles, resolveAppUrl, canChangeApps, AppSummary, WaitingRound
+  listApps, listBundles, resolveAppUrl, appOnRancherOrigin, canChangeApps, AppSummary, WaitingRound
 } from '../utils/backend';
 import { refreshWaiting } from '../utils/waiting';
 import { bundleReadiness, Bundle, ReadinessState } from '../utils/bundle';
@@ -90,6 +90,10 @@ export default defineComponent({
       return resolveAppUrl(app.appUrl, window.location.origin);
     }
 
+    function sameOrigin(app: AppSummary): boolean {
+      return appOnRancherOrigin(openUrl(app), window.location.origin);
+    }
+
     function formatTime(at: string): string {
       if (!at) {
         return '-';
@@ -134,7 +138,7 @@ export default defineComponent({
     expose({ refresh });
 
     return {
-      t, apps, loading, loaded, errorText, waiting, waitingCount, refresh, openUrl, formatTime, stateLabel, stateClass, appDetailRoute, mayChange
+      t, apps, loading, loaded, errorText, waiting, waitingCount, refresh, openUrl, sameOrigin, formatTime, stateLabel, stateClass, appDetailRoute, mayChange
     };
   },
 });
@@ -243,7 +247,11 @@ export default defineComponent({
                 target="_blank"
                 rel="noopener noreferrer"
                 class="btn btn-sm role-secondary"
-              >{{ t('laoban.apps.open') }}</a>
+                :title="sameOrigin(app) ? t('laoban.dashboard.result.sameOriginWarning') : null"
+              ><i
+                v-if="sameOrigin(app)"
+                class="icon icon-warning text-warning"
+              /> {{ t('laoban.apps.open') }}</a>
               <router-link
                 :to="appDetailRoute(app.appName)"
                 class="btn btn-sm role-primary"

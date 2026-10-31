@@ -420,6 +420,7 @@ laoban:
       committed: 已寫進 GitHub：
       openApp: 打開應用
       badAppUrl: 後端回傳的應用網址格式不正確，無法顯示連結。
+      sameOriginWarning: "這個應用跟 Rancher 在同一個網址下，打開時會帶著你的 Rancher 登入：應用頁面能用你的身分呼叫 Rancher API。只打開你信任的應用，並請管理者讓應用使用自己的網址（chart 設定 apps.url）。"
     arch:
       title: 架構圖
       empty: 產生計畫後，這裡會顯示應用的 3D 架構圖。

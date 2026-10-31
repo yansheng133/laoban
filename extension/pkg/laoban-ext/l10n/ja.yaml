@@ -422,6 +422,7 @@ laoban:
       committed: "GitHub にコミットしました："
       openApp: アプリを開く
       badAppUrl: バックエンドから返されたアプリの URL が正しくないため、リンクを表示しません。
+      sameOriginWarning: "このアプリは Rancher と同じアドレスで開かれ、あなたの Rancher ログインのまま動きます。アプリのページはあなたとして Rancher API を呼び出せます。信頼できるアプリだけを開き、アプリに専用のアドレスを設定するよう管理者に依頼してください（chart の値 apps.url）。"
     arch:
       title: アーキテクチャ図
       empty: 計画を作成すると、ここにアプリの 3D アーキテクチャが表示されます。

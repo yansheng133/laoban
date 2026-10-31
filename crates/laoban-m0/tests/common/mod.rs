@@ -38,6 +38,7 @@ pub fn settings(token_cap: u64) -> M0Settings {
         target_namespace: "laoban-dev".into(),
         cluster_id: "c-m-test0001".into(),
         ai_timeout_secs: 300,
+        app_url: None,
     }
 }
 
@@ -420,10 +421,20 @@ pub fn harness_versions(
     apps: Vec<(String, Option<String>)>,
     versions: Vec<Version>,
 ) -> Harness {
+    harness_settings(provider, update, settings(token_cap), apps, versions)
+}
+
+pub fn harness_settings(
+    provider: MockProvider,
+    update: RefUpdate,
+    settings: M0Settings,
+    apps: Vec<(String, Option<String>)>,
+    versions: Vec<Version>,
+) -> Harness {
     let provider = Arc::new(provider);
     let github = github_mock_versions(update, apps, versions);
     let service = M0Service::new(
-        settings(token_cap),
+        settings,
         Box::new(Arc::clone(&provider)),
         committer(&github),
     )

@@ -16,6 +16,16 @@ pub const ENV_GITHUB_REPO: &str = "LAOBAN_GITHUB_REPO";
 pub const ENV_GITHUB_TOKEN: &str = "LAOBAN_GITHUB_TOKEN";
 pub const ENV_TARGET_NAMESPACE: &str = "LAOBAN_TARGET_NAMESPACE";
 pub const ENV_CLUSTER_ID: &str = "LAOBAN_CLUSTER_ID";
+/// Address the generated apps are opened at, with `{app}` in the host, for
+/// example `https://{app}.apps.example.com/`. Each app then gets an Ingress
+/// for that host. Unset: apps open through the Rancher service proxy, on
+/// the Rancher origin (with the viewer's Rancher login; see SECURITY.md).
+pub const ENV_APP_URL: &str = "LAOBAN_APP_URL";
+/// `spec.ingressClassName` of the app Ingresses. Unset: the cluster default.
+pub const ENV_APP_INGRESS_CLASS: &str = "LAOBAN_APP_INGRESS_CLASS";
+/// TLS Secret (in the target namespace) for the app Ingresses, for example
+/// a wildcard certificate. Only with an `https://` app URL.
+pub const ENV_APP_TLS_SECRET: &str = "LAOBAN_APP_TLS_SECRET";
 /// Base URL of an Anthropic Messages API compatible endpoint (for example a
 /// local Ollama server). Unset means the Anthropic API itself.
 pub const ENV_AI_BASE_URL: &str = "LAOBAN_AI_BASE_URL";
@@ -47,6 +57,35 @@ pub struct M0Settings {
     pub cluster_id: String,
     /// Upper bound for one AI call; the page waits a little longer.
     pub ai_timeout_secs: u64,
+    /// Own address for each app (`LAOBAN_APP_URL`). `None`: the Rancher
+    /// service proxy.
+    pub app_url: Option<AppUrl>,
+}
+
+/// Where the generated apps are opened when they have their own host.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppUrl {
+    /// `http` or `https`.
+    pub scheme: String,
+    /// Host name containing `{app}` once, for example `{app}.apps.example.com`.
+    pub host: String,
+    /// Port written into the link only (`:8443`), empty for the default.
+    /// The Ingress matches the host name alone.
+    pub port: String,
+    pub ingress_class: Option<String>,
+    pub tls_secret: Option<String>,
+}
+
+impl AppUrl {
+    /// Host name of one app.
+    pub fn host_for(&self, app: &str) -> String {
+        self.host.replace("{app}", app)
+    }
+
+    /// Link to one app.
+    pub fn url_for(&self, app: &str) -> String {
+        format!("{}://{}{}/", self.scheme, self.host_for(app), self.port)
+    }
 }
 
 impl M0Settings {
@@ -120,6 +159,42 @@ impl ConfigError {
 
 fn re(cell: &'static OnceLock<Regex>, pattern: &str) -> &'static Regex {
     cell.get_or_init(|| Regex::new(pattern).unwrap())
+}
+
+/// `http(s)://<host with {app} once>[:port][/]`. App names are DNS labels,
+/// so the host stays a valid DNS name after `{app}` is replaced. No path:
+/// the app's own files and its `api/` are served from the root.
+fn parse_app_url(v: &str) -> Option<AppUrl> {
+    static APP_URL: OnceLock<Regex> = OnceLock::new();
+    let caps = re(
+        &APP_URL,
+        r"^(https?)://([a-z0-9.{}-]{1,200})(:[0-9]{1,5})?/?$",
+    )
+    .captures(v)?;
+    let host = caps[2].to_string();
+    if host.matches("{app}").count() != 1 {
+        return None;
+    }
+    // Every label must be a DNS label once {app} is replaced by a name.
+    let probe = host.replace("{app}", "a");
+    if probe.contains(['{', '}'])
+        || !probe
+            .split('.')
+            .all(|l| !l.is_empty() && l.len() <= 63 && !l.starts_with('-') && !l.ends_with('-'))
+    {
+        return None;
+    }
+    let port = caps.get(3).map(|m| m.as_str()).unwrap_or("");
+    if !port.is_empty() && !port[1..].parse::<u16>().is_ok_and(|p| p > 0) {
+        return None;
+    }
+    Some(AppUrl {
+        scheme: caps[1].to_string(),
+        host,
+        port: port.to_string(),
+        ingress_class: None,
+        tls_secret: None,
+    })
 }
 
 /// Read configuration through `get` (use `|k| std::env::var(k).ok()`).
@@ -209,6 +284,39 @@ pub fn from_env_with(get: impl Fn(&str) -> Option<String>) -> Result<EnvConfig, 
         return Err(ConfigError::Invalid(ENV_CLUSTER_ID));
     }
 
+    let app_url = match value(ENV_APP_URL) {
+        None => None,
+        Some(v) => Some(parse_app_url(&v).ok_or(ConfigError::Invalid(ENV_APP_URL))?),
+    };
+    let ingress_class = value(ENV_APP_INGRESS_CLASS);
+    let tls_secret = value(ENV_APP_TLS_SECRET);
+    for (var, v) in [
+        (ENV_APP_INGRESS_CLASS, &ingress_class),
+        (ENV_APP_TLS_SECRET, &tls_secret),
+    ] {
+        static DNS_SUBDOMAIN: OnceLock<Regex> = OnceLock::new();
+        if let Some(v) = v {
+            let ok = app_url.is_some()
+                && v.len() <= 253
+                && re(
+                    &DNS_SUBDOMAIN,
+                    r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$",
+                )
+                .is_match(v);
+            if !ok {
+                return Err(ConfigError::Invalid(var));
+            }
+        }
+    }
+    if tls_secret.is_some() && app_url.as_ref().is_some_and(|u| u.scheme != "https") {
+        return Err(ConfigError::Invalid(ENV_APP_TLS_SECRET));
+    }
+    let app_url = app_url.map(|u| AppUrl {
+        ingress_class,
+        tls_secret,
+        ..u
+    });
+
     let mut round_limits = crate::rounds::Limits::default();
     for (var, slot) in [
         (ENV_ROUND_OPINION_CHARS, &mut round_limits.opinion_chars),
@@ -236,6 +344,7 @@ pub fn from_env_with(get: impl Fn(&str) -> Option<String>) -> Result<EnvConfig, 
             target_namespace,
             cluster_id,
             ai_timeout_secs,
+            app_url,
         },
         ai: AiEndpoint { base_url },
         anthropic_api_key: key.map(Secret),
@@ -316,6 +425,17 @@ mod tests {
             (ENV_ROUND_CHARS, "8001"),
             (ENV_ROUND_OPINIONS, "many"),
             (ENV_ROUND_REPLIES, "21"),
+            (ENV_APP_URL, "https://apps.example.com/"),
+            (ENV_APP_URL, "https://{app}.{app}.example.com/"),
+            (ENV_APP_URL, "https://{app}.example.com/path/"),
+            (ENV_APP_URL, "ftp://{app}.example.com/"),
+            (ENV_APP_URL, "https://{app}..example.com/"),
+            (ENV_APP_URL, "https://{app}.Example.com/"),
+            (ENV_APP_URL, "https://user@{app}.example.com/"),
+            (ENV_APP_URL, "https://{app}.example.com:0/"),
+            (ENV_APP_URL, "https://{app}.example.com:70000/"),
+            (ENV_APP_INGRESS_CLASS, "traefik"),
+            (ENV_APP_TLS_SECRET, "apps-tls"),
         ] {
             let mut pairs = FULL.to_vec();
             pairs.push((k, v));
@@ -328,6 +448,44 @@ mod tests {
         let mut pairs = FULL.to_vec();
         pairs.push((ENV_TOKEN_CAP, "1_000"));
         assert_eq!(from_env_with(env(&pairs)).unwrap().settings.token_cap, 1000);
+    }
+
+    #[test]
+    fn app_url() {
+        assert_eq!(from_env_with(env(FULL)).unwrap().settings.app_url, None);
+        let mut pairs = FULL.to_vec();
+        pairs.extend([
+            (ENV_APP_URL, "http://{app}.apps.localhost:8480"),
+            (ENV_APP_INGRESS_CLASS, "traefik"),
+        ]);
+        let u = from_env_with(env(&pairs))
+            .unwrap()
+            .settings
+            .app_url
+            .unwrap();
+        assert_eq!(u.url_for("todo"), "http://todo.apps.localhost:8480/");
+        assert_eq!(u.host_for("todo"), "todo.apps.localhost");
+        assert_eq!(u.ingress_class.as_deref(), Some("traefik"));
+        assert_eq!(u.tls_secret, None);
+
+        // TLS needs https.
+        pairs.push((ENV_APP_TLS_SECRET, "apps-tls"));
+        assert_eq!(
+            from_env_with(env(&pairs)).unwrap_err(),
+            ConfigError::Invalid(ENV_APP_TLS_SECRET)
+        );
+        let mut pairs = FULL.to_vec();
+        pairs.extend([
+            (ENV_APP_URL, "https://laoban-{app}.apps.example.com/"),
+            (ENV_APP_TLS_SECRET, "apps-tls"),
+        ]);
+        let u = from_env_with(env(&pairs))
+            .unwrap()
+            .settings
+            .app_url
+            .unwrap();
+        assert_eq!(u.url_for("todo"), "https://laoban-todo.apps.example.com/");
+        assert_eq!(u.tls_secret.as_deref(), Some("apps-tls"));
     }
 
     #[test]

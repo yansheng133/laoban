@@ -33,7 +33,7 @@ import StructureEdit from '../components/StructureEdit.vue';
 import { useDeployFlow } from '../composables/useDeployFlow';
 import { useRound } from '../composables/useRound';
 import {
-  getApp, canChangeApps, listVersions, getVersion, resolveAppUrl, safeHttpsUrl, saveFiles, saveLayout, aiRequestTimeoutMs,
+  getApp, canChangeApps, listVersions, getVersion, resolveAppUrl, appOnRancherOrigin, safeHttpsUrl, saveFiles, saveLayout, aiRequestTimeoutMs,
   AppDetail, VersionEntry, VersionDetail, AppFiles, Position, RoundAction
 } from '../utils/backend';
 import { appendLine } from '../utils/structure';
@@ -298,6 +298,7 @@ export default defineComponent({
     const pendingCount = computed(() => Object.keys(pending.value).length);
     const appsRoute = { name: APPS_ROUTE_NAME, params: { product: PRODUCT_NAME, cluster: BLANK_CLUSTER } };
     const openLink = computed(() => resolveAppUrl(detail.value?.appUrl, window.location.origin));
+    const openSameOrigin = computed(() => appOnRancherOrigin(openLink.value, window.location.origin));
     const sourceLink = computed(() => {
       const repo = flow.config.value?.repo;
       const path = detail.value?.path;
@@ -800,6 +801,7 @@ export default defineComponent({
       name,
       appsRoute,
       openLink,
+      openSameOrigin,
       sourceLink,
       view,
       versions,
@@ -933,9 +935,16 @@ export default defineComponent({
           target="_blank"
           rel="noopener noreferrer"
           class="btn role-primary"
+          :title="openSameOrigin ? t('laoban.dashboard.result.sameOriginWarning') : null"
         >{{ t('laoban.dashboard.result.openApp') }}</a>
       </div>
     </header>
+    <p
+      v-if="openSameOrigin"
+      class="text-warning laoban-same-origin"
+    >
+      <i class="icon icon-warning" /> {{ t('laoban.dashboard.result.sameOriginWarning') }}
+    </p>
 
     <p
       v-if="loading && !detail"
