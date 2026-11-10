@@ -244,12 +244,15 @@ jobs:
           def docs(text):
               return [d for d in text.split("\n---\n") if "kind:" in d]
           def rules(doc):
-              res = set(re.findall(r"^\s+- ([a-z/]+)$", doc, re.M))
-              inline = re.findall(r'resources: \[([^\]]*)\]', doc)
-              for line in inline:
-                  res |= {x.strip().strip('"') for x in line.split(",")}
-              verbs = re.findall(r'verbs: \[([^\]]*)\]', doc)
-              return res, {v.strip().strip('"') for v in verbs[0].split(",")}
+              # One (resources, verbs) pair per rule, as a set of pairs.
+              out = set()
+              for block in re.split(r"^  - apiGroups:", doc, flags=re.M)[1:]:
+                  res = set(re.findall(r"^\s+- ([a-z/]+)$", block, re.M))
+                  for line in re.findall(r'resources: \[([^\]]*)\]', block):
+                      res |= {x.strip().strip('"') for x in line.split(",")}
+                  verbs = re.findall(r'verbs: \[([^\]]*)\]', block)
+                  out.add((frozenset(res), frozenset(v.strip().strip('"') for v in verbs[0].split(","))))
+              return out
           # Project members also need to read the app's Deployments (B26);
           # edit/view have that already, so the chart has no such rule.
           DEPLOY_RULE = '  - apiGroups: ["apps"]\n    resources: ["deployments"]\n    verbs: ["get", "list", "watch"]\n'

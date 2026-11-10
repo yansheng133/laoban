@@ -2,7 +2,7 @@
 
 給接手的人（或其他 Claude 工作階段）快速知道 laoban 做到哪裡。隨每個版本更新；細節以 [m0-design.md](m0-design.md) 與 [Releases](https://github.com/yansheng133/laoban/releases) 為準。
 
-**最後更新**：v0.1.25（2026-11-10）
+**最後更新**：v0.1.26（2026-11-11）
 
 ## 一句話
 
@@ -18,6 +18,7 @@ Rancher UI extension：用一句話做出應用（AI 先給計畫與 3D 架構�
 | 應用的形狀 | 固定兩個元件：網頁加 API（Python，SUSE BCI 映像），一個 namespace，Pod Security restricted |
 | 一起修改（意見收斂） | 一般與針對元件的意見、+1、回覆、改寫、撤回；草稿存在一輪裡（預設分享）；發起人改截止或立即收斂；AI 收斂成計畫；對計畫步驟留言；提意見的人都確認才發布；重啟後一輪還在；結束後歸檔到 `laoban-rounds` 分支，可看過去的輪次 |
 | 版本 | 每一版是一個 commit；比較、還原；手動改程式；3D 圖拖曳存版 |
+| 刪除應用 | 詳細頁與清單都能刪（輸入名稱確認）；一個 commit 移除 `apps/<名稱>/`，Fleet 清掉叢集資源，頁面等到清完（v0.1.26）；viewer 不能刪 |
 | 權限 | 後端是 Kubernetes aggregated API，用使用者自己的 Rancher 登入與 RBAC；內建 edit／view，或 Rancher Project 角色 laoban user／viewer；viewer 只能看 |
 | 介面 | 繁體中文、English、日本語；後端訊息預設英文（`config.language: zh-Hant` 可改）；Rancher 側邊選單可收合 |
 | AI | Anthropic API，或相容 Messages API 的本機模型（例如 Ollama）；送出前遮蔽敏感資料 |

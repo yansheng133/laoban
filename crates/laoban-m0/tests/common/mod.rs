@@ -91,6 +91,8 @@ pub fn github_mock_files(
     // becomes what later reads return once the branch moves.
     let apps = Arc::new(Mutex::new(apps));
     let pending: Arc<Mutex<Vec<(String, String)>>> = Arc::new(Mutex::new(Vec::new()));
+    // Apps whose files the pending tree removes (a null sha).
+    let pending_deletes: Arc<Mutex<Vec<String>>> = Arc::default();
     // The main branch's commits, oldest first: (SHA, apps at that commit).
     // Apps given without explicit versions are at BASE_COMMIT.
     type Snapshot = (String, Vec<(String, Option<String>)>);
@@ -331,6 +333,19 @@ pub fn github_mock_files(
                         })
                         .unwrap_or_default();
                     *last_tree.lock().unwrap() = entries;
+                    let gone: Vec<String> = v["tree"]
+                        .as_array()
+                        .map(|a| {
+                            a.iter()
+                                .filter(|e| e["sha"].is_null())
+                                .filter_map(|e| {
+                                    let rest = e["path"].as_str()?.strip_prefix("apps/")?;
+                                    Some(rest.split('/').next()?.to_string())
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    pending_deletes.lock().unwrap().extend(gone);
                 }
                 Reply::json(201, json!({"sha": NEW_TREE}).to_string())
             }
@@ -355,6 +370,8 @@ pub fn github_mock_files(
                             None => apps.push((app, Some(meta))),
                         }
                     }
+                    let gone: Vec<String> = pending_deletes.lock().unwrap().drain(..).collect();
+                    apps.retain(|(n, _)| !gone.contains(n));
                     history.lock().unwrap().push((sha.clone(), apps.clone()));
                     Reply::json(
                         200,
@@ -363,6 +380,7 @@ pub fn github_mock_files(
                 }
                 RefUpdate::Status(s) => {
                     pending.lock().unwrap().clear();
+                    pending_deletes.lock().unwrap().clear();
                     Reply::json(
                         s,
                         json!({"message": "Update is not a fast forward", "status": s.to_string()})
@@ -468,6 +486,28 @@ pub fn harness_settings(
     let github = github_mock_versions(update, apps, versions);
     let service = M0Service::new(
         settings,
+        Box::new(Arc::clone(&provider)),
+        committer(&github),
+    )
+    .unwrap();
+    Harness {
+        service,
+        provider,
+        github,
+    }
+}
+
+/// Like [`harness_with`], with these other files in the app directories.
+pub fn harness_files(
+    provider: MockProvider,
+    update: RefUpdate,
+    apps: Vec<(String, Option<String>)>,
+    files: Vec<(String, String)>,
+) -> Harness {
+    let provider = Arc::new(provider);
+    let github = github_mock_files(update, apps, Vec::new(), files);
+    let service = M0Service::new(
+        settings(1_000_000),
         Box::new(Arc::clone(&provider)),
         committer(&github),
     )

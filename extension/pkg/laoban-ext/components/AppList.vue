@@ -11,17 +11,25 @@ import { useStore } from 'vuex';
 import { errorText as errorFor } from '../utils/errors';
 import { useText } from '../composables/useText';
 import {
-  listApps, listBundles, resolveAppUrl, appOnRancherOrigin, canChangeApps, AppSummary, WaitingRound
+  listApps, listBundles, resolveAppUrl, appOnRancherOrigin, canChangeApps, canDeleteApps, AppSummary, WaitingRound
 } from '../utils/backend';
 import { refreshWaiting } from '../utils/waiting';
 import { bundleReadiness, Bundle, ReadinessState } from '../utils/bundle';
 import { appDetailRoute } from '../config/laoban';
 import { formatDateTime } from '../utils/time';
+import DeleteApp from './DeleteApp.vue';
 
 export default defineComponent({
   name: 'LaobanAppList',
 
-  setup(_props, { expose }) {
+  components: { DeleteApp },
+
+  props: {
+    // An app the detail page just deleted: { appName, cleared }.
+    deleted: { type: Object as () => { appName: string; cleared: boolean } | null, default: null },
+  },
+
+  setup(props, { expose }) {
     const store = useStore();
     const { t } = useText(store);
 
@@ -42,6 +50,28 @@ export default defineComponent({
     canChangeApps(store).then((v) => {
       mayChange.value = v;
     });
+
+    // Deleting from the list (v0.1.26): the row's form opens under it.
+    const mayDelete = ref(false);
+
+    canDeleteApps(store).then((v) => {
+      mayDelete.value = v;
+    });
+    const deleting = ref<string | null>(null);
+    // A delete is running: its form stays open and no other row is deleted.
+    const deleteBusy = ref(false);
+    const notice = ref<{ appName: string; cleared: boolean } | null>(props.deleted || null);
+
+    function deleteBlockedBy(app: AppSummary): string {
+      return app.round ? t('laoban.delete.blockedRound') : '';
+    }
+
+    function onDeleted(e: { appName: string; cleared: boolean }) {
+      deleteBusy.value = false;
+      deleting.value = null;
+      notice.value = e;
+      refresh();
+    }
 
     async function loadWaiting() {
       // A nice-to-have, like the Fleet state; also updates the nav count.
@@ -138,7 +168,27 @@ export default defineComponent({
     expose({ refresh });
 
     return {
-      t, apps, loading, loaded, errorText, waiting, waitingCount, refresh, openUrl, sameOrigin, formatTime, stateLabel, stateClass, appDetailRoute, mayChange
+      t,
+      apps,
+      loading,
+      loaded,
+      errorText,
+      waiting,
+      waitingCount,
+      refresh,
+      openUrl,
+      sameOrigin,
+      formatTime,
+      stateLabel,
+      stateClass,
+      appDetailRoute,
+      mayChange,
+      mayDelete,
+      deleting,
+      deleteBusy,
+      notice,
+      deleteBlockedBy,
+      onDeleted,
     };
   },
 });
@@ -167,6 +217,14 @@ export default defineComponent({
       </button>
     </div>
 
+    <p
+      v-if="notice"
+      :class="['laoban-apps-waiting', notice.cleared ? 'laoban-banner-info' : 'laoban-banner-warning']"
+      role="status"
+      data-testid="laoban-apps-deleted"
+    >
+      {{ notice.cleared ? t('laoban.delete.done', { name: notice.appName }) : t('laoban.delete.slow', { name: notice.appName }) }}
+    </p>
     <p
       v-if="waitingCount"
       class="laoban-apps-waiting laoban-banner-warning"
@@ -204,62 +262,91 @@ export default defineComponent({
           </tr>
         </thead>
         <tbody>
-          <tr
+          <template
             v-for="app in apps"
             :key="app.appName"
           >
-            <td class="laoban-apps-name">
-              <router-link :to="appDetailRoute(app.appName)">
-                {{ app.appName }}
-              </router-link>
-            </td>
-            <td class="laoban-text">
-              <span v-if="app.editable">{{ app.summary }}</span>
-              <!-- The waiting badge says it already (report 22, N7: "Failed" twice). -->
-              <span
-                v-if="app.round && !waiting[app.appName]"
-                class="laoban-apps-round"
-              >{{ t(`laoban.round.states.${ app.round }`) }}</span>
-              <span
-                v-if="waiting[app.appName]"
-                class="laoban-apps-waiting-badge"
-                :class="{ mine: waiting[app.appName].reason === 'confirm' }"
-              >{{ t(`laoban.waiting.badge.${ waiting[app.appName].reason }`) }}</span>
-              <span
-                v-if="!app.editable"
-                class="text-muted"
-              >{{ t('laoban.apps.legacy') }}</span>
-            </td>
-            <td class="laoban-apps-nowrap">
-              {{ formatTime(app.updatedAt) }}
-              <span
-                v-if="app.revisions > 1"
-                class="text-muted"
-              >{{ t('laoban.apps.revisions', { count: app.revisions }) }}</span>
-            </td>
-            <td :class="['laoban-apps-nowrap', stateClass(app.appName)]">
-              {{ stateLabel(app.appName) }}
-            </td>
-            <td class="laoban-apps-actions">
-              <a
-                v-if="openUrl(app)"
-                :href="openUrl(app)"
-                target="_blank"
-                rel="noopener noreferrer"
-                class="btn btn-sm role-secondary"
-                :title="sameOrigin(app) ? t('laoban.dashboard.result.sameOriginWarning') : null"
-              ><i
-                v-if="sameOrigin(app)"
-                class="icon icon-warning text-warning"
-              /> {{ t('laoban.apps.open') }}</a>
-              <router-link
-                :to="appDetailRoute(app.appName)"
-                class="btn btn-sm role-primary"
-              >
-                {{ app.editable && mayChange ? t('laoban.apps.edit') : t('laoban.apps.details') }}
-              </router-link>
-            </td>
-          </tr>
+            <tr>
+              <td class="laoban-apps-name">
+                <router-link :to="appDetailRoute(app.appName)">
+                  {{ app.appName }}
+                </router-link>
+              </td>
+              <td class="laoban-text">
+                <span v-if="app.editable">{{ app.summary }}</span>
+                <!-- The waiting badge says it already (report 22, N7: "Failed" twice). -->
+                <span
+                  v-if="app.round && !waiting[app.appName]"
+                  class="laoban-apps-round"
+                >{{ t(`laoban.round.states.${ app.round }`) }}</span>
+                <span
+                  v-if="waiting[app.appName]"
+                  class="laoban-apps-waiting-badge"
+                  :class="{ mine: waiting[app.appName].reason === 'confirm' }"
+                >{{ t(`laoban.waiting.badge.${ waiting[app.appName].reason }`) }}</span>
+                <span
+                  v-if="!app.editable"
+                  class="text-muted"
+                >{{ t('laoban.apps.legacy') }}</span>
+              </td>
+              <td class="laoban-apps-nowrap">
+                {{ formatTime(app.updatedAt) }}
+                <span
+                  v-if="app.revisions > 1"
+                  class="text-muted"
+                >{{ t('laoban.apps.revisions', { count: app.revisions }) }}</span>
+              </td>
+              <td :class="['laoban-apps-nowrap', stateClass(app.appName)]">
+                {{ stateLabel(app.appName) }}
+              </td>
+              <td class="laoban-apps-actions">
+                <a
+                  v-if="openUrl(app)"
+                  :href="openUrl(app)"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="btn btn-sm role-secondary"
+                  :title="sameOrigin(app) ? t('laoban.dashboard.result.sameOriginWarning') : null"
+                ><i
+                  v-if="sameOrigin(app)"
+                  class="icon icon-warning text-warning"
+                /> {{ t('laoban.apps.open') }}</a>
+                <router-link
+                  v-if="!(deleteBusy && deleting === app.appName)"
+                  :to="appDetailRoute(app.appName)"
+                  class="btn btn-sm role-primary"
+                >
+                  {{ app.editable && mayChange ? t('laoban.apps.edit') : t('laoban.apps.details') }}
+                </router-link>
+                <button
+                  v-if="mayDelete"
+                  type="button"
+                  class="btn btn-sm role-secondary laoban-apps-delete"
+                  :disabled="deleteBusy"
+                  :aria-expanded="deleting === app.appName ? 'true' : 'false'"
+                  :aria-label="t('laoban.delete.title', { name: app.appName })"
+                  data-testid="laoban-apps-delete"
+                  @click="deleting = deleting === app.appName ? null : app.appName"
+                >
+                  {{ t('laoban.delete.short') }}
+                </button>
+              </td>
+            </tr>
+            <tr
+              v-if="deleting === app.appName"
+              class="laoban-apps-delete-row"
+            >
+              <td colspan="5">
+                <DeleteApp
+                  :app-name="app.appName"
+                  :blocked-by="deleteBlockedBy(app)"
+                  @cancel="deleting = null"
+                  @deleted="onDeleted"
+                  @busy="deleteBusy = $event"
+                />
+              </td>
+            </tr>
+          </template>
         </tbody>
       </table>
     </div>
@@ -352,6 +439,14 @@ export default defineComponent({
   .btn + .btn {
     margin-left: 6px;
   }
+}
+
+.laoban-apps-delete {
+  color: var(--error);
+}
+
+.laoban-apps-delete-row td {
+  border-bottom: 1px solid var(--border);
 }
 
 .laoban-text {

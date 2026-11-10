@@ -53,6 +53,24 @@ laoban:
     tabs:
       arch: Architecture
       code: Code
+  delete:
+    open: Delete app
+    short: Delete
+    title: "Delete app {name}"
+    effectRepo: "{path} is removed from GitHub in one commit."
+    effectCluster: "Fleet then deletes all of the app's resources in the cluster, and the app's address stops working."
+    effectHistory: "Earlier versions stay in GitHub's commit history but cannot be restored from this page; past rounds of opinions stay on the laoban-rounds branch."
+    typeName: "Type the app name {name} to confirm"
+    submit: Delete
+    cancel: Cancel
+    close: Close
+    deleting: Deleting from GitHub…
+    clearing: Deleted from GitHub. Waiting for Fleet to remove the resources in the cluster (up to 3 minutes)…
+    done: "{name} was deleted from GitHub and the cluster."
+    slow: "{name} was deleted from GitHub, but its resources were still in the cluster after 3 minutes. Check the Git Repo \"laoban-apps\" in Continuous Delivery."
+    failed: The app could not be deleted. Try again later.
+    blockedRound: A round of opinions is running on this app. Delete it after the round ends or is cancelled.
+    blockedBusy: A new version of this app is being published. Delete it after that finishes.
   view3d:
     edges:
       memory: "memory"

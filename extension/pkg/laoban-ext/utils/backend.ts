@@ -385,7 +385,7 @@ function csrfToken(store: StoreLike): string | undefined {
 }
 
 interface RequestOptions {
-  method?: 'GET' | 'POST';
+  method?: 'GET' | 'POST' | 'DELETE';
   body?: unknown;
   timeoutMs?: number;
   // Let the request finish while the page unloads (releasing the lock).
@@ -509,9 +509,44 @@ export function canChangeApps(store: StoreLike): Promise<boolean> {
   return mayChange;
 }
 
+// Whether the signed-in user may delete apps (delete on laoban's "apps"),
+// asked the same way. Unlike changing, a failed check hides the button: the
+// backend refuses anyway, and a delete button nobody can use is noise.
+let mayDelete: Promise<boolean> | null = null;
+
+export function canDeleteApps(store: StoreLike): Promise<boolean> {
+  if (!mayDelete) {
+    mayDelete = (async() => {
+      try {
+        const target = await findTarget();
+        const res = await requestJson<{ status?: { allowed?: boolean } }>(store,
+          `/k8s/clusters/${ encodeURIComponent(target.clusterId) }/apis/authorization.k8s.io/v1/selfsubjectaccessreviews`, {
+            method: 'POST',
+            body:   {
+              apiVersion: 'authorization.k8s.io/v1',
+              kind:       'SelfSubjectAccessReview',
+              spec:       {
+                resourceAttributes: {
+                  namespace: target.namespace, verb: 'delete', group: API_GROUP, resource: 'apps'
+                }
+              }
+            }
+          });
+
+        return res.status?.allowed === true;
+      } catch {
+        return false;
+      }
+    })();
+  }
+
+  return mayDelete;
+}
+
 /** Forget the answer (tests). */
 export function resetAccess() {
   mayChange = null;
+  mayDelete = null;
 }
 
 async function resolveBackend(url: string): Promise<string> {
@@ -560,6 +595,22 @@ export function restoreVersion(store: StoreLike, name: string, commit: string, t
   return requestJson<ApplyResponse>(store, appPath(name, '/restore'), {
     method: 'POST', body: { commit }, timeoutMs
   });
+}
+
+// DELETE .../apps/<name>: one commit removes the app's directory; Fleet then
+// removes its resources. `deployments` are the app's two Deployments, to
+// watch until they are gone (validated with deploymentTargets()).
+export interface DeleteResponse {
+  mode: 'delete';
+  appName: string;
+  commit: string;
+  commitUrl: string;
+  path: string;
+  deployments?: unknown;
+}
+
+export function deleteApp(store: StoreLike, name: string): Promise<DeleteResponse> {
+  return requestJson<DeleteResponse>(store, appPath(name), { method: 'DELETE' });
 }
 
 export function getRound(store: StoreLike, name: string): Promise<RoundResponse> {

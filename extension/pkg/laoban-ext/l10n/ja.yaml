@@ -55,6 +55,24 @@ laoban:
     tabs:
       arch: アーキテクチャ図
       code: コード
+  delete:
+    open: アプリを削除
+    short: 削除
+    title: "アプリ {name} を削除"
+    effectRepo: "GitHub の {path} を 1 つのコミットで削除します。"
+    effectCluster: "その後 Fleet がクラスター内のこのアプリのリソースをすべて削除し、アプリの URL は使えなくなります。"
+    effectHistory: "以前のバージョンは GitHub のコミット履歴に残りますが、このページからは元に戻せません。意見のラウンドの記録は laoban-rounds ブランチに残ります。"
+    typeName: "確認のためアプリ名 {name} を入力してください"
+    submit: 削除
+    cancel: キャンセル
+    close: 閉じる
+    deleting: GitHub から削除しています…
+    clearing: GitHub から削除しました。Fleet がクラスター内のリソースを削除するのを待っています（最大 3 分）…
+    done: "{name} を GitHub とクラスターから削除しました。"
+    slow: "{name} を GitHub から削除しましたが、3 分たってもクラスター内のリソースが残っています。Continuous Delivery で Git Repo「laoban-apps」の状態を確認してください。"
+    failed: アプリを削除できませんでした。しばらくしてからもう一度お試しください。
+    blockedRound: このアプリでは意見のラウンドが進行中です。終了またはキャンセルの後に削除してください。
+    blockedBusy: このアプリの新しいバージョンを公開しています。完了後に削除してください。
   view3d:
     edges:
       memory: "メモリ"

@@ -217,6 +217,10 @@ fn a_running_round_blocks_other_changes_in_its_scope() {
         .unwrap_err();
     assert_eq!(err.code(), "round_active");
 
+    // Deleting the app waits for the round too.
+    let err = h.service.delete_app("todo", Some("u-b")).unwrap_err();
+    assert_eq!((err.status(), err.code()), (409, "round_active"));
+
     // Listed with its state.
     let list = h.service.list_apps().unwrap();
     assert_eq!(list["apps"][0]["round"], "collecting");

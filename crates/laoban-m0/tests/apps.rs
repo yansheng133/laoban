@@ -683,3 +683,144 @@ fn two_saves_at_once_give_one_version_and_a_version_conflict() {
         .count();
     assert_eq!(patches, 1, "only one version written");
 }
+
+#[test]
+fn delete_removes_every_file_of_the_app_in_one_commit() {
+    let files = vec![
+        ("apps/todo/fleet.yaml".to_string(), "x".to_string()),
+        ("apps/todo/web.yaml".to_string(), "x".to_string()),
+        ("apps/todo/.fleetignore".to_string(), "x".to_string()),
+    ];
+    let mut edited: Value = serde_json::from_str(&plan_json()).unwrap();
+    edited["summary"] = json!("待辦清單，加上排序。");
+    let provider = MockProvider::new()
+        .then(ok(&edited.to_string()))
+        .then(ok(&files_json()));
+    let h = harness_files(provider, RefUpdate::Ok, apps(), files);
+    // A change planned before the delete must not bring the app back.
+    let plan = h
+        .service
+        .plan(&edit_req("加上排序", "todo"), Some("u-tester"))
+        .unwrap();
+    let out = h.service.delete_app("todo", Some("u-tester")).unwrap();
+    assert_eq!(out["mode"], "delete");
+    assert_eq!(out["appName"], "todo");
+    assert_eq!(out["path"], "apps/todo");
+    let deps: Vec<&str> = out["deployments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["deployment"].as_str().unwrap())
+        .collect();
+    assert_eq!(deps, ["todo-web", "todo-api"]);
+    assert!(out["commitUrl"].as_str().unwrap().contains("/commit/"));
+    assert_eq!(h.provider.call_count(), 1, "no AI call to delete");
+
+    let tree = h
+        .github
+        .requests()
+        .into_iter()
+        .find(|r| r.method == "POST" && r.path.ends_with("/git/trees"))
+        .unwrap();
+    let body: Value = serde_json::from_str(&tree.body_str()).unwrap();
+    let mut gone: Vec<&str> = body["tree"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .inspect(|e| assert!(e["sha"].is_null(), "only deletions"))
+        .map(|e| e["path"].as_str().unwrap())
+        .collect();
+    gone.sort();
+    assert_eq!(
+        gone,
+        [
+            "apps/todo/.fleetignore",
+            "apps/todo/fleet.yaml",
+            "apps/todo/laoban.json",
+            "apps/todo/web.yaml"
+        ]
+    );
+    let commit = h
+        .github
+        .requests()
+        .into_iter()
+        .find(|r| r.method == "POST" && r.path.ends_with("/git/commits"))
+        .unwrap();
+    let body: Value = serde_json::from_str(&commit.body_str()).unwrap();
+    assert!(body["message"]
+        .as_str()
+        .unwrap()
+        .starts_with("laoban: todo — "));
+    assert!(
+        !body["message"].as_str().unwrap().contains("u-tester"),
+        "no user name in the commit"
+    );
+
+    let names: Vec<String> = h.service.list_apps().unwrap()["apps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["appName"].as_str().unwrap().to_string())
+        .collect();
+    assert!(!names.contains(&"todo".to_string()), "{names:?}");
+    assert_eq!(
+        h.service.get_app("todo", None).unwrap_err().code(),
+        "app_not_found"
+    );
+    let writes_before = writes(&h.github);
+    let err = h
+        .service
+        .apply(
+            &ApplyRequest {
+                plan_id: plan["planId"].as_str().unwrap().into(),
+                background: false,
+            },
+            Some("u-tester"),
+        )
+        .unwrap_err();
+    assert_eq!(err.code(), "app_not_found");
+    assert_eq!(writes(&h.github), writes_before, "nothing published");
+    // Deleting again: not found, nothing written.
+    let before = writes(&h.github);
+    let err = h.service.delete_app("todo", Some("u-tester")).unwrap_err();
+    assert_eq!((err.status(), err.code()), (404, "app_not_found"));
+    assert_eq!(writes(&h.github), before);
+}
+
+#[test]
+fn delete_needs_a_user_and_a_valid_name_and_reports_a_moved_branch() {
+    let h = harness_with(MockProvider::new(), RefUpdate::Ok, 1_000_000, apps());
+    assert_eq!(
+        h.service.delete_app("todo", None).unwrap_err().code(),
+        "unauthenticated"
+    );
+    for bad in ["Bad", "../todo", "a"] {
+        assert_eq!(
+            h.service
+                .delete_app(bad, Some("u-tester"))
+                .unwrap_err()
+                .code(),
+            "bad_request",
+            "{bad}"
+        );
+    }
+    assert_eq!(
+        h.service
+            .delete_app("nothing-here", Some("u-tester"))
+            .unwrap_err()
+            .code(),
+        "app_not_found"
+    );
+    assert_eq!(writes(&h.github), 0);
+
+    let h = harness_with(
+        MockProvider::new(),
+        RefUpdate::Status(422),
+        1_000_000,
+        apps(),
+    );
+    let err = h.service.delete_app("todo", Some("u-tester")).unwrap_err();
+    assert_eq!(err.code(), "version_conflict");
+    let names = h.service.list_apps().unwrap()["apps"].to_string();
+    assert!(names.contains("\"todo\""), "still listed");
+}

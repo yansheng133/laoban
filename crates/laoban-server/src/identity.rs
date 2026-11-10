@@ -137,7 +137,7 @@ pub fn discovery_json() -> String {
         "groupVersion": format!("{GROUP}/{VERSION}"),
         "resources": [
             r("config", &["list"]),
-            r("apps", &["get", "list"]),
+            r("apps", &["get", "list", "delete"]),
             r("apps/versions", &["get"]),
             r("apps/files", &["get", "create"]),
             r("apps/layout", &["create"]),

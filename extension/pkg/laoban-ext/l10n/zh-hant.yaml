@@ -53,6 +53,24 @@ laoban:
     tabs:
       arch: 架構圖
       code: 程式碼
+  delete:
+    open: 刪除應用
+    short: 刪除
+    title: "刪除應用 {name}"
+    effectRepo: "GitHub 上的 {path} 會用一個 commit 移除。"
+    effectCluster: "Fleet 接著會把這個應用在叢集裡的資源全部刪除，應用網址會失效。"
+    effectHistory: "舊版本仍留在 GitHub 的提交紀錄裡，但無法從頁面復原；意見收斂的紀錄保留在 laoban-rounds 分支。"
+    typeName: "輸入應用名稱 {name} 確認"
+    submit: 刪除
+    cancel: 取消
+    close: 關閉
+    deleting: 正在從 GitHub 刪除…
+    clearing: 已從 GitHub 刪除，正在等 Fleet 清除叢集裡的資源（最多 3 分鐘）…
+    done: "已刪除 {name}：GitHub 與叢集裡都已清除。"
+    slow: "已從 GitHub 刪除 {name}，但 3 分鐘內叢集裡的資源還沒清掉。請到 Continuous Delivery 查看 Git Repo「laoban-apps」的狀態。"
+    failed: 刪除失敗，請稍後再試。
+    blockedRound: 這個應用正在進行意見收斂，結束或取消後才能刪除。
+    blockedBusy: 這個應用正在發布新版本，完成後才能刪除。
   view3d:
     edges:
       memory: "記憶體"
