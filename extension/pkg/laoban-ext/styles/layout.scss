@@ -7,6 +7,11 @@
   min-height: 100%;
 }
 
+// "← Apps" next to the menu toggle: kept apart so the two read as two links.
+.laoban-back {
+  margin-left: 16px;
+}
+
 .laoban-header {
   display: flex;
   flex-wrap: wrap;
@@ -55,7 +60,7 @@
 
   .btn {
     align-self: flex-start;
-    margin-top: 6px;
+    margin: 6px 0 4px;
   }
 }
 

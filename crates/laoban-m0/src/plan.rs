@@ -260,7 +260,24 @@ fn check_endpoint(e: RawEndpoint) -> Result<Endpoint, InvalidOutput> {
 /// browser-side path (`/api/orders`) instead, which then disagrees with the
 /// code; drop that prefix (repeatedly, case-insensitively).
 pub(crate) fn normalize_endpoint_path(path: &str) -> String {
-    let mut p = path.trim().to_string();
+    // Other ways models write the same path (report 62, lab): a query
+    // string (input goes in the body), `<id>` for `{id}`, a missing leading
+    // or an extra trailing slash. Whatever is still odd is refused later.
+    static ANGLE: OnceLock<Regex> = OnceLock::new();
+    let angle = ANGLE.get_or_init(|| Regex::new(r"<([A-Za-z0-9_]+)>").unwrap());
+    let mut p = path
+        .trim()
+        .split(['?', '#'])
+        .next()
+        .unwrap_or_default()
+        .to_string();
+    p = angle.replace_all(&p, "{$1}").into_owned();
+    if !p.starts_with('/') {
+        p.insert(0, '/');
+    }
+    while p.len() > 1 && p.ends_with('/') {
+        p.pop();
+    }
     loop {
         let lower = p.to_ascii_lowercase();
         if lower == "/api" || lower == "/api/" {
@@ -648,6 +665,12 @@ mod tests {
             ("/apiary", "/apiary"),
             ("/orders", "/orders"),
             (" /api/count ", "/count"),
+            ("/tasks?status=done", "/tasks"),
+            ("/tasks/<id>", "/tasks/{id}"),
+            ("/tasks/<task_id>/done", "/tasks/{task_id}/done"),
+            ("tasks", "/tasks"),
+            ("/tasks/", "/tasks"),
+            ("/", "/"),
         ] {
             assert_eq!(normalize_endpoint_path(given), want, "{given}");
         }

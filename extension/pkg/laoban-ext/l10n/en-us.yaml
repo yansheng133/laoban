@@ -406,7 +406,7 @@ laoban:
       add: "Add module \"{name}\" to {part}."
       addWithPurpose: "Add module \"{name}\" to {part}, for: {purpose}."
   kinds:
-    title: Component kinds (seven)
+    title: "Component kinds (7)"
     ingress: Ingress
     service: Network service
     netpol: Network policy

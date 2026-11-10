@@ -905,7 +905,10 @@ export default defineComponent({
     <header class="laoban-header">
       <div>
         <NavToggle />
-        <router-link :to="appsRoute">
+        <router-link
+          :to="appsRoute"
+          class="laoban-back"
+        >
           {{ t('laoban.detail.back') }}
         </router-link>
         <h1 class="laoban-detail-name">
