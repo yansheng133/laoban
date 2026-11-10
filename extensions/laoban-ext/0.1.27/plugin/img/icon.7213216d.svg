@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="laoban">
+  <!-- Three layers (network, code, data), as in laoban's 3D view. -->
+  <path d="M32 40 L56 49 L32 58 L8 49 Z" fill="#30BA78"/>
+  <path d="M32 24 L56 33 L32 42 L8 33 Z" fill="#2453FF"/>
+  <path d="M32 8 L56 17 L32 26 L8 17 Z" fill="#FE7C3F"/>
+</svg>
