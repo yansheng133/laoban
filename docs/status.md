@@ -2,7 +2,7 @@
 
 給接手的人（或其他 Claude 工作階段）快速知道 laoban 做到哪裡。隨每個版本更新；細節以 [m0-design.md](m0-design.md) 與 [Releases](https://github.com/yansheng133/laoban/releases) 為準。
 
-**最後更新**：v0.1.24（2026-11-10）
+**最後更新**：v0.1.25（2026-11-10）
 
 ## 一句話
 

@@ -147,11 +147,48 @@ fn a_failed_fix_keeps_the_first_answer_and_shows_the_gap() {
     let plan = h.service.plan(&plan_req(), None).unwrap();
     let applied = h.service.apply(&apply_req(&plan), None).unwrap();
     assert_eq!(applied["subagents"][1]["state"], "done");
-    assert_eq!(applied["subagents"][1]["fixed"], true);
+    // The fix was not used, so the card does not say it was (review H4).
+    assert!(applied["subagents"][1].get("fixed").is_none());
     assert_eq!(
         applied["contractGaps"],
-        json!([{ "kind": "apiMissing", "path": "/orders" }])
+        json!([{ "kind": "apiMissing", "method": "POST", "path": "/orders" }])
     );
+}
+
+/// Review H4: both parts need a fix; one fix fails, the other is kept.
+#[test]
+fn a_successful_fix_is_kept_when_the_other_fails() {
+    // First answers: the web page calls api/cart (not in the plan) and the
+    // API lacks /orders, so both parts are sent back.
+    let mut first = files_value();
+    first["web"]["app.js"] = json!("fetch(\"api/menu\"); fetch(\"api/cart\");\n");
+    // A fix answer good for either part, and one that is not JSON: which
+    // thread gets which is up to the scheduler.
+    let mut good = files_value();
+    good["api"] = serde_json::from_str::<Value>(&api_fixed()).unwrap()["api"].clone();
+    let provider = MockProvider::new()
+        .then(ok(&plan_json()))
+        .then(ok(&first.to_string()))
+        .then(ok(&first.to_string()))
+        .then(ok(&good.to_string()))
+        .then(ok("not json"));
+    let h = harness_settings(provider, RefUpdate::Ok, on(), Vec::new(), Vec::new());
+    let plan = h.service.plan(&plan_req(), None).unwrap();
+    let applied = h.service.apply(&apply_req(&plan), None).unwrap();
+    assert_eq!(h.provider.call_count(), 5);
+    let runs = applied["subagents"].as_array().unwrap();
+    let fixed: Vec<bool> = runs.iter().map(|r| r.get("fixed").is_some()).collect();
+    assert_eq!(fixed.iter().filter(|f| **f).count(), 1, "{runs:?}");
+    assert!(runs.iter().all(|r| r["state"] == "done"));
+    // The gaps left are only those of the part whose fix failed.
+    let gaps = applied["contractGaps"].as_array().unwrap();
+    assert_eq!(gaps.len(), 1, "{gaps:?}");
+    let kind = if fixed[0] {
+        "apiMissing"
+    } else {
+        "unknownCall"
+    };
+    assert_eq!(gaps[0]["kind"], kind);
 }
 
 #[test]

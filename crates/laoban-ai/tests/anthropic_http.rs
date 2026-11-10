@@ -360,3 +360,39 @@ fn a_turn_paused_for_the_advisor_is_resumed_with_its_content() {
         "the tool stays while a call is pending"
     );
 }
+
+const PAUSED: &str = r#"{"content":[{"type":"text","text":"part, "},{"type":"server_tool_use","id":"srvtoolu_9","name":"advisor","input":{}}],
+"stop_reason":"pause_turn","usage":{"input_tokens":5,"output_tokens":3,"iterations":[{"type":"advisor_message","model":"model-b-advisor","input_tokens":2,"output_tokens":4}]}}"#;
+
+/// Review H1: a resume that fails still reports what the parts before it used.
+#[test]
+fn a_failed_resume_reports_the_used_tokens_as_unfinished() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static N: AtomicUsize = AtomicUsize::new(0);
+    N.store(0, Ordering::SeqCst);
+    let server = MockServer::start(|_| {
+        if N.fetch_add(1, Ordering::SeqCst) == 0 {
+            Reply::json(200, PAUSED)
+        } else {
+            Reply::json(529, error_body("overloaded_error", "Overloaded"))
+        }
+    });
+    let resp = provider(&server).send(&with_advisor()).unwrap();
+    assert_eq!(resp.stop_reason, StopReason::Incomplete);
+    assert_eq!((resp.input_tokens, resp.output_tokens), (5, 3));
+    assert_eq!(resp.advisor.unwrap().output_tokens, 4);
+}
+
+/// Review H1: still paused after the last resume is unfinished, not success.
+#[test]
+fn a_turn_still_paused_after_the_last_resume_is_unfinished() {
+    let server = MockServer::start(|_| Reply::json(200, PAUSED));
+    let resp = provider(&server).send(&with_advisor()).unwrap();
+    assert_eq!(resp.stop_reason, StopReason::Incomplete);
+    assert_eq!(
+        server.requests().len(),
+        5,
+        "the first request and 4 resumes"
+    );
+    assert_eq!(resp.output_tokens, 15);
+}

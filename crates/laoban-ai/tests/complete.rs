@@ -166,3 +166,17 @@ fn the_reservation_covers_the_advisor() {
         "refused before the provider is called"
     );
 }
+
+#[test]
+fn an_unfinished_answer_is_an_error_after_its_tokens_are_counted() {
+    let mut resp = ok_response("{\"x\":");
+    resp.stop_reason = StopReason::Incomplete;
+    let h = harness(MockProvider::new().then(Ok(resp)));
+    let err = h.orchestrator.complete(&completion("x")).unwrap_err();
+    assert!(
+        matches!(err, AiError::Plan(PlanError::Incomplete)),
+        "{err:?}"
+    );
+    assert_eq!(h.budget.used(), 150, "counted, not refunded");
+    assert_eq!(h.provider.call_count(), 1, "not retried");
+}

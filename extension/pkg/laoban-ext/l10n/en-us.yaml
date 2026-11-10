@@ -275,6 +275,12 @@ laoban:
     listSep: ", "
     withNote: "{text} ({note})"
     labelValue: "{label}: {value}"
+  contract:
+    title: "API contract ({count} endpoints)"
+    hint: "The web part and the API are written from these request and response examples. Check that the field names fit what you asked for."
+    request: "Request body"
+    response: "Response"
+    none: "(none)"
   subagents:
     title: "Subagents"
     hintBoth: "Two subagents write the web part and the API part at the same time, from the same plan. The plan's list of API endpoints is the contract between them."
@@ -293,7 +299,7 @@ laoban:
     gapsTitle: "The web part and the API may not match the plan:"
     gap:
       apiMissing: "The API does not seem to handle {path}."
-      unknownCall: "The web page calls api{path}, which is not in the plan."
+      unknownCall: "The web page calls {path}, which is not in the plan."
     gapsHint: "This check only compares the code as text and can be wrong; the new version was published anyway. If the app misbehaves, start a round that describes the problem."
   errors:
     app_exists: "An app with this name already exists. To change it, use Edit in the app list; to make another one, choose a different name."

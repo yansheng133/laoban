@@ -365,18 +365,42 @@ impl Provider for AnthropicProvider {
         let (mut input_tokens, mut output_tokens) = (0, 0);
         let mut advisor = None;
         for resume in 0..=MAX_RESUMES {
-            let turn = parse_turn(&self.post(&body.to_string(), req.advisor.is_some())?)?;
+            let turn = match self
+                .post(&body.to_string(), req.advisor.is_some())
+                .and_then(|t| parse_turn(&t))
+            {
+                Ok(t) => t,
+                // The first part failed: nothing was used, a normal error
+                // (retried by the orchestrator when it can be).
+                Err(e) if resume == 0 => return Err(e),
+                // A resume failed: the parts before it were billed, so they
+                // are reported (review H1), as an unfinished answer.
+                Err(_) => {
+                    return Ok(ProviderResponse {
+                        advisor,
+                        content: text,
+                        input_tokens,
+                        output_tokens,
+                        stop_reason: StopReason::Incomplete,
+                    })
+                }
+            };
             text.push_str(&turn.text);
             input_tokens += turn.input_tokens;
             output_tokens += turn.output_tokens;
             join_advisor(&mut advisor, turn.advisor);
             if turn.stop_reason != "pause_turn" || resume == MAX_RESUMES {
+                let stop_reason = if turn.stop_reason == "pause_turn" {
+                    StopReason::Incomplete
+                } else {
+                    StopReason::from_api(&turn.stop_reason)
+                };
                 return Ok(ProviderResponse {
                     advisor,
                     content: text,
                     input_tokens,
                     output_tokens,
-                    stop_reason: StopReason::from_api(&turn.stop_reason),
+                    stop_reason,
                 });
             }
             // The assistant's content goes back as it came; a second pause

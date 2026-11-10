@@ -277,6 +277,12 @@ laoban:
     listSep: "、"
     withNote: "{text}（{note}）"
     labelValue: "{label}：{value}"
+  contract:
+    title: "API の取り決め（{count} 個のエンドポイント）"
+    hint: "Web と API はこのリクエストとレスポンスの例をもとに書かれます。フィールド名が要望に合っているか確認してください。"
+    request: "リクエスト本文"
+    response: "レスポンス"
+    none: "（なし）"
   subagents:
     title: "サブエージェント"
     hintBoth: "2 つのサブエージェントが同じ計画をもとに、Web と API を同時に書きます。計画の API エンドポイント一覧が両者の取り決めです。"
@@ -295,7 +301,7 @@ laoban:
     gapsTitle: "Web と API が計画と合っていない可能性があります："
     gap:
       apiMissing: "API が {path} を処理していないようです。"
-      unknownCall: "Web ページが計画にない api{path} を呼び出しています。"
+      unknownCall: "Web ページが計画にない {path} を呼び出しています。"
     gapsHint: "コードを文字列として比べるだけの確認なので、誤りの可能性があります。新しいバージョンは通常どおり公開済みです。アプリに問題があれば、意見のラウンドで状況を伝えてください。"
   errors:
     app_exists: "同じ名前のアプリがすでにあります。変更するにはアプリ一覧の「編集」を使い、別に作るには名前を変えてください。"

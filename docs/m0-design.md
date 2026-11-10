@@ -274,10 +274,12 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 | API | `handler.py` | `{"api": {"handler.py": "…"}}` |
 
 - 兩個 subagent 看不到彼此的程式。雙方的約定就是計畫裡的 `components.api.endpoints`：方法、路徑，以及計畫那一步寫好的 `request`（請求本體的 JSON 範例）與 `response`（成功回應的 JSON 範例）。網頁只呼叫這些端點、照範例送與讀；API 全部實作、照範例回。範例缺漏時的固定慣例：回應一律是物件、清單放在 `items`、記錄有 `id`、指向記錄用 `<記錄>_id`、錯誤是非 2xx 加 `{"error": …}`。（實驗室 t62-breakfast：只約定路徑時，API 回 `{"items": […]}`、網頁卻當陣列讀。）
+- 範例必須是 JSON 物件或陣列（字串形式也行，會重新壓成單行）；其他文字一律清空，避免把自由文字當成給 subagent 的指示（v0.1.25）。計畫與輪次的計畫都回傳 `endpoints`，頁面在確認計畫處列出「API 約定」，確認的人看得到每個端點的請求與回應範例。
+- 判斷輪次範圍時，舊計畫沒有範例、新計畫補上範例，不算 API 改變（v0.1.25），所以舊應用只改網頁的輪次一樣只派網頁 subagent。
 - 兩邊都完成後，把兩部分合成四個檔，再做跟單次呼叫**完全相同**的檢查（檔名、大小、`handle()`）。任何一個 subagent 失敗，整次都不發布，計畫可以再確認一次。
 - **只派需要的**：新應用、輪次以外的修改都派兩個。意見收斂的範圍（收斂時已依計畫的差異放寬）只有網頁時，只派網頁 subagent，`handler.py` 維持原樣；範圍包含 API 時兩個都派，因為 API 一改，網頁讀的回應格式也可能跟著變。
 - 修改現有應用時，每個 subagent 的 `current_code` 只有自己那部分的檔案，`manual_edits` 也只帶自己那部分的手動修改。
-- **約定比對與修正**：兩邊寫完後用文字比對完整路徑：計畫的端點沒寫在 `handler.py` 裡（`apiMissing`；沒有參數的路徑要以字串出現，有參數的看固定開頭或各段），或 `app.js` 呼叫的 `api/…` 對不上計畫的任何端點（`unknownCall`；`{id}`、`${id}`、結尾加值都當參數）。有出入的那一邊**再跑一次**，帶著第一次的答案（`current_code`）與出入清單（`contract_gaps`），只修這些地方；最多一次。修正失敗就用第一次的答案發布。剩下的出入隨版本顯示，不擋發布（比對文字可能誤判）。卡片上標「和計畫比對後，修正過一次」，token 累加。（實驗室 t62-shop：API 漏了 `GET /cart`、網頁呼叫計畫裡沒有的 `/cart/update`，只比第一段時都沒抓到。）
+- **約定比對與修正**：兩邊寫完後用文字比對方法與完整路徑（v0.1.25 起含方法）：計畫的端點沒寫在 `handler.py` 裡（`apiMissing`；沒有參數的路徑要以字串或 `^/路徑$` 樣式出現，有參數的看固定開頭或各段；同一路徑有多個方法時，每個方法都要以字串出現），或 `app.js` 的 `api/…` 呼叫對不上計畫的方法加路徑（`unknownCall`；`{id}`、`${id}` 當參數，`'api/orders/' + id + …` 這類執行時才組好的視為前綴；方法取呼叫後面的 `method:`，`fetch` 沒寫就是 GET，輔助函式沒寫就不比方法）。有出入的那一邊**再跑一次**，帶著第一次的答案與出入清單，最多一次；**每一邊各自採用**：修正成功的那邊就用，失敗的那邊保留第一次的答案，合起來過不了檔案檢查時改試只用其中一邊。卡片的「修正過一次」只標在真的採用的那一邊。剩下的出入隨版本顯示，不擋發布。
 - 進度：背景工作 `GET /api/plans/<jobId>` 與輪次（`applying` 時）多一個 `subagents` 陣列：`{part, state: running|done|failed|skipped, seconds, inputTokens, outputTokens, model, files, fixed?}`。套用的回應多 `subagents` 與 `contractGaps`。`GET /api/config` 多 `subagents`（布林值）。
 - token 用量照常逐次計入每月上限；兩個 subagent 各算一次呼叫。
 - 本機模型伺服器要能同時處理兩個請求才會變快（Ollama：`OLLAMA_NUM_PARALLEL`）；不行時設 `false` 回到單次呼叫。
@@ -285,7 +287,9 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 
 ### 請教更強的模型（advisor，v0.1.25）
 
-設了 `LAOBAN_AI_ADVISOR_MODEL` 時，每次 AI 呼叫（計畫、每個 subagent、修正）都帶 Messages API 的 advisor 工具（`advisor_20260301`，beta `advisor-tool-2026-03-01`）：執行的模型在同一次請求裡自己決定要不要先問更強的模型（每次最多 1 次、每次輸出上限 8,000 token），系統提示要求寫答案前先問一次（實驗室實測：只寫「需要時再問」時 Sonnet 5.5 三次都沒問；要求先問一次時會問 claude-opus-5-5，那次多約 17 秒、Opus 約 2,800／1,600 token）。advisor 的建議是加密的，laoban 看不到內容，只取最後的文字答案。回應以 `pause_turn` 結束時（advisor 還在跑），原封帶回 assistant 內容再送，最多 4 次。advisor 的 token 在 `usage.iterations` 的 `advisor_message`，不在最上層的用量裡：laoban 把它們也算進每月上限（預留時也先算進 advisor 的上限），以 advisor 模型的價格計費。subagent 卡片標出「請教了哪個模型、用了多少 token」，總覽的設定區列出 advisor 模型。
+預設關閉。實測（Sonnet 5.5 搭 Opus 5.5，三分頁早餐店，各一次）：有 advisor 128 秒、約 68,000 token，沒有 92 秒、約 25,000 token，兩個應用的 API 流程都通過、看不出品質差異。
+
+設了 `LAOBAN_AI_ADVISOR_MODEL` 時，每次 AI 呼叫（計畫、每個 subagent、修正）都帶 Messages API 的 advisor 工具（`advisor_20260301`，beta `advisor-tool-2026-03-01`）：執行的模型在同一次請求裡自己決定要不要先問更強的模型（每次最多 1 次、每次輸出上限 8,000 token），系統提示要求寫答案前先問一次（實驗室實測：只寫「需要時再問」時 Sonnet 5.5 三次都沒問；要求先問一次時會問 claude-opus-5-5，那次多約 17 秒、Opus 約 2,800／1,600 token）。advisor 的建議是加密的，laoban 看不到內容，只取最後的文字答案。回應以 `pause_turn` 結束時（advisor 還在跑），原封帶回 assistant 內容再送，最多 4 次。advisor 的 token 在 `usage.iterations` 的 `advisor_message`，不在最上層的用量裡：laoban 把它們也算進每月上限（預留時也先算進 advisor 的上限），以 advisor 模型的價格計費。續送途中出錯或續送 4 次後仍暫停時，已經跑完的部分照樣計入上限，並回報「AI 沒能完成回答」（`ai_unavailable`），不重試、不當成格式錯誤（v0.1.25）。subagent 卡片標出「請教了哪個模型、用了多少 token」，總覽的設定區列出 advisor 模型。
 
 ## 產生的應用（固定範本，不由 AI 產生）
 

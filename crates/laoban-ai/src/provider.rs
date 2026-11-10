@@ -70,6 +70,10 @@ pub enum StopReason {
     MaxTokens,
     StopSequence,
     Refusal,
+    /// The answer was not finished: a turn paused for the advisor could not
+    /// be resumed (an error, or still paused after the last resume). The
+    /// usage of the parts that did run is in the response.
+    Incomplete,
     Other(String),
 }
 

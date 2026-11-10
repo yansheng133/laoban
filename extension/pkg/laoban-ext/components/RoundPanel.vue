@@ -17,6 +17,7 @@ import {
 } from '../utils/limits';
 import OpinionList from './OpinionList.vue';
 import SubagentPanel from './SubagentPanel.vue';
+import ContractTable from './ContractTable.vue';
 import CharCounter from './CharCounter.vue';
 import { userLabel } from '../utils/users';
 import { formatDateTime, formatClock } from '../utils/time';
@@ -26,7 +27,9 @@ export const DEADLINES = [0, 10, 30, 60, 240, 1440];
 export default defineComponent({
   name: 'LaobanRoundPanel',
 
-  components: { OpinionList, CharCounter, SubagentPanel },
+  components: {
+    OpinionList, CharCounter, SubagentPanel, ContractTable
+  },
 
   props: {
     round: {
@@ -937,6 +940,7 @@ export default defineComponent({
         >
           {{ t('laoban.round.stepCommentsHint') }}
         </p>
+        <ContractTable :endpoints="round.plan.endpoints || []" />
         <p
           v-if="round.plan.notes"
           class="laoban-text laoban-round-notes"

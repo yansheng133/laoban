@@ -130,9 +130,9 @@ export default defineComponent({
       <ul>
         <li
           v-for="g in gaps"
-          :key="`${ g.kind }:${ g.path }`"
+          :key="`${ g.kind }:${ g.method }:${ g.path }`"
         >
-          {{ t(`laoban.subagents.gap.${ g.kind }`, { path: g.path }) }}
+          {{ t(`laoban.subagents.gap.${ g.kind }`, { path: `${ g.method || '' } ${ g.path }`.trim() }) }}
         </li>
       </ul>
       <p class="text-muted">

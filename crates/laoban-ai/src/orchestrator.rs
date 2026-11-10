@@ -395,6 +395,9 @@ impl Orchestrator {
         match response.stop_reason {
             StopReason::MaxTokens => return Err(PlanError::Truncated.into()),
             StopReason::Refusal => return Err(PlanError::Refused.into()),
+            // Its tokens were settled above; not retried (the advisor may
+            // have been asked already).
+            StopReason::Incomplete => return Err(PlanError::Incomplete.into()),
             _ => {}
         }
         Ok((response, attempt))

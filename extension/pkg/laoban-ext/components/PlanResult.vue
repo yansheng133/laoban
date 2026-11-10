@@ -9,8 +9,11 @@ import { useStore } from 'vuex';
 import { useText } from '../composables/useText';
 import { appOnRancherOrigin } from '../utils/backend';
 import type { PlanResponse, ApplyResponse } from '../utils/backend';
+import ContractTable from './ContractTable.vue';
 
 export default defineComponent({
+  components: { ContractTable },
+
   name: 'LaobanPlanResult',
 
   props: {
@@ -61,6 +64,7 @@ export default defineComponent({
           {{ step }}
         </li>
       </ol>
+      <ContractTable :endpoints="plan.endpoints || []" />
       <p
         v-if="plan.maskedFindings"
         class="text-muted"
