@@ -128,6 +128,10 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 
 請求：`{ "commit": "<完整 SHA>" }`。把那一版的計畫與程式當成新的一版再發布（不呼叫 AI、不改寫 Git 歷史，紀錄多一筆 `kind: restore`），回應格式同 `/api/apply`（`mode: "restore"`）。內容與目前版本相同時回 `400`。版面也一起還原。
 
+### `DELETE /api/apps/<appName>`（v0.1.26）
+
+刪除應用：一個 commit 移除 `apps/<appName>/` 底下所有檔案（不呼叫 AI），Fleet 接著把這個應用在目標 namespace 的資源刪掉。舊版本留在 Git 歷史裡、已歸檔的輪次留在 `laoban-rounds` 分支，但頁面上不能復原。一輪進行中時回 `409 round_active`；正在套用的修改會等這個應用的鎖，之後讀不到應用而失敗（`404 app_not_found`），不會把應用寫回來。找不到應用回 `404 app_not_found`。commit 訊息不含使用者名稱。回應 `{mode: "delete", appName, commit, commitUrl, path, deployments: [{deployment, path}]}`，`deployments` 是應用的兩個 Deployment（Steve 路徑），頁面用它等到兩個都不存在。權限是 `apps` 的 `delete` 動詞：`laoban-api-edit` 與 Project 角色「laoban user」有，view 沒有。
+
 ### 意見收斂：`/api/apps/<appName>/round[/...]`
 
 取代原本的編輯鎖（需求「同一 Project 編輯鎖」；Sam 2026-10-14 決定：大家把意見提上來，由 AI 收斂後跟全部人確認，然後 AI 開工）。一個應用同一時間只有一輪；不同應用互不影響。使用者都是 API server 驗證過的名稱（`rounds.rs`）。
@@ -344,6 +348,7 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 - 一輪進行中時：程式碼分頁裡範圍內的檔案只能看，範圍外照常可以存；版本不能還原；「改結構」只在收集意見時可用。
 - 詳細頁右邊分**架構圖**與**程式碼**兩個分頁。程式碼分頁用 Rancher 內建的 CodeMirror 編輯四個檔，「儲存成新版本」走 `POST .../files`，之後跟部署一樣等新版跑起來。
 - 架構圖在**最新版本**（沒有在看舊版、沒有修改計畫）時可以拖曳元件，「儲存版面」走 `POST .../layout`。點選元件後可在「改結構」改名、刪除、新增連線，或新增模組：這些會變成句子加進「要怎麼修改」，再走一般的 AI 計畫／確認流程。新增資料庫、訊息佇列、Ingress 不在 M0 的固定範本內，按鈕顯示「試吃版不支援」。歷史版本唯讀。
+- **刪除應用**（v0.1.26，`components/DeleteApp.vue`）：詳細頁右上的「刪除應用」與清單每一列的「刪除」，只在 API server 允許 `delete apps`（SelfSubjectAccessReview）時出現。按下後在頁面上（不用瀏覽器對話框）說明會發生什麼，要輸入應用名稱才能按「刪除」；commit 之後每 3 秒讀兩個 Deployment，最多 3 分鐘，都不存在了就回到清單顯示「已刪除」；超過 3 分鐘則說明 GitHub 已刪除、請到 Continuous Delivery 看 `laoban-apps`。一輪進行中或正在發布新版時不能刪，畫面說明原因。
 - 「確認並部署」按下後顯示 commit 連結，接著每 5 秒讀 Fleet Bundle（Bundle 只剩 Modified、沒有待部署或錯誤時，也視為應用已在執行，顯示連結並附上 Fleet 的訊息）（`/v1/fleet.cattle.io.bundles`，篩 `laoban.io` 前綴或 bundlePrefix）的 Ready 狀態，Ready 後顯示「打開應用」連結。
 - 所有 AI 產生的文字用文字方式顯示，不用 `v-html`。
 - 錯誤顯示後端回的 `message`（後端語言）。

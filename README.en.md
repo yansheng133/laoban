@@ -57,6 +57,7 @@ laoban is a community open-source project and is **not covered by SUSE support**
 - The 3D architecture diagram has three layers: network, code, and data. You can rotate, zoom, and drag components to adjust the layout and save it as a new version.
 - The 3D diagram can be expanded to fill the window or go full screen; the sidebar has a version timeline, a change list, and comments.
 - Every version is a Git commit. Pick an old version to compare it with the previous version (what this version changed) or with the current version (what restoring it would change). The change list shows the architecture changes and the code files touched. You can restore any version.
+- Apps you no longer need can be deleted from the detail page or the list (type the name to confirm); they are removed from GitHub and the cluster.
 - The 3D diagram has four color schemes; the selected component is marked with a halo and its connections.
 
 **Changes without the AI**

@@ -221,4 +221,4 @@ helm --kube-context downstream uninstall laoban-crd -n laoban-system
 kubectl --context local -n fleet-default delete gitrepo laoban-apps
 ```
 
-Remove the extension in Rancher → Extensions → **Installed** → **⋮** at the top right of the laoban card → **Uninstall**. The generated apps remain in `laoban-dev` and in your GitHub repo; delete them yourself when you no longer need them.
+Remove the extension in Rancher → Extensions → **Installed** → **⋮** at the top right of the laoban card → **Uninstall**. The generated apps remain in `laoban-dev` and in your GitHub repo: before removing laoban you can delete them one by one with **Delete** on the Apps page (v0.1.26 and later), or remove `apps/<name>/` from the repo yourself afterwards.
