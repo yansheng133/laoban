@@ -16,7 +16,7 @@ import {
   defineComponent, ref, computed, onMounted, onBeforeUnmount, watch, nextTick
 } from 'vue';
 import { useStore } from 'vuex';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import NavToggle from '../components/NavToggle.vue';
 import { useText } from '../composables/useText';
 import ArchitectureView from '../components/ArchitectureView.vue';
@@ -30,10 +30,11 @@ import StatusBar from '../components/StatusBar.vue';
 import VersionList from '../components/VersionList.vue';
 import CodeEditor from '../components/CodeEditor.vue';
 import StructureEdit from '../components/StructureEdit.vue';
+import DeleteApp from '../components/DeleteApp.vue';
 import { useDeployFlow } from '../composables/useDeployFlow';
 import { useRound } from '../composables/useRound';
 import {
-  getApp, canChangeApps, listVersions, getVersion, resolveAppUrl, appOnRancherOrigin, safeHttpsUrl, saveFiles, saveLayout, aiRequestTimeoutMs,
+  getApp, canChangeApps, canDeleteApps, listVersions, getVersion, resolveAppUrl, appOnRancherOrigin, safeHttpsUrl, saveFiles, saveLayout, aiRequestTimeoutMs,
   AppDetail, VersionEntry, VersionDetail, AppFiles, Position, RoundAction
 } from '../utils/backend';
 import { appendLine } from '../utils/structure';
@@ -51,12 +52,13 @@ export default defineComponent({
   name: 'LaobanAppDetail',
 
   components: {
-    ArchitectureView, RoundPanel, OpinionList, StatusBar, VersionList, CodeEditor, StructureEdit, CharCounter, PastRounds, NavToggle
+    ArchitectureView, RoundPanel, OpinionList, StatusBar, VersionList, CodeEditor, StructureEdit, CharCounter, PastRounds, NavToggle, DeleteApp
   },
 
   setup() {
     const store = useStore();
     const route = useRoute();
+    const router = useRouter();
     const { t } = useText(store);
 
     const detail = ref<AppDetail | null>(null);
@@ -274,6 +276,13 @@ export default defineComponent({
       mayChange.value = v;
     });
     const canEdit = computed(() => !!detail.value && mayChange.value);
+    // Deleting the app (v0.1.26): only for those the API server lets delete.
+    const mayDelete = ref(false);
+
+    canDeleteApps(store).then((v) => {
+      mayDelete.value = v;
+    });
+    const deleteOpen = ref(false);
     const busy = computed(() => flow.busy.value || loading.value || !!round.pending.value);
     const deploying = computed(() => flow.phase.value === 'deploying');
     const currentCommit = computed(() => versions.value.find((v) => v.current)?.commit || '');
@@ -297,6 +306,21 @@ export default defineComponent({
     const canArrange = computed(() => canEdit.value && !busy.value && !showingPlan.value && !selectedVersion.value && !selectedCommit.value);
     const pendingCount = computed(() => Object.keys(pending.value).length);
     const appsRoute = { name: APPS_ROUTE_NAME, params: { product: PRODUCT_NAME, cluster: BLANK_CLUSTER } };
+    // Not while a round runs on the app or a change is being published.
+    const deleteBlockedBy = computed(() => {
+      if (round.active.value) {
+        return t('laoban.delete.blockedRound');
+      }
+      if (busy.value || deploying.value || flow.phase.value === 'applying') {
+        return t('laoban.delete.blockedBusy');
+      }
+
+      return '';
+    });
+
+    function onDeleted(e: { appName: string; cleared: boolean }) {
+      router.push({ ...appsRoute, query: { deleted: e.appName, cleared: e.cleared ? '1' : '0' } });
+    }
     const openLink = computed(() => resolveAppUrl(detail.value?.appUrl, window.location.origin));
     const openSameOrigin = computed(() => appOnRancherOrigin(openLink.value, window.location.origin));
     const sourceLink = computed(() => {
@@ -821,6 +845,10 @@ export default defineComponent({
       stageHeight,
       selectVersion,
       restore,
+      mayDelete,
+      deleteOpen,
+      deleteBlockedBy,
+      onDeleted,
       currentSteps,
       formatTime,
       canEdit,
@@ -940,8 +968,25 @@ export default defineComponent({
           class="btn role-primary"
           :title="openSameOrigin ? t('laoban.dashboard.result.sameOriginWarning') : null"
         >{{ t('laoban.dashboard.result.openApp') }}</a>
+        <button
+          v-if="mayDelete"
+          type="button"
+          class="btn role-secondary laoban-delete-open"
+          :aria-expanded="deleteOpen ? 'true' : 'false'"
+          data-testid="laoban-delete-open"
+          @click="deleteOpen = !deleteOpen"
+        >
+          {{ t('laoban.delete.open') }}
+        </button>
       </div>
     </header>
+    <DeleteApp
+      v-if="detail && mayDelete && deleteOpen"
+      :app-name="detail.appName"
+      :blocked-by="deleteBlockedBy"
+      @cancel="deleteOpen = false"
+      @deleted="onDeleted"
+    />
     <p
       v-if="openSameOrigin"
       class="text-warning laoban-same-origin"
@@ -1512,6 +1557,10 @@ export default defineComponent({
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.laoban-delete-open {
+  color: var(--error);
 }
 
 .laoban-detail-section {

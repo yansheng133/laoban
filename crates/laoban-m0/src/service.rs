@@ -2983,6 +2983,82 @@ impl M0Service {
     }
 }
 
+impl M0Service {
+    /// `DELETE /api/apps/<name>`: remove the app's directory from the
+    /// branch in one commit; Fleet then removes its resources from the
+    /// target namespace. Earlier versions stay in the branch's history and
+    /// finished rounds in the archive branch. Refused while a round runs
+    /// on the app; a change being applied waits for the app's lock and
+    /// then finds the app gone.
+    pub fn delete_app(&self, app: &str, user: Option<&str>) -> Result<Value, M0Error> {
+        if !valid_app_name(app) {
+            return Err(M0Error::BadRequest(tr(
+                "The app name is not valid.",
+                "應用名稱不正確。",
+            )));
+        }
+        require_user(user)?;
+        let lock = self.app_lock(app);
+        let _one_at_a_time = lock.lock().unwrap_or_else(|e| e.into_inner());
+        self.check_no_round(app)?;
+        let dir = format!("{APPS_DIR}/{app}");
+        let branch = self.github.config().branch.clone();
+        let names = self
+            .github
+            .list_files_at(&dir, &branch)
+            .map_err(M0Error::Github)?;
+        if names.is_empty() {
+            return Err(M0Error::AppNotFound);
+        }
+        let deletes: Vec<String> = names.iter().map(|n| format!("{dir}/{n}")).collect();
+        let message = commit_message(app, tr("Delete the app", "刪除應用"));
+        let commit = self.commit_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let sha = self
+            .github
+            .commit_changes(&[], &deletes, &message)
+            .map_err(|e| match e {
+                GithubError::Status {
+                    stage: "update ref",
+                    status: 409 | 422,
+                    ..
+                } => M0Error::VersionConflict,
+                other => M0Error::Github(other),
+            });
+        drop(commit);
+        let sha = sha?;
+        eprintln!(
+            "laoban-m0: deleted app {app} ({} file(s), commit {sha})",
+            deletes.len()
+        );
+        self.subagent_runs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(app);
+        let s = &self.settings;
+        let deployments: Vec<Value> = ["web", "api"]
+            .iter()
+            .map(|c| {
+                let name = format!("{app}-{c}");
+                json!({
+                    "deployment": name,
+                    "path": format!(
+                        "/k8s/clusters/{}/v1/apps.deployments/{}/{name}",
+                        s.cluster_id, s.target_namespace
+                    ),
+                })
+            })
+            .collect();
+        Ok(json!({
+            "mode": "delete",
+            "appName": app,
+            "commit": sha,
+            "commitUrl": self.commit_url(&sha),
+            "path": dir,
+            "deployments": deployments,
+        }))
+    }
+}
+
 /// Everything [`M0Service::publish`] needs for one new version.
 struct Publish<'a> {
     app: &'a str,

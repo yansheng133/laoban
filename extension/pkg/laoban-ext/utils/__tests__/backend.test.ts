@@ -3,7 +3,7 @@ import {
 } from '@jest/globals';
 import {
   parseBackendError, resolveAppUrl, appOnRancherOrigin, safeHttpsUrl, backendUrl, aiRequestTimeoutMs, ConfigResponse,
-  createPlan, getApp, listApps, listVersions, getVersion, restoreVersion, applyPlan,
+  createPlan, getApp, listApps, listVersions, getVersion, restoreVersion, applyPlan, deleteApp, canDeleteApps, resetAccess,
   runJob, getRound, openRound, roundAction, addOpinions, supportOpinion, replyToOpinion, getFiles, saveFiles, saveLayout, parseKubeStatus
 } from '../backend';
 import { AI_REQUEST_TIMEOUT_MS } from '../../config/backend';
@@ -161,6 +161,36 @@ describe('apps and plan requests', () => {
     expect(calls[0].url).toBe(real('/apps/todo/restore'));
     expect(calls[0].init.method).toBe('POST');
     expect(JSON.parse(String(calls[0].init.body))).toEqual({ commit: sha });
+  });
+
+  it('deletes an app with a DELETE and no body', async() => {
+    mockFetch(200, { mode: 'delete', appName: 'todo', commit: 'c'.repeat(40) });
+    const res = await deleteApp(store, 'todo');
+
+    expect(res.mode).toBe('delete');
+    expect(calls[0].url).toBe(real('/apps/todo'));
+    expect(calls[0].init.method).toBe('DELETE');
+    expect(calls[0].init.body).toBeUndefined();
+
+    mockFetch(409, { error: { code: 'round_active', message: 'x' } });
+    await expect(deleteApp(store, 'todo')).rejects.toMatchObject({ code: 'round_active', status: 409 });
+  });
+
+  it('shows deleting only when the API server allows it', async() => {
+    for (const [status, body, want] of [
+      [201, { status: { allowed: true } }, true],
+      [201, { status: { allowed: false } }, false],
+      [201, { status: {} }, false],
+      [500, {}, false],
+    ] as [number, unknown, boolean][]) {
+      resetAccess();
+      mockFetch(status, body);
+      expect(await canDeleteApps(store)).toBe(want);
+      const review = calls.find((c) => c.url.includes('selfsubjectaccessreviews'));
+
+      expect(JSON.parse(String(review?.init.body)).spec.resourceAttributes).toMatchObject({ verb: 'delete', resource: 'apps', namespace: 'laoban-dev' });
+    }
+    resetAccess();
   });
 
   it('reads and acts on a round of 意見收斂', async() => {

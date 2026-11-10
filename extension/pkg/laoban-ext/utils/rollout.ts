@@ -67,3 +67,25 @@ export function rolloutTargets(value: unknown): RolloutTarget[] {
     typeof (t as RolloutTarget).path === 'string' &&
     /^\/k8s\/clusters\/[a-z0-9-]+\/v1\/apps\.deployments\/[a-z0-9-]+\/[a-z0-9-]+$/.test((t as RolloutTarget).path));
 }
+
+const DEPLOYMENT_PATH = /^\/k8s\/clusters\/[a-z0-9-]+\/v1\/apps\.deployments\/[a-z0-9-]+\/[a-z0-9-]+$/;
+
+/**
+ * The `deployments` field of a delete answer: Steve paths of the app's
+ * Deployments. Anything malformed is dropped.
+ */
+export function deploymentTargets(value: unknown): { deployment: string; path: string }[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter((t): t is { deployment: string; path: string } => !!t && typeof t === 'object' &&
+    typeof (t as RolloutTarget).deployment === 'string' &&
+    typeof (t as RolloutTarget).path === 'string' &&
+    DEPLOYMENT_PATH.test((t as RolloutTarget).path));
+}
+
+/** Every Deployment of a deleted app is gone (each read answered "not found"). */
+export function allGone(found: (Deployment | null)[]): boolean {
+  return found.length > 0 && found.every((d) => d === null);
+}

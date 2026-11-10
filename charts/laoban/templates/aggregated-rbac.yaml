@@ -54,6 +54,10 @@ rules:
       - plans
       - plans/apply
     verbs: ["get", "list", "create"]
+  # Deleting an app (v0.1.26): only "apps" takes the delete verb.
+  - apiGroups: ["api.laoban.yansheng133.github.io"]
+    resources: ["apps"]
+    verbs: ["delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole

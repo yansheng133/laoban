@@ -3,6 +3,7 @@
 // app's detail page, where it can be changed; "新增應用" goes to 總覽.
 import { defineComponent, ref, onMounted } from 'vue';
 import { useStore } from 'vuex';
+import { useRoute } from 'vue-router';
 import NavToggle from '../components/NavToggle.vue';
 import { useText } from '../composables/useText';
 import AppList from '../components/AppList.vue';
@@ -16,7 +17,11 @@ export default defineComponent({
 
   setup() {
     const store = useStore();
+    const route = useRoute();
     const { t } = useText(store);
+    // Set by the detail page after deleting an app.
+    const deletedName = typeof route?.query?.deleted === 'string' ? route.query.deleted : '';
+    const deleted = deletedName ? { appName: deletedName, cleared: route.query.cleared === '1' } : null;
     const createRoute = { name: DASHBOARD_ROUTE_NAME, params: { product: PRODUCT_NAME, cluster: BLANK_CLUSTER } };
     // A viewer sees no "New app" (report 21, N9).
     const mayChange = ref(true);
@@ -25,7 +30,9 @@ export default defineComponent({
       mayChange.value = await canChangeApps(store);
     });
 
-    return { t, createRoute, mayChange };
+    return {
+      t, createRoute, mayChange, deleted
+    };
   },
 });
 </script>
@@ -50,7 +57,7 @@ export default defineComponent({
     </header>
 
     <div class="laoban-panel">
-      <AppList />
+      <AppList :deleted="deleted" />
     </div>
   </div>
 </template>

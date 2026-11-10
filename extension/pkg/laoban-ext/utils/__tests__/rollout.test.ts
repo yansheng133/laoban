@@ -1,6 +1,6 @@
 import { describe, it, expect } from '@jest/globals';
 import {
-  deploymentRolledOut, rolloutTargets, Deployment, CONTENT_HASH_ANNOTATION
+  deploymentRolledOut, rolloutTargets, deploymentTargets, allGone, Deployment, CONTENT_HASH_ANNOTATION
 } from '../rollout';
 
 const HASH = 'a'.repeat(64);
@@ -56,5 +56,20 @@ describe('rolloutTargets', () => {
 
     expect(rolloutTargets([good, { deployment: 'x', path: 'https://evil.example/x', contentHash: HASH }, null, 3])).toEqual([good]);
     expect(rolloutTargets(undefined)).toEqual([]);
+  });
+});
+
+describe('deleted app', () => {
+  it('keeps only Steve deployment paths', () => {
+    const good = { deployment: 'todo-web', path: '/k8s/clusters/c-m-1/v1/apps.deployments/laoban-dev/todo-web' };
+
+    expect(deploymentTargets([good, { deployment: 'x', path: 'https://evil.example/' }, null, 'x'])).toEqual([good]);
+    expect(deploymentTargets(undefined)).toEqual([]);
+  });
+
+  it('is gone only when every Deployment is', () => {
+    expect(allGone([null, null])).toBe(true);
+    expect(allGone([null, dep()])).toBe(false);
+    expect(allGone([])).toBe(false);
   });
 });

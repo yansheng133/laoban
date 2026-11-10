@@ -248,6 +248,40 @@ fn apps_endpoints() {
     let (status, _) = post(r.addr, "/api/apps", "{}");
     assert_eq!(status, 405);
 
+    // Deleting an app: DELETE on the app, by a verified caller only.
+    let (status, _, body) = raw(
+        r.addr,
+        b"DELETE /api/apps/breakfast HTTP/1.1\r\nHost: x\r\n\r\n",
+    );
+    assert_eq!(status, 401, "{body}");
+    assert_error(&serde_json::from_str(&body).unwrap(), "unauthenticated");
+    let (status, _, body) = raw(
+        r.addr,
+        b"DELETE /api/apps/breakfast HTTP/1.1\r\nHost: x\r\nX-Remote-User: u-test01\r\n\r\n",
+    );
+    assert_eq!(status, 404, "{body}");
+    assert_error(&serde_json::from_str(&body).unwrap(), "app_not_found");
+    let (status, _, body) = raw(
+        r.addr,
+        b"DELETE /api/apps/Bad_Name HTTP/1.1\r\nHost: x\r\nX-Remote-User: u-test01\r\n\r\n",
+    );
+    assert_eq!(status, 400, "{body}");
+    let (status, head, _) = raw(
+        r.addr,
+        b"POST /api/apps/breakfast HTTP/1.1\r\nHost: x\r\n\r\n",
+    );
+    assert_eq!(status, 405);
+    assert!(head.contains("Allow: GET, DELETE"), "{head}");
+    for path in [
+        "/api/apps",
+        "/api/apps/breakfast/versions",
+        "/api/apps/breakfast/round",
+    ] {
+        let req = format!("DELETE {path} HTTP/1.1\r\nHost: x\r\nX-Remote-User: u-test01\r\n\r\n");
+        let (status, _, _) = raw(r.addr, req.as_bytes());
+        assert_eq!(status, 405, "{path}");
+    }
+
     // Versions and restore.
     let (status, body) = get(r.addr, "/api/apps/breakfast/versions");
     assert_eq!(status, 404);

@@ -889,6 +889,8 @@ impl<'a> Route<'a> {
         match self {
             // Read for the editor, POST to save.
             Route::Files(_) | Route::Round(_) if request_method == "POST" => "POST",
+            // Read the app, DELETE to remove it.
+            Route::App(_) if request_method == "DELETE" => "DELETE",
             Route::Config
             | Route::Apps
             | Route::App(_)
@@ -959,6 +961,8 @@ fn route_api(api: &ApiState, head: &RequestHead, body: &[u8], caller: Option<&Ca
     if head.method != allowed {
         let allow = if matches!(route, Route::Files(_) | Route::Round(_)) {
             "GET, POST"
+        } else if matches!(route, Route::App(_)) {
+            "GET, DELETE"
         } else {
             allowed
         };
@@ -1003,6 +1007,12 @@ fn route_api(api: &ApiState, head: &RequestHead, body: &[u8], caller: Option<&Ca
                 )
             }
         });
+    }
+    if allowed == "DELETE" {
+        return match route {
+            Route::App(name) => reply(service.delete_app(name, caller.map(|c| c.user.as_str()))),
+            _ => Response::api_error(404, "bad_request", tr("No such API.", "找不到這個 API。")),
+        };
     }
     let lock = caller.map(|c| c.user.as_str()); // the verified user
                                                 // These carry no body worth reading; the user is the verified caller.
