@@ -278,8 +278,14 @@ fn calls(app_js: &str) -> Vec<Call> {
             .captures(window)
             .or_else(|| bare.captures(window))
             .map(|m| m[1].to_ascii_uppercase())
-            // fetch() without a method is a GET; a helper's default is unknown.
-            .or_else(|| c.get(1).map(|_| "GET".to_string()));
+            // `fetch(url)` alone is a GET. With a second argument built
+            // elsewhere (`fetch(url, postOptions(x))`) or through a helper,
+            // the method is unknown (lab, t62-rv: such POSTs were read as
+            // GETs and sent the web part to a needless fix).
+            .or_else(|| {
+                let after = window.trim_start_matches(['"', '\'', '`']).trim_start();
+                (c.get(1).is_some() && after.starts_with(')')).then(|| "GET".to_string())
+            });
         out.push(Call {
             method: m,
             path,
@@ -513,5 +519,25 @@ mod tests {
             "if path.startswith('/orders/'): ...\nif path == '/orders': 'GET' 'POST'",
         );
         assert_eq!(contract_gaps(&p, &expr), vec![]);
+    }
+
+    /// Lab app t62-rv (2026-11-10): options built by a helper are not a GET.
+    #[test]
+    fn options_built_elsewhere_leave_the_method_unknown() {
+        let p = plan(&["POST /loans", "POST /returns", "GET /loans/active"]);
+        let f = files(
+            "request(fetch(\"api/loans/active\")); request(fetch(\"api/loans\", postOptions({ book_id: 1 }))); request(fetch(\"api/returns\", postOptions(x)))",
+            "def handle(method, path, body):\n    if path == '/loans': ...\n    if path == '/returns': ...\n    if path == '/loans/active': ...",
+        );
+        assert_eq!(contract_gaps(&p, &f), vec![]);
+        // A bare fetch is still a GET, and a GET the plan lacks is reported.
+        let get = files(
+            "fetch('api/returns')",
+            "if path == '/loans' or path == '/returns' or path == '/loans/active': ...",
+        );
+        assert_eq!(
+            contract_gaps(&p, &get),
+            vec![gap("unknownCall", "GET", "/returns")]
+        );
     }
 }
