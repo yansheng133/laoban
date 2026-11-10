@@ -3,7 +3,8 @@
 // dialog), then DELETE .../apps/<name> (one commit removing apps/<name>/),
 // then waits until Fleet has removed the app's Deployments from the
 // cluster. Emits `deleted` with whether the cluster was cleared in time,
-// or `cancel`.
+// or `cancel`; `busy` while it deletes and waits, so the page around it can
+// keep people from closing it or changing the app in the meantime.
 import { defineComponent, ref, computed, onBeforeUnmount } from 'vue';
 import { useStore } from 'vuex';
 import { useText } from '../composables/useText';
@@ -24,7 +25,7 @@ export default defineComponent({
     blockedBy: { type: String, default: '' },
   },
 
-  emits: ['cancel', 'deleted'],
+  emits: ['cancel', 'deleted', 'busy'],
 
   setup(props, { emit }) {
     const store = useStore();
@@ -64,6 +65,7 @@ export default defineComponent({
       }
       error.value = '';
       phase.value = 'deleting';
+      emit('busy', true);
       let paths: string[];
 
       try {
@@ -72,6 +74,7 @@ export default defineComponent({
         paths = deploymentTargets(res.deployments).map((d) => d.path);
       } catch (e) {
         phase.value = 'confirm';
+        emit('busy', false);
         error.value = errorText(t, e, 'laoban.delete.failed');
 
         return;
@@ -79,6 +82,7 @@ export default defineComponent({
       phase.value = 'clearing';
       const cleared = paths.length ? await waitUntilCleared(paths) : false;
 
+      emit('busy', false);
       if (!life.stopped) {
         emit('deleted', { appName: props.appName, cleared });
       }

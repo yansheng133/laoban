@@ -58,6 +58,8 @@ export default defineComponent({
       mayDelete.value = v;
     });
     const deleting = ref<string | null>(null);
+    // A delete is running: its form stays open and no other row is deleted.
+    const deleteBusy = ref(false);
     const notice = ref<{ appName: string; cleared: boolean } | null>(props.deleted || null);
 
     function deleteBlockedBy(app: AppSummary): string {
@@ -65,6 +67,7 @@ export default defineComponent({
     }
 
     function onDeleted(e: { appName: string; cleared: boolean }) {
+      deleteBusy.value = false;
       deleting.value = null;
       notice.value = e;
       refresh();
@@ -182,6 +185,7 @@ export default defineComponent({
       mayChange,
       mayDelete,
       deleting,
+      deleteBusy,
       notice,
       deleteBlockedBy,
       onDeleted,
@@ -308,6 +312,7 @@ export default defineComponent({
                   class="icon icon-warning text-warning"
                 /> {{ t('laoban.apps.open') }}</a>
                 <router-link
+                  v-if="!(deleteBusy && deleting === app.appName)"
                   :to="appDetailRoute(app.appName)"
                   class="btn btn-sm role-primary"
                 >
@@ -317,6 +322,7 @@ export default defineComponent({
                   v-if="mayDelete"
                   type="button"
                   class="btn btn-sm role-secondary laoban-apps-delete"
+                  :disabled="deleteBusy"
                   :aria-expanded="deleting === app.appName ? 'true' : 'false'"
                   :aria-label="t('laoban.delete.title', { name: app.appName })"
                   data-testid="laoban-apps-delete"
@@ -336,6 +342,7 @@ export default defineComponent({
                   :blocked-by="deleteBlockedBy(app)"
                   @cancel="deleting = null"
                   @deleted="onDeleted"
+                  @busy="deleteBusy = $event"
                 />
               </td>
             </tr>

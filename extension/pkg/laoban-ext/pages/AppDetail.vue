@@ -283,6 +283,8 @@ export default defineComponent({
       mayDelete.value = v;
     });
     const deleteOpen = ref(false);
+    // While the app is being deleted, nothing else on the page can be used.
+    const deleteBusy = ref(false);
     const busy = computed(() => flow.busy.value || loading.value || !!round.pending.value);
     const deploying = computed(() => flow.phase.value === 'deploying');
     const currentCommit = computed(() => versions.value.find((v) => v.current)?.commit || '');
@@ -847,6 +849,7 @@ export default defineComponent({
       restore,
       mayDelete,
       deleteOpen,
+      deleteBusy,
       deleteBlockedBy,
       onDeleted,
       currentSteps,
@@ -961,7 +964,7 @@ export default defineComponent({
           class="btn role-secondary"
         >{{ t('laoban.detail.source') }}</a>
         <a
-          v-if="openLink"
+          v-if="openLink && !deleteBusy"
           :href="openLink"
           target="_blank"
           rel="noopener noreferrer"
@@ -972,6 +975,7 @@ export default defineComponent({
           v-if="mayDelete"
           type="button"
           class="btn role-secondary laoban-delete-open"
+          :disabled="deleteBusy"
           :aria-expanded="deleteOpen ? 'true' : 'false'"
           data-testid="laoban-delete-open"
           @click="deleteOpen = !deleteOpen"
@@ -986,6 +990,7 @@ export default defineComponent({
       :blocked-by="deleteBlockedBy"
       @cancel="deleteOpen = false"
       @deleted="onDeleted"
+      @busy="deleteBusy = $event"
     />
     <p
       v-if="openSameOrigin"
@@ -1015,6 +1020,8 @@ export default defineComponent({
     <div
       v-if="detail"
       class="laoban-work"
+      :class="{ 'laoban-deleting': deleteBusy }"
+      :inert="deleteBusy || undefined"
     >
       <section
         ref="roundPanel"
@@ -1561,6 +1568,10 @@ export default defineComponent({
 
 .laoban-delete-open {
   color: var(--error);
+}
+
+.laoban-deleting {
+  opacity: 0.5;
 }
 
 .laoban-detail-section {
