@@ -285,7 +285,7 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 
 ### 請教更強的模型（advisor，v0.1.25）
 
-設了 `LAOBAN_AI_ADVISOR_MODEL` 時，每次 AI 呼叫（計畫、每個 subagent、修正）都帶 Messages API 的 advisor 工具（`advisor_20260301`，beta `advisor-tool-2026-03-01`）：執行的模型在同一次請求裡自己決定要不要先問更強的模型（每次最多 1 次、每次輸出上限 8,000 token），系統提示說明什麼時候值得問。advisor 的建議是加密的，laoban 看不到內容，只取最後的文字答案。回應以 `pause_turn` 結束時（advisor 還在跑），原封帶回 assistant 內容再送，最多 4 次。advisor 的 token 在 `usage.iterations` 的 `advisor_message`，不在最上層的用量裡：laoban 把它們也算進每月上限（預留時也先算進 advisor 的上限），以 advisor 模型的價格計費。subagent 卡片標出「請教了哪個模型、用了多少 token」，總覽的設定區列出 advisor 模型。
+設了 `LAOBAN_AI_ADVISOR_MODEL` 時，每次 AI 呼叫（計畫、每個 subagent、修正）都帶 Messages API 的 advisor 工具（`advisor_20260301`，beta `advisor-tool-2026-03-01`）：執行的模型在同一次請求裡自己決定要不要先問更強的模型（每次最多 1 次、每次輸出上限 8,000 token），系統提示要求寫答案前先問一次（實驗室實測：只寫「需要時再問」時 Sonnet 5.5 三次都沒問；要求先問一次時會問 claude-opus-5-5，那次多約 17 秒、Opus 約 2,800／1,600 token）。advisor 的建議是加密的，laoban 看不到內容，只取最後的文字答案。回應以 `pause_turn` 結束時（advisor 還在跑），原封帶回 assistant 內容再送，最多 4 次。advisor 的 token 在 `usage.iterations` 的 `advisor_message`，不在最上層的用量裡：laoban 把它們也算進每月上限（預留時也先算進 advisor 的上限），以 advisor 模型的價格計費。subagent 卡片標出「請教了哪個模型、用了多少 token」，總覽的設定區列出 advisor 模型。
 
 ## 產生的應用（固定範本，不由 AI 產生）
 

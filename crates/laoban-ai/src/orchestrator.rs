@@ -43,8 +43,11 @@ pub struct OrchestratorConfig {
 }
 
 /// Told to the model when it has an advisor. The executor model decides
-/// when to call it; forced tool choice is not available on current models.
-pub const ADVISOR_INSTRUCTIONS: &str = "An advisor tool backed by a more capable model is available. Before you write the answer, consult it once when the task has non-trivial logic, when the request and response shapes between parts of the application need care, or when you are unsure; do not consult it for trivial tasks. Its advice is for you; follow the response format above regardless.";
+/// when to call it (forced tool choice is not available on current models),
+/// and a "consult when needed" wording made it skip the advisor every time
+/// in the lab (2026-11-10, Sonnet 5.5 + Opus 5.5): an administrator who sets
+/// an advisor wants it asked, so the wording asks for one consultation.
+pub const ADVISOR_INSTRUCTIONS: &str = "An advisor tool backed by a more capable model is available. Consult it once before you write the answer: describe the task and your intended design (for code, how its parts fit together and the request and response shapes), then follow its advice. Its advice is for you; follow the response format above regardless.";
 
 /// Collaborators, injected so tests can replace every side effect.
 pub struct Dependencies {
