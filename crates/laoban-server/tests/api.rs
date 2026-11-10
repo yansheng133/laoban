@@ -54,11 +54,13 @@ fn settings(cap: u64) -> M0Settings {
         app_url: None,
         app_network_policy: false,
         ai_subagents: false,
+        ai_advisor_model: None,
     }
 }
 
 fn ok(content: &str) -> Result<ProviderResponse, ProviderError> {
     Ok(ProviderResponse {
+        advisor: None,
         content: content.into(),
         input_tokens: 10,
         output_tokens: 20,

@@ -288,6 +288,7 @@ laoban:
       failed: "Failed after {seconds} s"
       skipped: "Not needed: kept as it is"
     fixed: "Checked against the plan and fixed once"
+    advisor: "Asked {model} for advice ({tokens} tokens)"
     usage: "{input} input / {output} output tokens"
     gapsTitle: "The web part and the API may not match the plan:"
     gap:
@@ -446,6 +447,7 @@ laoban:
       subagents: "Code writing"
       subagentsOn: "2 subagents at the same time"
       subagentsOff: "1 AI call"
+      advisor: "Advisor"
       unavailable: Could not read the laoban backend settings.
     chat:
       title: Request

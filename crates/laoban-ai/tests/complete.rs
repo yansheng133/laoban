@@ -83,6 +83,7 @@ fn budget_and_spend_limit_rules_apply() {
 #[test]
 fn truncated_responses_are_rejected() {
     let h = harness(MockProvider::new().then(Ok(ProviderResponse {
+        advisor: None,
         content: "{".into(),
         input_tokens: 1,
         output_tokens: 1,
@@ -101,4 +102,67 @@ fn mask_for_ai_matches_what_is_sent() {
     let m = h.orchestrator.mask_for_ai(&format!("{id} {LOGIN}"));
     assert_eq!(m.text, "[MASKED:TW_ID] [MASKED:LOGIN]");
     assert_eq!(m.findings.len(), 2);
+}
+
+#[test]
+fn an_advisor_is_offered_and_its_tokens_count_against_the_budget() {
+    let mut cfg = config();
+    cfg.advisor = Some(laoban_ai::Advisor {
+        model: MODEL_B.into(),
+        max_uses: 1,
+        max_tokens: 2_000,
+    });
+    let mut resp = ok_response("{\"x\": 1}");
+    resp.advisor = Some(laoban_ai::AdvisorUsage {
+        model: MODEL_B.into(),
+        consultations: 1,
+        input_tokens: 300,
+        output_tokens: 700,
+    });
+    let h = harness_with(cfg, MockProvider::new().then(Ok(resp)), 1_000_000);
+    let out = h
+        .orchestrator
+        .complete(&completion("寫一個計數器"))
+        .unwrap();
+    assert_eq!(out.advisor.as_ref().unwrap().output_tokens, 700);
+    // Executor 100 + 50, advisor 300 + 700.
+    assert_eq!(h.budget.used(), 1_150);
+
+    let sent = &h.provider.received()[0];
+    assert_eq!(sent.advisor.as_ref().unwrap().model, MODEL_B);
+    assert!(sent
+        .system
+        .contains("An advisor tool backed by a more capable model is available."));
+}
+
+#[test]
+fn without_an_advisor_nothing_mentions_one() {
+    let h = harness(MockProvider::new().then(Ok(ok_response("{\"x\": 1}"))));
+    let out = h.orchestrator.complete(&completion("x")).unwrap();
+    assert!(out.advisor.is_none());
+    let sent = &h.provider.received()[0];
+    assert!(sent.advisor.is_none());
+    assert!(!sent.system.contains("advisor"));
+}
+
+#[test]
+fn the_reservation_covers_the_advisor() {
+    let mut cfg = config();
+    cfg.advisor = Some(laoban_ai::Advisor {
+        model: MODEL_B.into(),
+        max_uses: 1,
+        max_tokens: 2_000,
+    });
+    // Enough for the call alone (321 + input), not with the advisor's cap.
+    let h = harness_with(cfg, MockProvider::new().then(Ok(ok_response("{}"))), 1_500);
+    let err = h.orchestrator.complete(&completion("x")).unwrap_err();
+    assert!(
+        matches!(err, AiError::Budget(BudgetError::Exhausted { .. })),
+        "{err:?}"
+    );
+    assert_eq!(
+        h.provider.call_count(),
+        0,
+        "refused before the provider is called"
+    );
 }

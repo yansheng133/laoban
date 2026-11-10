@@ -15,7 +15,7 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use crate::error::{classify, ApiErrorInfo, ProviderError};
-use crate::provider::{Provider, ProviderRequest, ProviderResponse, StopReason};
+use crate::provider::{AdvisorUsage, Provider, ProviderRequest, ProviderResponse, StopReason};
 
 /// Environment variable holding the API key.
 pub const API_KEY_ENV: &str = "ANTHROPIC_API_KEY";
@@ -147,6 +147,13 @@ impl AnthropicProvider {
     }
 }
 
+/// Beta header of the advisor tool.
+pub const ADVISOR_BETA: &str = "advisor-tool-2026-03-01";
+/// Type of the advisor tool definition.
+pub const ADVISOR_TOOL: &str = "advisor_20260301";
+/// Times a turn paused for a pending advisor call is resumed.
+const MAX_RESUMES: usize = 4;
+
 /// Request body for `POST /v1/messages`.
 pub fn request_body(req: &ProviderRequest) -> serde_json::Value {
     let messages: Vec<serde_json::Value> = req
@@ -162,51 +169,124 @@ pub fn request_body(req: &ProviderRequest) -> serde_json::Value {
     if !req.system.is_empty() {
         body["system"] = serde_json::Value::String(req.system.clone());
     }
+    if let Some(a) = &req.advisor {
+        body["tools"] = serde_json::json!([{
+            "type": ADVISOR_TOOL,
+            "name": "advisor",
+            "model": a.model,
+            "max_uses": a.max_uses,
+            "max_tokens": a.max_tokens,
+        }]);
+    }
     body
 }
 
 #[derive(Deserialize)]
 struct ApiResponse {
     #[serde(default)]
-    content: Vec<ContentBlock>,
+    content: Vec<serde_json::Value>,
     usage: Usage,
     #[serde(default)]
     stop_reason: Option<String>,
 }
 
 #[derive(Deserialize)]
-struct ContentBlock {
-    #[serde(rename = "type")]
-    kind: String,
-    #[serde(default)]
-    text: Option<String>,
-}
-
-#[derive(Deserialize)]
 struct Usage {
     input_tokens: u64,
     output_tokens: u64,
+    /// Per model call of the turn; advisor calls are only here, not in the
+    /// top-level totals (they are billed at the advisor model's rates).
+    #[serde(default)]
+    iterations: Vec<Iteration>,
 }
 
-/// Map a successful response body.
-pub fn parse_response(body: &str) -> Result<ProviderResponse, ProviderError> {
+#[derive(Deserialize)]
+struct Iteration {
+    #[serde(rename = "type", default)]
+    kind: String,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    input_tokens: u64,
+    #[serde(default)]
+    output_tokens: u64,
+}
+
+/// One response of the Messages API, before turns are joined.
+struct Turn {
+    text: String,
+    /// The content blocks as sent, to resume a paused turn with them.
+    content: Vec<serde_json::Value>,
+    input_tokens: u64,
+    output_tokens: u64,
+    advisor: Option<AdvisorUsage>,
+    stop_reason: String,
+}
+
+fn parse_turn(body: &str) -> Result<Turn, ProviderError> {
     let parsed: ApiResponse = serde_json::from_str(body).map_err(|e| ProviderError::Other {
         status: Some(200),
         error_type: "invalid_response".into(),
         message: format!("response is not a Messages API object: {e}"),
     })?;
-    let content: String = parsed
+    // Text blocks only: advisor calls and results (encrypted or not) are
+    // not part of the answer.
+    let text: String = parsed
         .content
         .iter()
-        .filter(|b| b.kind == "text")
-        .filter_map(|b| b.text.as_deref())
+        .filter(|b| b["type"] == "text")
+        .filter_map(|b| b["text"].as_str())
         .collect();
-    Ok(ProviderResponse {
-        content,
+    let mut advisor: Option<AdvisorUsage> = None;
+    for it in parsed
+        .usage
+        .iterations
+        .iter()
+        .filter(|i| i.kind == "advisor_message")
+    {
+        let a = advisor.get_or_insert_with(|| AdvisorUsage {
+            model: it.model.clone().unwrap_or_default(),
+            consultations: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+        });
+        a.consultations += 1;
+        a.input_tokens += it.input_tokens;
+        a.output_tokens += it.output_tokens;
+    }
+    Ok(Turn {
+        text,
+        content: parsed.content,
         input_tokens: parsed.usage.input_tokens,
         output_tokens: parsed.usage.output_tokens,
-        stop_reason: StopReason::from_api(parsed.stop_reason.as_deref().unwrap_or("")),
+        advisor,
+        stop_reason: parsed.stop_reason.unwrap_or_default(),
     })
+}
+
+/// Map a successful response body.
+pub fn parse_response(body: &str) -> Result<ProviderResponse, ProviderError> {
+    let t = parse_turn(body)?;
+    Ok(ProviderResponse {
+        advisor: t.advisor,
+        content: t.text,
+        input_tokens: t.input_tokens,
+        output_tokens: t.output_tokens,
+        stop_reason: StopReason::from_api(&t.stop_reason),
+    })
+}
+
+/// Add `next` to `total`: a paused turn and its continuations are one answer.
+fn join_advisor(total: &mut Option<AdvisorUsage>, next: Option<AdvisorUsage>) {
+    match (total.as_mut(), next) {
+        (Some(t), Some(n)) => {
+            t.consultations += n.consultations;
+            t.input_tokens += n.input_tokens;
+            t.output_tokens += n.output_tokens;
+        }
+        (None, Some(n)) => *total = Some(n),
+        _ => {}
+    }
 }
 
 /// Classify an error response from its status, `retry-after` header and
@@ -235,26 +315,26 @@ fn parse_retry_after(v: &str) -> Option<Duration> {
         .map(Duration::from_secs_f64)
 }
 
-impl Provider for AnthropicProvider {
-    fn send(&self, req: &ProviderRequest) -> Result<ProviderResponse, ProviderError> {
-        let body = request_body(req).to_string();
+impl AnthropicProvider {
+    /// One `POST /v1/messages`; the body text of a 2xx answer.
+    fn post(&self, body: &str, advisor: bool) -> Result<String, ProviderError> {
         let mut request = self.agent.post(&self.url);
         if let Some(key) = &self.key {
             request = request.set("x-api-key", key.expose());
         }
+        if advisor {
+            request = request.set("anthropic-beta", ADVISOR_BETA);
+        }
         let result = request
             .set("anthropic-version", ANTHROPIC_VERSION)
             .set("content-type", "application/json")
-            .send_string(&body);
+            .send_string(body);
         match result {
-            Ok(resp) => {
-                let text = resp.into_string().map_err(|e| ProviderError::Other {
-                    status: Some(200),
-                    error_type: "invalid_response".into(),
-                    message: format!("cannot read response body: {}", e.kind()),
-                })?;
-                parse_response(&text)
-            }
+            Ok(resp) => resp.into_string().map_err(|e| ProviderError::Other {
+                status: Some(200),
+                error_type: "invalid_response".into(),
+                message: format!("cannot read response body: {}", e.kind()),
+            }),
             Err(ureq::Error::Status(status, resp)) => {
                 let retry_after = resp.header("retry-after").map(str::to_string);
                 let mut text = String::new();
@@ -272,5 +352,48 @@ impl Provider for AnthropicProvider {
                 message: format!("{:?}", t.kind()),
             }),
         }
+    }
+}
+
+impl Provider for AnthropicProvider {
+    /// Send the request. A turn that pauses for a pending advisor call
+    /// (`pause_turn`) is resumed with its content as sent, unchanged, and
+    /// the same tool; text and usage of all parts add up.
+    fn send(&self, req: &ProviderRequest) -> Result<ProviderResponse, ProviderError> {
+        let mut body = request_body(req);
+        let mut text = String::new();
+        let (mut input_tokens, mut output_tokens) = (0, 0);
+        let mut advisor = None;
+        for resume in 0..=MAX_RESUMES {
+            let turn = parse_turn(&self.post(&body.to_string(), req.advisor.is_some())?)?;
+            text.push_str(&turn.text);
+            input_tokens += turn.input_tokens;
+            output_tokens += turn.output_tokens;
+            join_advisor(&mut advisor, turn.advisor);
+            if turn.stop_reason != "pause_turn" || resume == MAX_RESUMES {
+                return Ok(ProviderResponse {
+                    advisor,
+                    content: text,
+                    input_tokens,
+                    output_tokens,
+                    stop_reason: StopReason::from_api(&turn.stop_reason),
+                });
+            }
+            // The assistant's content goes back as it came; a second pause
+            // continues the same assistant message.
+            let messages = body["messages"]
+                .as_array_mut()
+                .expect("messages is an array");
+            match messages.last_mut() {
+                Some(last) if last["role"] == "assistant" => {
+                    if let Some(c) = last["content"].as_array_mut() {
+                        c.extend(turn.content);
+                    }
+                }
+                _ => messages
+                    .push(serde_json::json!({ "role": "assistant", "content": turn.content })),
+            }
+        }
+        unreachable!("the loop returns on its last round")
     }
 }

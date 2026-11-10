@@ -47,6 +47,9 @@ export interface SubagentRun {
   files: string[];
   // It ran a second time to fix what the contract check found.
   fixed?: boolean;
+  // The more capable model it consulted (advisor tool), and its tokens.
+  advisorModel?: string;
+  advisorTokens?: number;
 }
 
 // A place where the web and the API code seem to disagree with the plan.
@@ -279,6 +282,8 @@ export interface ConfigResponse {
   tokenBudget: { cap: number; used: number };
   // true: the code is written by a web and an API subagent at the same time.
   subagents?: boolean;
+  // Model every AI call may consult (advisor tool); null: none.
+  advisorModel?: string | null;
   // Seconds the backend waits for one AI call (LAOBAN_AI_TIMEOUT_SECONDS).
   aiTimeoutSeconds?: number;
 }

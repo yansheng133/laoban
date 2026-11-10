@@ -140,6 +140,13 @@ spec:
               value: {{ $aiTimeout | toString | quote }}
             - name: LAOBAN_AI_SUBAGENTS
               value: {{ ternary "true" "false" (ne .Values.ai.subagents false) | quote }}
+            {{- with .Values.ai.advisorModel }}
+            {{- if $aiBaseUrl }}
+            {{- fail "ai.advisorModel needs the Anthropic API (leave ai.baseUrl empty)" }}
+            {{- end }}
+            - name: LAOBAN_AI_ADVISOR_MODEL
+              value: {{ . | quote }}
+            {{- end }}
             - name: LAOBAN_MODEL
               value: {{ $model | quote }}
             # int64 first: Helm reads numbers as float64 and would print 2e+06.

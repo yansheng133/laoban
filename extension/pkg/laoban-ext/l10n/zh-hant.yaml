@@ -288,6 +288,7 @@ laoban:
       failed: "失敗（{seconds} 秒）"
       skipped: "不需要重寫，維持原樣"
     fixed: "和計畫比對後，修正過一次"
+    advisor: "請教了 {model}（{tokens} 個 token）"
     usage: "輸入 {input}、輸出 {output} 個 token"
     gapsTitle: "網頁和 API 可能和計畫對不上："
     gap:
@@ -446,6 +447,7 @@ laoban:
       subagents: "寫程式"
       subagentsOn: "2 個 subagent 同時進行"
       subagentsOff: "單次 AI 呼叫"
+      advisor: "顧問模型"
       unavailable: 無法讀取 laoban 後端設定。
     chat:
       title: 需求

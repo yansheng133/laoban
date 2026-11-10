@@ -290,6 +290,7 @@ laoban:
       failed: "失敗（{seconds} 秒）"
       skipped: "書き直し不要（そのまま）"
     fixed: "計画と照合し、1 回修正しました"
+    advisor: "{model} に相談しました（{tokens} トークン）"
     usage: "入力 {input}・出力 {output} トークン"
     gapsTitle: "Web と API が計画と合っていない可能性があります："
     gap:
@@ -448,6 +449,7 @@ laoban:
       subagents: "コード作成"
       subagentsOn: "2 つのサブエージェントで並行"
       subagentsOff: "AI 呼び出し 1 回"
+      advisor: "アドバイザー"
       unavailable: laoban バックエンドの設定を読み取れませんでした。
     chat:
       title: 依頼

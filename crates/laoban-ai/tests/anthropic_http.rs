@@ -28,6 +28,7 @@ fn provider_with_timeout(server: &MockServer, timeout: Duration) -> AnthropicPro
 
 fn request() -> ProviderRequest {
     ProviderRequest {
+        advisor: None,
         model: "model-a-test".into(),
         system: "system text".into(),
         messages: vec![Message {
@@ -248,4 +249,114 @@ fn without_key_refuses_the_anthropic_api() {
         .unwrap_err();
         assert_eq!(err, laoban_ai::anthropic::AnthropicSetupError::MissingKey);
     }
+}
+
+fn with_advisor() -> ProviderRequest {
+    let mut r = request();
+    r.advisor = Some(laoban_ai::Advisor {
+        model: "model-b-advisor".into(),
+        max_uses: 1,
+        max_tokens: 8000,
+    });
+    r
+}
+
+#[test]
+fn advisor_tool_and_beta_header_are_sent_and_its_usage_read() {
+    let server = MockServer::start(|_| {
+        Reply::json(
+            200,
+            r#"{"content":[{"type":"server_tool_use","id":"srvtoolu_1","name":"advisor","input":{}},
+{"type":"advisor_tool_result","tool_use_id":"srvtoolu_1","content":{"type":"advisor_redacted_result","encrypted_content":"abc","stop_reason":"end_turn"}},
+{"type":"text","text":"answer"}],
+"stop_reason":"end_turn","usage":{"input_tokens":30,"output_tokens":20,"iterations":[
+{"type":"message","input_tokens":10,"output_tokens":5},
+{"type":"advisor_message","model":"model-b-advisor","input_tokens":40,"output_tokens":60},
+{"type":"message","input_tokens":20,"output_tokens":15}]}}"#,
+        )
+    });
+    let resp = provider(&server).send(&with_advisor()).unwrap();
+    // Encrypted advice is not part of the answer.
+    assert_eq!(resp.content, "answer");
+    assert_eq!((resp.input_tokens, resp.output_tokens), (30, 20));
+    let a = resp.advisor.unwrap();
+    assert_eq!(
+        (
+            a.model.as_str(),
+            a.consultations,
+            a.input_tokens,
+            a.output_tokens
+        ),
+        ("model-b-advisor", 1, 40, 60)
+    );
+
+    let r = &server.requests()[0];
+    assert_eq!(
+        r.header("anthropic-beta"),
+        Some(laoban_ai::anthropic::ADVISOR_BETA)
+    );
+    let body: serde_json::Value = serde_json::from_str(&r.body_str()).unwrap();
+    assert_eq!(
+        body["tools"],
+        serde_json::json!([{"type": "advisor_20260301", "name": "advisor", "model": "model-b-advisor", "max_uses": 1, "max_tokens": 8000}])
+    );
+}
+
+#[test]
+fn without_advisor_no_tool_and_no_beta_header() {
+    let server = MockServer::start(|_| {
+        Reply::json(
+            200,
+            r#"{"content":[{"type":"text","text":"x"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}"#,
+        )
+    });
+    let resp = provider(&server).send(&request()).unwrap();
+    assert!(resp.advisor.is_none());
+    let r = &server.requests()[0];
+    assert_eq!(r.header("anthropic-beta"), None);
+    let body: serde_json::Value = serde_json::from_str(&r.body_str()).unwrap();
+    assert!(body.get("tools").is_none());
+}
+
+#[test]
+fn a_turn_paused_for_the_advisor_is_resumed_with_its_content() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static N: AtomicUsize = AtomicUsize::new(0);
+    N.store(0, Ordering::SeqCst);
+    let server = MockServer::start(|_| {
+        if N.fetch_add(1, Ordering::SeqCst) == 0 {
+            Reply::json(
+                200,
+                r#"{"content":[{"type":"text","text":"part one, "},{"type":"server_tool_use","id":"srvtoolu_9","name":"advisor","input":{}}],
+"stop_reason":"pause_turn","usage":{"input_tokens":5,"output_tokens":3}}"#,
+            )
+        } else {
+            Reply::json(
+                200,
+                r#"{"content":[{"type":"advisor_tool_result","tool_use_id":"srvtoolu_9","content":{"type":"advisor_redacted_result","encrypted_content":"z","stop_reason":"end_turn"}},{"type":"text","text":"part two"}],
+"stop_reason":"end_turn","usage":{"input_tokens":7,"output_tokens":4,"iterations":[{"type":"advisor_message","model":"model-b-advisor","input_tokens":9,"output_tokens":11}]}}"#,
+            )
+        }
+    });
+    let resp = provider(&server).send(&with_advisor()).unwrap();
+    assert_eq!(resp.content, "part one, part two");
+    assert_eq!((resp.input_tokens, resp.output_tokens), (12, 7));
+    assert_eq!(resp.advisor.unwrap().output_tokens, 11);
+    assert_eq!(resp.stop_reason, StopReason::EndTurn);
+
+    let reqs = server.requests();
+    assert_eq!(reqs.len(), 2);
+    let second: serde_json::Value = serde_json::from_str(&reqs[1].body_str()).unwrap();
+    let msgs = second["messages"].as_array().unwrap();
+    assert_eq!(
+        msgs.len(),
+        2,
+        "the user message, then the paused assistant content"
+    );
+    assert_eq!(msgs[1]["role"], "assistant");
+    assert_eq!(msgs[1]["content"][1]["type"], "server_tool_use");
+    assert_eq!(
+        second["tools"][0]["type"], "advisor_20260301",
+        "the tool stays while a call is pending"
+    );
 }

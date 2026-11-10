@@ -171,6 +171,7 @@ fn truncated_and_refused_responses_are_rejected() {
         (StopReason::Refusal, PlanError::Refused),
     ] {
         let h = harness(MockProvider::new().then(Ok(ProviderResponse {
+            advisor: None,
             stop_reason: stop,
             ..ok_response(&plan_json(CLUSTER, "Deployment"))
         })));
@@ -283,6 +284,7 @@ fn budget_is_shared_and_exhausts_across_calls() {
     let mut script = MockProvider::new();
     for _ in 0..10 {
         script = script.then(Ok(ProviderResponse {
+            advisor: None,
             input_tokens: 2_000,
             output_tokens: 1_000,
             ..ok_response(&plan_json(CLUSTER, "Deployment"))

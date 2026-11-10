@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use laoban_ai::{
-    AiError, BudgetError, CompletionRequest, Dependencies, ModelSelection, Orchestrator,
+    Advisor, AiError, BudgetError, CompletionRequest, Dependencies, ModelSelection, Orchestrator,
     OrchestratorConfig, PlanError, PlanPolicy, Provider, ProviderError, RandomBoundary,
     RetryPolicy, ThreadSleeper, TokenBudget, UntrustedBlock, UtcMonthClock,
 };
@@ -57,6 +57,9 @@ pub const PLAN_MAX_TOKENS: u32 = 4_096;
 /// `max_tokens` for the code call. Four files of a small app fit well
 /// within this; a truncated response is rejected, never committed.
 pub const CODEGEN_MAX_TOKENS: u32 = 16_000;
+/// Advisor consultations per AI call, and the output cap of each.
+pub const ADVISOR_MAX_USES: u32 = 1;
+pub const ADVISOR_MAX_TOKENS: u32 = 8_000;
 /// Largest current code (four files together) sent along when an app is
 /// changed. Keeps the request inside a 32k-token local model context
 /// together with the plan and `CODEGEN_MAX_TOKENS` of output.
@@ -698,6 +701,11 @@ impl M0Service {
                 plan_policy: PlanPolicy::default(),
                 system_prompt: SYSTEM_PROMPT.into(),
                 max_tokens: PLAN_MAX_TOKENS,
+                advisor: settings.ai_advisor_model.clone().map(|model| Advisor {
+                    model,
+                    max_uses: ADVISOR_MAX_USES,
+                    max_tokens: ADVISOR_MAX_TOKENS,
+                }),
             },
             Dependencies {
                 provider,
@@ -959,6 +967,7 @@ impl M0Service {
             "repo": self.settings.repo(),
             "tokenBudget": { "cap": self.budget.cap(), "used": self.budget.used() },
             "subagents": self.settings.ai_subagents,
+            "advisorModel": self.settings.ai_advisor_model,
             "aiTimeoutSeconds": self.settings.ai_timeout_secs,
             "roundLimits": self.round_limits,
             "roundsAvailable": self.rounds_ready(),
@@ -1606,6 +1615,10 @@ impl M0Service {
                                         run.output_tokens = c.output_tokens;
                                     }
                                     run.model = c.model.clone();
+                                    if let Some(a) = &c.advisor {
+                                        run.advisor_model = a.model.clone();
+                                        run.advisor_tokens += a.input_tokens + a.output_tokens;
+                                    }
                                 }
                                 Err(_) => run.state = "failed",
                             });

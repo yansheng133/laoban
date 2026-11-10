@@ -108,6 +108,10 @@ export default defineComponent({
           <dt>{{ t('laoban.dashboard.config.subagents') }}</dt>
           <dd>{{ config.subagents ? t('laoban.dashboard.config.subagentsOn') : t('laoban.dashboard.config.subagentsOff') }}</dd>
         </template>
+        <template v-if="config.advisorModel">
+          <dt>{{ t('laoban.dashboard.config.advisor') }}</dt>
+          <dd>{{ config.advisorModel }}</dd>
+        </template>
         <dt>{{ t('laoban.dashboard.config.tokenBudget') }}</dt>
         <dd>{{ t('laoban.dashboard.config.tokenUsage', { used: formatNumber(config.tokenBudget && config.tokenBudget.used), cap: formatNumber(config.tokenBudget && config.tokenBudget.cap) }) }}</dd>
       </dl>

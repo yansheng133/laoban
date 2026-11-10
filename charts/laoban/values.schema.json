@@ -250,6 +250,10 @@
         "subagents": {
           "description": "Write the web and the API part with two subagents at the same time (LAOBAN_AI_SUBAGENTS). Default true.",
           "type": "boolean"
+        },
+        "advisorModel": {
+          "description": "Model every AI call may consult with the advisor tool (LAOBAN_AI_ADVISOR_MODEL). Empty: none. Anthropic API only.",
+          "type": "string"
         }
       }
     },

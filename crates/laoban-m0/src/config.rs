@@ -46,6 +46,12 @@ pub const ENV_AI_TIMEOUT: &str = "LAOBAN_AI_TIMEOUT_SECONDS";
 /// a round does not touch is not written again. `false`: one AI call writes
 /// all four files, as before 0.1.24.
 pub const ENV_AI_SUBAGENTS: &str = "LAOBAN_AI_SUBAGENTS";
+/// A more capable model every AI call may consult (the Messages API advisor
+/// tool), for example `claude-opus-5-5` beside a `claude-sonnet-5-5` model.
+/// Unset: no advisor. Only with the Anthropic API (no `LAOBAN_AI_BASE_URL`),
+/// and it must be a valid advisor for `LAOBAN_MODEL` (the API answers 400
+/// otherwise).
+pub const ENV_AI_ADVISOR_MODEL: &str = "LAOBAN_AI_ADVISOR_MODEL";
 /// Lower limits for rounds of 意見收斂 (chart `rounds.limits`). Each may
 /// only be lowered: a value above the built-in maximum is refused.
 pub const ENV_ROUND_OPINION_CHARS: &str = "LAOBAN_ROUND_MAX_OPINION_CHARS";
@@ -79,6 +85,8 @@ pub struct M0Settings {
     pub app_network_policy: bool,
     /// Code written by parallel subagents (`LAOBAN_AI_SUBAGENTS`).
     pub ai_subagents: bool,
+    /// Model the AI calls may consult (`LAOBAN_AI_ADVISOR_MODEL`).
+    pub ai_advisor_model: Option<String>,
 }
 
 /// Where the generated apps are opened when they have their own host.
@@ -384,6 +392,14 @@ pub fn from_env_with(get: impl Fn(&str) -> Option<String>) -> Result<EnvConfig, 
         Some("true") => true,
         Some(_) => return Err(ConfigError::Invalid(ENV_APP_NETWORK_POLICY)),
     };
+    let ai_advisor_model = value(ENV_AI_ADVISOR_MODEL);
+    if let Some(m) = &ai_advisor_model {
+        static MODEL_ID: OnceLock<Regex> = OnceLock::new();
+        // The advisor tool exists only on the Anthropic API.
+        if base_url.is_some() || !re(&MODEL_ID, r"^[a-z0-9][a-z0-9.-]{1,99}$").is_match(m) {
+            return Err(ConfigError::Invalid(ENV_AI_ADVISOR_MODEL));
+        }
+    }
     let ai_subagents = match value(ENV_AI_SUBAGENTS).as_deref() {
         None | Some("true") => true,
         Some("false") => false,
@@ -420,6 +436,7 @@ pub fn from_env_with(get: impl Fn(&str) -> Option<String>) -> Result<EnvConfig, 
             app_url,
             app_network_policy,
             ai_subagents,
+            ai_advisor_model,
         },
         ai: AiEndpoint { base_url },
         anthropic_api_key: key.map(Secret),

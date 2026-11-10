@@ -29,11 +29,36 @@ pub struct Message {
 /// One call to the model. Everything in here has already been masked.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderRequest {
+    /// A more capable model the request may consult mid-generation (the
+    /// Messages API advisor tool), or `None`. Only the Anthropic API
+    /// supports it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub advisor: Option<Advisor>,
     /// Model ID taken from configuration. Never hard-coded.
     pub model: String,
     pub system: String,
     pub messages: Vec<Message>,
     pub max_tokens: u32,
+}
+
+/// The advisor of a request: a model at least as capable as the request's,
+/// which the model may consult before or while answering.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Advisor {
+    pub model: String,
+    /// Consultations allowed per request.
+    pub max_uses: u32,
+    /// Upper bound of one consultation's output (thinking and advice).
+    pub max_tokens: u32,
+}
+
+/// Tokens the advisor used in one request (billed at its model's rates).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdvisorUsage {
+    pub model: String,
+    pub consultations: u32,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
 }
 
 /// Why the model stopped. Unknown values are kept as text so a new API
@@ -63,6 +88,10 @@ impl StopReason {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderResponse {
+    /// What the advisor was asked, if the request had one and the model
+    /// consulted it. Its tokens are not in `input_tokens`/`output_tokens`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub advisor: Option<AdvisorUsage>,
     /// Concatenated text content.
     pub content: String,
     pub input_tokens: u64,

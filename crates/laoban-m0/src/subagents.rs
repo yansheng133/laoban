@@ -129,6 +129,16 @@ pub struct SubagentRun {
     /// It ran a second time to fix what the check found.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub fixed: bool,
+    /// The advisor model it consulted (`LAOBAN_AI_ADVISOR_MODEL`), if any.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub advisor_model: String,
+    /// Tokens the advisor used for this subagent (input and output).
+    #[serde(skip_serializing_if = "is_zero")]
+    pub advisor_tokens: u64,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
 }
 
 impl SubagentRun {
@@ -142,6 +152,8 @@ impl SubagentRun {
             model: String::new(),
             files: part.files().to_vec(),
             fixed: false,
+            advisor_model: String::new(),
+            advisor_tokens: 0,
         }
     }
 }

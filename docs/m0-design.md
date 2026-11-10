@@ -281,6 +281,11 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 - 進度：背景工作 `GET /api/plans/<jobId>` 與輪次（`applying` 時）多一個 `subagents` 陣列：`{part, state: running|done|failed|skipped, seconds, inputTokens, outputTokens, model, files, fixed?}`。套用的回應多 `subagents` 與 `contractGaps`。`GET /api/config` 多 `subagents`（布林值）。
 - token 用量照常逐次計入每月上限；兩個 subagent 各算一次呼叫。
 - 本機模型伺服器要能同時處理兩個請求才會變快（Ollama：`OLLAMA_NUM_PARALLEL`）；不行時設 `false` 回到單次呼叫。
+- 實測（v0.1.24，同一句需求，各一次）：Anthropic `claude-sonnet-5-5`，待辦清單 subagent 25 秒、單次 30 秒；三分頁早餐店 56 秒、82 秒。本機 Ollama 單一 GPU 兩者相同（46、47 秒）：同時兩個請求只是分用同一份算力。
+
+### 請教更強的模型（advisor，v0.1.25）
+
+設了 `LAOBAN_AI_ADVISOR_MODEL` 時，每次 AI 呼叫（計畫、每個 subagent、修正）都帶 Messages API 的 advisor 工具（`advisor_20260301`，beta `advisor-tool-2026-03-01`）：執行的模型在同一次請求裡自己決定要不要先問更強的模型（每次最多 1 次、每次輸出上限 8,000 token），系統提示說明什麼時候值得問。advisor 的建議是加密的，laoban 看不到內容，只取最後的文字答案。回應以 `pause_turn` 結束時（advisor 還在跑），原封帶回 assistant 內容再送，最多 4 次。advisor 的 token 在 `usage.iterations` 的 `advisor_message`，不在最上層的用量裡：laoban 把它們也算進每月上限（預留時也先算進 advisor 的上限），以 advisor 模型的價格計費。subagent 卡片標出「請教了哪個模型、用了多少 token」，總覽的設定區列出 advisor 模型。
 
 ## 產生的應用（固定範本，不由 AI 產生）
 
@@ -349,6 +354,7 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 | `LAOBAN_AI_BASE_URL` | 選用。相容 Anthropic Messages API 的端點（例如 Mac 上的 Ollama），只寫 scheme、主機與 port；不設就是 Anthropic API |
 | `LAOBAN_AI_TIMEOUT_SECONDS` | 單次 AI 呼叫上限，30～1800，預設 300 |
 | `LAOBAN_AI_SUBAGENTS` | `true`（預設）：網頁與 API 由兩個 subagent 同時寫（見「分工 AI」）；`false`：一次呼叫寫四個檔。chart 的 `ai.subagents`（v0.1.24） |
+| `LAOBAN_AI_ADVISOR_MODEL` | 選用。每次 AI 呼叫可以請教的更強模型（Messages API 的 advisor 工具），例如 `LAOBAN_MODEL=claude-sonnet-5-5` 搭 `claude-opus-5-5`；只能用在 Anthropic API（設了 `LAOBAN_AI_BASE_URL` 時拒絕啟動）。chart 的 `ai.advisorModel`（v0.1.25） |
 | `LAOBAN_TOKEN_CAP` | 每月 token 上限，預設 2,000,000；v0.1.19 起每個 UTC 月份的用量存在 `TokenUsage` 資源（`tokens-YYYY-MM`），重啟不歸零 |
 | `LAOBAN_GITHUB_REPO` | `<owner>/<repo>` |
 | `LAOBAN_GITHUB_TOKEN` | 從 Secret 注入 |
