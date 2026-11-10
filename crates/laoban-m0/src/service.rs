@@ -809,7 +809,7 @@ impl M0Service {
         }
         let job_id = id.clone();
         self.in_background("laoban-job", move |s| {
-            let result = work(s);
+            let result = guarded("job", || work(s));
             s.finish_job(&job_id, result);
         });
         self.job(&id, Some(&user))
@@ -2603,32 +2603,34 @@ impl M0Service {
                 _ => return,
             }
         };
-        let result = self.latest_commit(app).and_then(|base_commit| {
-            let start = if start_commit.is_empty() || start_commit == base_commit {
-                None
-            } else {
-                Some(self.load_version(app, &start_commit)?.files)
-            };
-            let body = PlanRequestBody {
-                prompt: request,
-                app_name: None,
-                base_app: Some(app.to_string()),
-                background: false,
-            };
-            let v = self.plan_with(
-                &body,
-                Some(&initiator),
-                Some(RoundInput {
-                    label,
-                    start,
-                    base_commit: Some(base_commit.clone()),
-                    scope,
-                }),
-                // The round's text, its framing, and the plan steps the
-                // comments are on (not counted in the round's space).
-                rounds::MAX_ROUND_CHARS + 2_000 + overhead,
-            )?;
-            Ok((v, base_commit))
+        let result = guarded("converge", || {
+            self.latest_commit(app).and_then(|base_commit| {
+                let start = if start_commit.is_empty() || start_commit == base_commit {
+                    None
+                } else {
+                    Some(self.load_version(app, &start_commit)?.files)
+                };
+                let body = PlanRequestBody {
+                    prompt: request,
+                    app_name: None,
+                    base_app: Some(app.to_string()),
+                    background: false,
+                };
+                let v = self.plan_with(
+                    &body,
+                    Some(&initiator),
+                    Some(RoundInput {
+                        label,
+                        start,
+                        base_commit: Some(base_commit.clone()),
+                        scope,
+                    }),
+                    // The round's text, its framing, and the plan steps the
+                    // comments are on (not counted in the round's space).
+                    rounds::MAX_ROUND_CHARS + 2_000 + overhead,
+                )?;
+                Ok((v, base_commit))
+            })
         });
         let at = time::rfc3339(SystemTime::now());
         let mut rs = self.rounds();
@@ -2745,9 +2747,10 @@ impl M0Service {
         plan_id: &str,
         initiator: &str,
     ) -> Option<Value> {
-        let result = self
-            .ensure_round_plan(app, round_id, plan_id)
-            .and_then(|()| self.apply_plan(plan_id, Some(initiator), true));
+        let result = guarded("publish", || {
+            self.ensure_round_plan(app, round_id, plan_id)
+                .and_then(|()| self.apply_plan(plan_id, Some(initiator), true))
+        });
         let at = time::rfc3339(SystemTime::now());
         let mut rs = self.rounds();
         self.update_round(&mut rs, app, round_id, |r| match &result {
@@ -3116,6 +3119,21 @@ fn fail_with(r: &mut Round, e: &M0Error, at: &str) {
     r.fail_coded(code, &args, &e.user_message(), at);
 }
 
+/// Run background work so that a bug in it (a panic) ends as an internal
+/// error the round or job records, instead of stopping the thread and
+/// leaving the round "applying" or the job "running" for good (lab,
+/// team-board, v0.1.27-dev). Locks are taken with `into_inner` on poison
+/// throughout, so a panic does not block later requests.
+fn guarded<T>(what: &str, work: impl FnOnce() -> Result<T, M0Error>) -> Result<T, M0Error> {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(work)) {
+        Ok(result) => result,
+        Err(_) => {
+            eprintln!("laoban-m0: {what} stopped by an internal error (panic); recorded as failed");
+            Err(M0Error::Internal(format!("{what} panicked")))
+        }
+    }
+}
+
 fn require_user(user: Option<&str>) -> Result<&str, M0Error> {
     user.filter(|u| !u.is_empty())
         .ok_or(M0Error::Unauthenticated)
@@ -3261,6 +3279,16 @@ fn unix(t: SystemTime) -> u64 {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_panic_in_background_work_is_an_internal_error() {
+        let r: Result<(), super::M0Error> = super::guarded("test", || panic!("boom"));
+        assert_eq!(r.unwrap_err().code(), "internal");
+        assert_eq!(
+            super::guarded("test", || Ok::<_, super::M0Error>(7)).unwrap(),
+            7
+        );
+    }
 
     #[test]
     fn examples_filled_in_later_are_not_an_api_change() {
