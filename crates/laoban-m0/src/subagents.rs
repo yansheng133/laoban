@@ -34,8 +34,9 @@ Respond with exactly one JSON object and nothing else (no Markdown fences), with
 Rules:
 - app.js must call the API with relative URLs only: `api/<endpoint path without the leading slash>`, for example fetch("api/orders"). Never use absolute URLs or a leading slash, because the page is served under a proxy sub-path. Send input as a JSON body (Content-Type: application/json), never in the query string.
 - index.html must load style.css and app.js with relative URLs ("style.css", "app.js") and no external resources (no CDNs, fonts or analytics).
+- Attach event handlers in app.js with addEventListener, never with inline attributes such as onclick (functions inside app.js are not global).
 - Show the API's error responses to the user instead of failing silently.
-- Text shown to users is in the same language as the app description.
+- Text shown to users is in the same language as the app description, with the same script and regional wording (for example Traditional Chinese as written in Taiwan when the description is written that way).
 - Each file at most 60000 bytes."#;
 
 /// For the API subagent.
@@ -44,7 +45,7 @@ Respond with exactly one JSON object and nothing else (no Markdown fences), with
 {"api": {"handler.py": string}}
 Rules:
 - handler.py must define `def handle(method: str, path: str, body: bytes) -> tuple[int, dict]`. `path` is the request path without the api/ prefix and without the query string, for example "/orders"; input comes as a JSON body. Return (HTTP status, JSON-serializable dict). Implement every endpoint of the plan, and answer other paths with 404 and other methods with 405. Import only the Python standard library. Keep all data in module-level variables (in memory). Requests are handled one at a time.
-- Error messages in responses are in the same language as the app description.
+- Error messages in responses are in the same language as the app description, with the same script and regional wording.
 - At most 60000 bytes."#;
 
 /// Added to a subagent's instructions when an existing app is changed.
