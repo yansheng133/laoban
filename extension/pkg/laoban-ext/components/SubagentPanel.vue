@@ -106,6 +106,12 @@ export default defineComponent({
           {{ t('laoban.subagents.fixed') }}
         </div>
         <div
+          v-if="r.advisorModel"
+          class="laoban-subagent-fixed text-muted"
+        >
+          {{ t('laoban.subagents.advisor', { model: r.advisorModel, tokens: formatNumber(r.advisorTokens) }) }}
+        </div>
+        <div
           v-if="r.state === 'done'"
           class="laoban-subagent-usage text-muted"
         >
@@ -124,9 +130,9 @@ export default defineComponent({
       <ul>
         <li
           v-for="g in gaps"
-          :key="`${ g.kind }:${ g.path }`"
+          :key="`${ g.kind }:${ g.method }:${ g.path }`"
         >
-          {{ t(`laoban.subagents.gap.${ g.kind }`, { path: g.path }) }}
+          {{ t(`laoban.subagents.gap.${ g.kind }`, { path: `${ g.method || '' } ${ g.path }`.trim() }) }}
         </li>
       </ul>
       <p class="text-muted">

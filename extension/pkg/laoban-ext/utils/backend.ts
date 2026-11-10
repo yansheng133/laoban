@@ -19,6 +19,16 @@ export interface StoreLike {
   getters?: Record<string, unknown>;
 }
 
+// One API endpoint of a plan, with the request and response examples
+// (compact JSON, '' when the plan has none) the web and the API are written from.
+export interface PlanEndpoint {
+  method: string;
+  path: string;
+  purpose?: string;
+  request?: string;
+  response?: string;
+}
+
 export interface PlanResponse {
   planId: string;
   // 'edit' when the plan changes an existing app (baseApp).
@@ -27,6 +37,8 @@ export interface PlanResponse {
   summary: string;
   steps: string[];
   architecture: Architecture;
+  // The API contract (review H3).
+  endpoints?: PlanEndpoint[];
   maskedFindings?: number;
   usage?: { inputTokens?: number; outputTokens?: number };
   // The AI model that made the plan.
@@ -47,11 +59,16 @@ export interface SubagentRun {
   files: string[];
   // It ran a second time to fix what the contract check found.
   fixed?: boolean;
+  // The more capable model it consulted (advisor tool), and its tokens.
+  advisorModel?: string;
+  advisorTokens?: number;
 }
 
 // A place where the web and the API code seem to disagree with the plan.
 export interface ContractGap {
   kind: 'apiMissing' | 'unknownCall';
+  // HTTP method; '' when the web page does not say which.
+  method: string;
   path: string;
 }
 
@@ -131,7 +148,7 @@ export interface RoundView {
   latestDeadline?: number;
   opinions: RoundOpinion[];
   confirmers: { user: string; answer: 'pending' | 'confirmed' | 'skipped'; at?: string }[];
-  plan: { planId: string; summary: string; steps: string[]; architecture: Architecture; notes?: string } | null;
+  plan: { planId: string; summary: string; steps: string[]; architecture: Architecture; notes?: string; endpoints?: PlanEndpoint[] } | null;
   message: string;
   // The failure as a code the page translates (laoban.round.failures.*).
   messageCode?: string;
@@ -279,6 +296,8 @@ export interface ConfigResponse {
   tokenBudget: { cap: number; used: number };
   // true: the code is written by a web and an API subagent at the same time.
   subagents?: boolean;
+  // Model every AI call may consult (advisor tool); null: none.
+  advisorModel?: string | null;
   // Seconds the backend waits for one AI call (LAOBAN_AI_TIMEOUT_SECONDS).
   aiTimeoutSeconds?: number;
 }

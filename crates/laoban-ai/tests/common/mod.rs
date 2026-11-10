@@ -40,6 +40,7 @@ pub fn plan_json(cluster: &str, kind: &str) -> String {
 
 pub fn ok_response(content: &str) -> ProviderResponse {
     ProviderResponse {
+        advisor: None,
         content: content.to_string(),
         input_tokens: 100,
         output_tokens: 50,
@@ -65,6 +66,7 @@ pub fn config() -> OrchestratorConfig {
         plan_policy: PlanPolicy::default(),
         system_prompt: "You are laoban's planning assistant.".into(),
         max_tokens: 1_000,
+        advisor: None,
     }
 }
 

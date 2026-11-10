@@ -103,6 +103,8 @@ pub enum PlanError {
     Truncated,
     #[error("model refused the request")]
     Refused,
+    #[error("the answer was not finished (advisor consultation not completed)")]
+    Incomplete,
     #[error("plan touches a different cluster `{found}` (target is `{target}`)")]
     WrongCluster { target: String, found: String },
     #[error("plan touches a denied kind `{kind}`")]

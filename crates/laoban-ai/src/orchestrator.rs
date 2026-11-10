@@ -20,7 +20,9 @@ use crate::prompt::{
     boundary_from_nonce, data_block_preamble, render_blocks, security_preamble, BoundaryGenerator,
     DataBlock, PromptError,
 };
-use crate::provider::{Message, Provider, ProviderRequest, ProviderResponse, Role, StopReason};
+use crate::provider::{
+    Advisor, AdvisorUsage, Message, Provider, ProviderRequest, ProviderResponse, Role, StopReason,
+};
 use crate::retry::{backoff_delay, RetryPolicy, Sleeper};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,7 +37,17 @@ pub struct OrchestratorConfig {
     #[serde(default)]
     pub system_prompt: String,
     pub max_tokens: u32,
+    /// A more capable model every request may consult (the advisor tool).
+    #[serde(default)]
+    pub advisor: Option<Advisor>,
 }
+
+/// Told to the model when it has an advisor. The executor model decides
+/// when to call it (forced tool choice is not available on current models),
+/// and a "consult when needed" wording made it skip the advisor every time
+/// in the lab (2026-11-10, Sonnet 5.5 + Opus 5.5): an administrator who sets
+/// an advisor wants it asked, so the wording asks for one consultation.
+pub const ADVISOR_INSTRUCTIONS: &str = "An advisor tool backed by a more capable model is available. Consult it once before you write the answer: describe the task and your intended design (for code, how its parts fit together and the request and response shapes), then follow its advice. Its advice is for you; follow the response format above regardless.";
 
 /// Collaborators, injected so tests can replace every side effect.
 pub struct Dependencies {
@@ -103,6 +115,8 @@ pub struct Completion {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub attempts: u32,
+    /// What the advisor used, when the model consulted it.
+    pub advisor: Option<AdvisorUsage>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -190,13 +204,15 @@ impl Orchestrator {
 
         let admin = self.mask(&self.config.system_prompt);
         let preamble = security_preamble(&boundary);
-        let system = if admin.trim().is_empty() {
+        let mut system = if admin.trim().is_empty() {
             preamble
         } else {
             format!("{admin}\n\n{preamble}")
         };
+        self.add_advisor_instructions(&mut system);
 
         Ok(ProviderRequest {
+            advisor: self.config.advisor.clone(),
             model,
             system,
             messages: vec![Message {
@@ -257,8 +273,10 @@ impl Orchestrator {
         }
         system.push_str(&data_block_preamble(&boundary));
         system.push_str(&req.instructions);
+        self.add_advisor_instructions(&mut system);
 
         Ok(ProviderRequest {
+            advisor: self.config.advisor.clone(),
             model,
             system,
             messages: vec![Message {
@@ -284,7 +302,15 @@ impl Orchestrator {
             input_tokens: response.input_tokens,
             output_tokens: response.output_tokens,
             attempts,
+            advisor: response.advisor,
         })
+    }
+
+    fn add_advisor_instructions(&self, system: &mut String) {
+        if self.config.advisor.is_some() {
+            system.push_str("\n\n");
+            system.push_str(ADVISOR_INSTRUCTIONS);
+        }
     }
 
     /// Budget, audit, send and retry. Rejects truncated and refused
@@ -301,7 +327,12 @@ impl Orchestrator {
             .map(|m| m.content.as_str())
             .collect();
         let estimated_input = estimate_tokens(&request.system) + estimate_tokens(&user_content);
-        let reserve_amount = estimated_input + u64::from(request.max_tokens);
+        // An advisor reads about the same transcript and writes at most its
+        // own cap, once per allowed consultation.
+        let advisor_reserve = request.advisor.as_ref().map_or(0, |a| {
+            u64::from(a.max_uses) * (estimated_input + u64::from(a.max_tokens))
+        });
+        let reserve_amount = estimated_input + u64::from(request.max_tokens) + advisor_reserve;
 
         let policy = &self.config.retry;
         let mut attempt: u32 = 0;
@@ -320,7 +351,11 @@ impl Orchestrator {
             });
             match self.deps.provider.send(request) {
                 Ok(resp) => {
-                    reservation.settle(resp.input_tokens + resp.output_tokens);
+                    let advisor_tokens = resp
+                        .advisor
+                        .as_ref()
+                        .map_or(0, |a| a.input_tokens + a.output_tokens);
+                    reservation.settle(resp.input_tokens + resp.output_tokens + advisor_tokens);
                     self.deps.audit.record(AiAuditEvent::Response {
                         principal: principal.to_string(),
                         model: model.to_string(),
@@ -360,6 +395,9 @@ impl Orchestrator {
         match response.stop_reason {
             StopReason::MaxTokens => return Err(PlanError::Truncated.into()),
             StopReason::Refusal => return Err(PlanError::Refused.into()),
+            // Its tokens were settled above; not retried (the advisor may
+            // have been asked already).
+            StopReason::Incomplete => return Err(PlanError::Incomplete.into()),
             _ => {}
         }
         Ok((response, attempt))

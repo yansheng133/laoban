@@ -84,6 +84,8 @@ describe('l10n', () => {
     expect(bad('ja', /(?<!試食)版/)).toEqual([]);
     // Taiwan wording: 開啟 (not 打開), 有異議 for objecting.
     expect(bad('zh-hant', /打開|(?<!所)有意見/)).toEqual([]);
+    // 分工 AI, not the English word (review L2).
+    expect(bad('zh-hant', /subagent/i)).toEqual([]);
   });
 
   it('has no punctuation of one language fixed in the templates', () => {

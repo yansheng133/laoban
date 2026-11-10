@@ -56,6 +56,7 @@ fn settings() -> M0Settings {
         app_url: None,
         app_network_policy: false,
         ai_subagents: false,
+        ai_advisor_model: None,
     }
 }
 

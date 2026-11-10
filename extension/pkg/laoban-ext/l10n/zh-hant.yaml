@@ -275,24 +275,31 @@ laoban:
     listSep: "、"
     withNote: "{text}（{note}）"
     labelValue: "{label}：{value}"
+  contract:
+    title: "API 約定（{count} 個端點）"
+    hint: "網頁和 API 會照這些請求與回應範例來寫。請確認欄位名稱符合你的需求。"
+    request: "請求內容"
+    response: "回應"
+    none: "（無）"
   subagents:
-    title: "分工 AI（subagent）"
-    hintBoth: "兩個 subagent 依同一份計畫，同時寫網頁和 API；計畫裡的 API 端點清單就是雙方的約定。"
+    title: "分工 AI"
+    hintBoth: "兩個分工 AI 依同一份計畫，同時寫網頁和 API；計畫裡的 API 約定（端點與請求、回應範例）就是雙方共同遵守的規格。"
     hintOne: "只重寫這一輪要改的部分，另一部分維持原樣。"
     part:
-      web: "網頁 subagent"
-      api: "API subagent"
+      web: "網頁分工 AI"
+      api: "API 分工 AI"
     state:
       running: "撰寫中…（已 {seconds} 秒）"
       done: "完成，花了 {seconds} 秒"
       failed: "失敗（{seconds} 秒）"
       skipped: "不需要重寫，維持原樣"
     fixed: "和計畫比對後，修正過一次"
+    advisor: "請教了 {model}（{tokens} 個 token）"
     usage: "輸入 {input}、輸出 {output} 個 token"
     gapsTitle: "網頁和 API 可能和計畫對不上："
     gap:
       apiMissing: "API 似乎沒有處理 {path}。"
-      unknownCall: "網頁呼叫了計畫裡沒有的 api{path}。"
+      unknownCall: "網頁呼叫了計畫裡沒有的 {path}。"
     gapsHint: "這項檢查只比對程式的文字，可能誤判；新版本已照常發布。應用有問題時，請開一輪意見收斂描述狀況。"
   errors:
     app_exists: "已經有同名的應用。要修改它，請在應用清單按「編輯」；要另外建立，請換一個名稱。"
@@ -444,8 +451,9 @@ laoban:
       tokenBudget: Token 用量
       tokenUsage: "{used} / {cap}"
       subagents: "寫程式"
-      subagentsOn: "2 個 subagent 同時進行"
+      subagentsOn: "2 個分工 AI 同時進行"
       subagentsOff: "單次 AI 呼叫"
+      advisor: "顧問模型"
       unavailable: 無法讀取 laoban 後端設定。
     chat:
       title: 需求

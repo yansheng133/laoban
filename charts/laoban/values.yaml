@@ -125,6 +125,13 @@ ai:
   # only touches one part rewrites only that part. A local model server must
   # accept two requests at once to gain from it (Ollama: OLLAMA_NUM_PARALLEL).
   subagents: true
+  # A more capable model every AI call may consult mid-answer, with the
+  # Messages API advisor tool (LAOBAN_AI_ADVISOR_MODEL); empty: none. The
+  # model decides when to ask (at most once per call); its tokens count
+  # against config.tokenCap and are billed at that model's rates. Anthropic
+  # API only, and it must be a valid advisor for config.model, for example
+  # claude-opus-5-5 with claude-sonnet-5-5.
+  advisorModel: ""
 
 # Anthropic API key, read from an existing Secret. Never put the key here.
 anthropic:

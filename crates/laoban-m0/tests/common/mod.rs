@@ -41,6 +41,7 @@ pub fn settings(token_cap: u64) -> M0Settings {
         app_url: None,
         app_network_policy: false,
         ai_subagents: false,
+        ai_advisor_model: None,
     }
 }
 
@@ -382,6 +383,7 @@ pub fn committer(server: &MockServer) -> GithubCommitter {
 
 pub fn ok(content: &str) -> Result<ProviderResponse, laoban_ai::ProviderError> {
     Ok(ProviderResponse {
+        advisor: None,
         content: content.to_string(),
         input_tokens: 120,
         output_tokens: 80,

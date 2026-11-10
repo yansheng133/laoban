@@ -299,6 +299,10 @@ pub struct RoundPlan {
     /// The AI's notes: opinions not followed, or why nothing changes.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub notes: String,
+    /// The API endpoints with their request and response examples: the
+    /// contract the code is written from, shown to those who confirm.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub endpoints: Vec<crate::plan::Endpoint>,
 }
 
 /// What writing the code for a round's plan needs, kept with the round so
@@ -1582,6 +1586,7 @@ mod tests {
             steps: vec!["x".into()],
             architecture: serde_json::json!({}),
             notes: String::new(),
+            endpoints: Vec::new(),
         }
     }
 

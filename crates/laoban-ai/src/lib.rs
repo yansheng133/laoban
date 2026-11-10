@@ -42,6 +42,7 @@ pub use plan::{
 };
 pub use prompt::{BoundaryGenerator, FixedBoundary, PromptError, RandomBoundary};
 pub use provider::{
-    Message, MockProvider, Provider, ProviderRequest, ProviderResponse, Role, StopReason,
+    Advisor, AdvisorUsage, Message, MockProvider, Provider, ProviderRequest, ProviderResponse,
+    Role, StopReason,
 };
 pub use retry::{backoff_delay, RecordingSleeper, RetryPolicy, Sleeper, ThreadSleeper};

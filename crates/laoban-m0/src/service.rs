@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use laoban_ai::{
-    AiError, BudgetError, CompletionRequest, Dependencies, ModelSelection, Orchestrator,
+    Advisor, AiError, BudgetError, CompletionRequest, Dependencies, ModelSelection, Orchestrator,
     OrchestratorConfig, PlanError, PlanPolicy, Provider, ProviderError, RandomBoundary,
     RetryPolicy, ThreadSleeper, TokenBudget, UntrustedBlock, UtcMonthClock,
 };
@@ -57,6 +57,9 @@ pub const PLAN_MAX_TOKENS: u32 = 4_096;
 /// `max_tokens` for the code call. Four files of a small app fit well
 /// within this; a truncated response is rejected, never committed.
 pub const CODEGEN_MAX_TOKENS: u32 = 16_000;
+/// Advisor consultations per AI call, and the output cap of each.
+pub const ADVISOR_MAX_USES: u32 = 1;
+pub const ADVISOR_MAX_TOKENS: u32 = 8_000;
 /// Largest current code (four files together) sent along when an app is
 /// changed. Keeps the request inside a 32k-token local model context
 /// together with the plan and `CODEGEN_MAX_TOKENS` of output.
@@ -620,6 +623,10 @@ impl From<AiError> for M0Error {
             AiError::Plan(PlanError::Refused) => {
                 M0Error::AiInvalidOutput(InvalidOutput("model refused".into()))
             }
+            AiError::Plan(PlanError::Incomplete) => M0Error::AiUnavailable(tr(
+                "The AI could not finish its answer (the consultation with the advisor model was interrupted). Try again.",
+                "AI 沒能完成回答（向顧問模型請教的過程中斷），請再試一次。",
+            )),
             AiError::Plan(other) => M0Error::AiInvalidOutput(InvalidOutput(other.to_string())),
             AiError::Mask(_) | AiError::Model(_) | AiError::Prompt(_) => {
                 M0Error::Internal(e.to_string())
@@ -627,6 +634,9 @@ impl From<AiError> for M0Error {
         }
     }
 }
+
+/// One subagent's answer: the files of its part and the model, or why it failed.
+type SubagentAnswer = Result<(Value, String), M0Error>;
 
 pub struct M0Service {
     settings: M0Settings,
@@ -698,6 +708,11 @@ impl M0Service {
                 plan_policy: PlanPolicy::default(),
                 system_prompt: SYSTEM_PROMPT.into(),
                 max_tokens: PLAN_MAX_TOKENS,
+                advisor: settings.ai_advisor_model.clone().map(|model| Advisor {
+                    model,
+                    max_uses: ADVISOR_MAX_USES,
+                    max_tokens: ADVISOR_MAX_TOKENS,
+                }),
             },
             Dependencies {
                 provider,
@@ -959,6 +974,7 @@ impl M0Service {
             "repo": self.settings.repo(),
             "tokenBudget": { "cap": self.budget.cap(), "used": self.budget.used() },
             "subagents": self.settings.ai_subagents,
+            "advisorModel": self.settings.ai_advisor_model,
             "aiTimeoutSeconds": self.settings.ai_timeout_secs,
             "roundLimits": self.round_limits,
             "roundsAvailable": self.rounds_ready(),
@@ -1150,6 +1166,9 @@ impl M0Service {
             "summary": plan.summary,
             "steps": plan.steps,
             "architecture": arch,
+            // The contract between the web and the API, for those who
+            // confirm the plan (review H3).
+            "endpoints": plan.endpoints,
             "maskedFindings": masked.findings.len(),
             "changedParts": parts,
             "notes": plan.notes,
@@ -1518,7 +1537,10 @@ impl M0Service {
             requests.push((part, self.subagent_request(stored, plan_json, edits, part)?));
         }
         let started = Instant::now();
-        let mut answers = self.run_subagents(app, started, requests, false)?;
+        let mut answers = Vec::new();
+        for (part, r) in self.run_subagents(app, started, requests, false) {
+            answers.push(r.map(|(v, m)| (part, v, m))?);
+        }
         let model = answers.first().map(|a| a.2.clone()).unwrap_or_default();
         let keep = stored.base.as_ref().map(|b| &b.files);
         let take = |answers: &[(Part, Value, String)], p: Part| {
@@ -1540,30 +1562,56 @@ impl M0Service {
             for &part in &to_fix {
                 let first = take(&answers, part).unwrap_or_default();
                 requests.push((part, self.fix_request(plan_json, part, &first, &gaps)?));
-                self.update_run(app, part, started, |run| {
-                    run.state = "running";
-                    run.fixed = true;
-                });
+                self.update_run(app, part, started, |run| run.state = "running");
             }
-            // A failed fix keeps the first answer: it was valid code, and
-            // the gaps are still shown with the version.
-            match self.run_subagents(app, started, requests, true) {
-                Ok(fixed) => {
-                    for a in fixed {
-                        answers.retain(|b| b.0 != a.0);
-                        answers.push(a);
-                    }
-                    match assemble(take(&answers, Part::Web), take(&answers, Part::Api), keep) {
-                        Ok(f) => files = f,
-                        Err(e) => eprintln!("laoban: subagent fix of {app} not used: {}", e.0),
+            // Each part's fix is taken on its own (review H4): a failed fix
+            // keeps that part's first answer, which was valid code, and does
+            // not throw away the other part's fix.
+            let mut fixed: Vec<(Part, Value, String)> = Vec::new();
+            for (part, r) in self.run_subagents(app, started, requests, true) {
+                match r {
+                    Ok((v, m)) => fixed.push((part, v, m)),
+                    Err(e) => log_failure("subagent fix", &format!("{app} {}", part.name()), &e),
+                }
+            }
+            // The fixes that still pass the file checks together, else one
+            // at a time.
+            let with = |use_parts: &[Part]| {
+                let mut a = answers.clone();
+                for f in fixed.iter().filter(|f| use_parts.contains(&f.0)) {
+                    a.retain(|b| b.0 != f.0);
+                    a.push(f.clone());
+                }
+                assemble(take(&a, Part::Web), take(&a, Part::Api), keep)
+            };
+            let all: Vec<Part> = fixed.iter().map(|f| f.0).collect();
+            let mut adopted: Vec<Part> = Vec::new();
+            if let Ok(f) = with(&all) {
+                files = f;
+                adopted = all.clone();
+            } else {
+                for &p in &all {
+                    if let Ok(f) = with(&[p]) {
+                        files = f;
+                        adopted = vec![p];
+                        break;
                     }
                 }
-                Err(e) => {
-                    log_failure("subagent fix", app, &e);
-                    for &part in &to_fix {
-                        self.update_run(app, part, started, |run| run.state = "done");
-                    }
-                }
+            }
+            if adopted.len() < all.len() {
+                eprintln!(
+                    "laoban: subagent fix of {app}: {} of {} fixes used",
+                    adopted.len(),
+                    all.len()
+                );
+            }
+            // "Fixed once" only for a part whose fix is in the files.
+            for &part in &to_fix {
+                let used = adopted.contains(&part);
+                self.update_run(app, part, started, |run| {
+                    run.state = "done";
+                    run.fixed = used;
+                });
             }
         }
         if let Some(r) = self
@@ -1578,16 +1626,16 @@ impl M0Service {
     }
 
     /// Run one subagent per request at the same time and read each answer
-    /// as its part. Returns (part, files of the part, model) for every
-    /// request, or the first failure. `again`: a fix, whose tokens add to
-    /// the first run's.
+    /// as its part: (part, files of the part and model, or why it failed)
+    /// for every request. `again`: a fix, whose tokens add to the first
+    /// run's.
     fn run_subagents(
         &self,
         app: &str,
         started: Instant,
         requests: Vec<(Part, CompletionRequest)>,
         again: bool,
-    ) -> Result<Vec<(Part, Value, String)>, M0Error> {
+    ) -> Vec<(Part, SubagentAnswer)> {
         let results: Vec<(Part, Result<laoban_ai::Completion, M0Error>)> =
             std::thread::scope(|scope| {
                 let handles: Vec<_> = requests
@@ -1606,6 +1654,10 @@ impl M0Service {
                                         run.output_tokens = c.output_tokens;
                                     }
                                     run.model = c.model.clone();
+                                    if let Some(a) = &c.advisor {
+                                        run.advisor_model = a.model.clone();
+                                        run.advisor_tokens += a.input_tokens + a.output_tokens;
+                                    }
                                 }
                                 Err(_) => run.state = "failed",
                             });
@@ -1627,25 +1679,20 @@ impl M0Service {
                     })
                     .collect()
             });
-        let mut out = Vec::new();
-        let mut first_error = None;
-        for (part, r) in results {
-            match r.and_then(|c| {
-                parse_part(&c.content, part)
-                    .map(|v| (v, c.model))
-                    .map_err(M0Error::AiInvalidOutput)
-            }) {
-                Ok((v, model)) => out.push((part, v, model)),
-                Err(e) => {
+        results
+            .into_iter()
+            .map(|(part, r)| {
+                let parsed = r.and_then(|c| {
+                    parse_part(&c.content, part)
+                        .map(|v| (v, c.model))
+                        .map_err(M0Error::AiInvalidOutput)
+                });
+                if parsed.is_err() {
                     self.update_run(app, part, started, |run| run.state = "failed");
-                    first_error.get_or_insert(e);
                 }
-            }
-        }
-        match first_error {
-            Some(e) => Err(e),
-            None => Ok(out),
-        }
+                (part, parsed)
+            })
+            .collect()
     }
 
     /// The request of a subagent's fix: the plan, its first answer as the
@@ -2610,6 +2657,7 @@ impl M0Service {
                         .unwrap_or_default(),
                     architecture: v["architecture"].clone(),
                     notes: v["notes"].as_str().unwrap_or_default().to_string(),
+                    endpoints: serde_json::from_value(v["endpoints"].clone()).unwrap_or_default(),
                 };
                 let recipe = self.lock_store().get(&plan_id).map(|p| PlanRecipe {
                     plan: p.plan,
@@ -3006,10 +3054,26 @@ fn changed_parts(old: &crate::plan::AppPlan, new: &crate::plan::AppPlan) -> Vec<
     if old.web_modules != new.web_modules {
         parts.push(Part::Web);
     }
-    if old.api_modules != new.api_modules || old.endpoints != new.endpoints {
+    if old.api_modules != new.api_modules || !same_endpoints(&old.endpoints, &new.endpoints) {
         parts.push(Part::Api);
     }
     parts
+}
+
+/// The same endpoints, where an example the old plan did not have yet (a
+/// plan made before v0.1.24) does not count as a change (review M6): the
+/// AI fills it in, and it would otherwise send every old app's web-only
+/// round to both subagents.
+fn same_endpoints(old: &[crate::plan::Endpoint], new: &[crate::plan::Endpoint]) -> bool {
+    let same_example = |o: &str, n: &str| o.is_empty() || o == n;
+    old.len() == new.len()
+        && old.iter().zip(new).all(|(o, n)| {
+            o.method == n.method
+                && o.path == n.path
+                && o.purpose == n.purpose
+                && same_example(&o.request, &n.request)
+                && same_example(&o.response, &n.response)
+        })
 }
 
 /// A user-facing reason for hand-edited files failing the checks.
@@ -3097,6 +3161,29 @@ fn unix(t: SystemTime) -> u64 {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn examples_filled_in_later_are_not_an_api_change() {
+        let ep = |req: &str, resp: &str| crate::plan::Endpoint {
+            method: "GET".into(),
+            path: "/menu".into(),
+            purpose: "p".into(),
+            request: req.into(),
+            response: resp.into(),
+        };
+        // An old plan without examples, the new one with: the same.
+        assert!(same_endpoints(&[ep("", "")], &[ep("", r#"{"items":[]}"#)]));
+        // A changed example, path or count: different.
+        assert!(!same_endpoints(
+            &[ep("", r#"{"a":1}"#)],
+            &[ep("", r#"{"b":1}"#)]
+        ));
+        let mut other = ep("", "");
+        other.path = "/menus".into();
+        assert!(!same_endpoints(&[ep("", "")], &[other]));
+        assert!(!same_endpoints(&[ep("", "")], &[ep("", ""), ep("", "")]));
+    }
+
     use super::*;
 
     #[test]
