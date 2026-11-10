@@ -565,3 +565,83 @@ fn background_failure_is_recorded_on_the_round() {
         .is_some_and(|m| !m.is_empty()));
     assert!(v.get("applied").is_none());
 }
+
+/// The AI's plan for a web-only opinion that also rewords the API modules
+/// (as it did for apps whose modules were file names, lab 2026-11-10) and
+/// fills in endpoint examples; `extra` adds an endpoint.
+fn reworded_plan(extra: bool) -> String {
+    let mut p: Value = serde_json::from_str(&changed_plan()).unwrap();
+    p["components"]["api"]["modules"] =
+        json!([{"name": "訂單處理", "purpose": "保存訂單並提供查詢"}]);
+    let eps = p["components"]["api"]["endpoints"].as_array_mut().unwrap();
+    eps[0]["response"] = json!("{\"items\":[{\"id\":\"1\",\"name\":\"蛋餅\"}]}");
+    eps[1]["request"] = json!("{\"item_id\":\"1\"}");
+    if extra {
+        eps.push(json!({"method": "DELETE", "path": "/orders/{id}", "purpose": "取消訂單"}));
+    }
+    p.to_string()
+}
+
+fn api_module_names(h: &Harness) -> Vec<String> {
+    let blobs = blob_contents(&h.github);
+    let m = meta::parse("todo", &blobs[6]).unwrap();
+    m.plan.api_modules.iter().map(|m| m.name.clone()).collect()
+}
+
+#[test]
+fn a_web_round_keeps_the_api_part_when_its_endpoints_stay() {
+    let provider = MockProvider::new()
+        .then(ok(&reworded_plan(false)))
+        .then(ok(&changed_files()));
+    let h = harness_with(provider, RefUpdate::Ok, 1_000_000, todo_app());
+    let v = h
+        .service
+        .open_round("todo", &open(0, "web"), Some("u-a"))
+        .unwrap();
+    assert_eq!(state(&v), "confirming");
+    assert_eq!(
+        v["round"]["scope"],
+        json!(["web"]),
+        "rewording alone does not widen"
+    );
+    let sent = h.provider.received();
+    assert!(sent[0].system.contains("even when a name is a file name"));
+    h.service.confirm_round("todo", Some("u-a")).unwrap();
+    assert_eq!(
+        api_module_names(&h),
+        ["orders"],
+        "the API part is kept as it was"
+    );
+}
+
+#[test]
+fn a_web_round_widens_when_the_endpoints_change() {
+    let provider = MockProvider::new()
+        .then(ok(&reworded_plan(true)))
+        .then(ok(&changed_files()));
+    let h = harness_with(provider, RefUpdate::Ok, 1_000_000, todo_app());
+    let v = h
+        .service
+        .open_round("todo", &open(0, "web"), Some("u-a"))
+        .unwrap();
+    assert_eq!(v["round"]["scope"], json!(["web", "api"]));
+    h.service.confirm_round("todo", Some("u-a")).unwrap();
+    assert_eq!(
+        api_module_names(&h),
+        ["訂單處理"],
+        "a real API change keeps the AI's plan"
+    );
+}
+
+#[test]
+fn a_round_on_the_whole_app_keeps_the_ai_api_modules() {
+    let provider = MockProvider::new()
+        .then(ok(&reworded_plan(false)))
+        .then(ok(&changed_files()));
+    let h = harness_with(provider, RefUpdate::Ok, 1_000_000, todo_app());
+    h.service
+        .open_round("todo", &open(0, "all"), Some("u-a"))
+        .unwrap();
+    h.service.confirm_round("todo", Some("u-a")).unwrap();
+    assert_eq!(api_module_names(&h), ["訂單處理"]);
+}

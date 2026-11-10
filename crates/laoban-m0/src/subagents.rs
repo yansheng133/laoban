@@ -272,7 +272,13 @@ fn calls(app_js: &str) -> Vec<Call> {
             .get(n + 1)
             .map(|x| x.get(0).unwrap().start())
             .unwrap_or(app_js.len());
-        let window_end = end.min(whole.end() + 400);
+        // Up to 400 bytes, cut back to a character boundary: app.js holds
+        // Chinese and Japanese text (lab, team-board: a cut inside 「按」
+        // stopped the round's publishing thread).
+        let mut window_end = end.min(whole.end() + 400);
+        while !app_js.is_char_boundary(window_end) {
+            window_end -= 1;
+        }
         let window = &app_js[whole.end()..window_end];
         let m = method
             .captures(window)
@@ -350,6 +356,18 @@ pub fn gaps_block(gaps: &[ContractGap], part: Part) -> String {
 mod tests {
     use super::*;
     use crate::plan::Endpoint;
+
+    #[test]
+    fn the_text_after_a_call_is_cut_on_a_character() {
+        // 400 bytes after the URL land inside a three-byte character for
+        // every offset; none may panic (lab, team-board).
+        for pad in 0..3 {
+            let js = format!("fetch('api/posts'{}{})", "x".repeat(pad), "按".repeat(200));
+            let c = calls(&js);
+            assert_eq!(c.len(), 1, "{pad}");
+            assert_eq!(c[0].path, "/posts");
+        }
+    }
 
     fn files(app_js: &str, handler: &str) -> GeneratedFiles {
         GeneratedFiles {
