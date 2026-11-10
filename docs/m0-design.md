@@ -264,6 +264,24 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 
 每個檔案上限 64 KiB，合計 192 KiB。
 
+### 分工 AI（subagent，v0.1.24）
+
+`LAOBAN_AI_SUBAGENTS=true`（預設）時，第 2 步不是一次呼叫寫四個檔，而是**同時**派出兩個 subagent：
+
+| subagent | 寫的檔案 | 回應格式 |
+|---|---|---|
+| 網頁 | `index.html`、`app.js`、`style.css` | `{"web": {…三個檔…}}` |
+| API | `handler.py` | `{"api": {"handler.py": "…"}}` |
+
+- 兩個 subagent 看不到彼此的程式。雙方的約定就是計畫裡的 `components.api.endpoints`（方法與路徑）：網頁只呼叫這些端點，API 全部實作。
+- 兩邊都完成後，把兩部分合成四個檔，再做跟單次呼叫**完全相同**的檢查（檔名、大小、`handle()`）。任何一個 subagent 失敗，整次都不發布，計畫可以再確認一次。
+- **只派需要的**：新應用、輪次以外的修改都派兩個。意見收斂的範圍（收斂時已依計畫的差異放寬）只有網頁時，只派網頁 subagent，`handler.py` 維持原樣；範圍包含 API 時兩個都派，因為 API 一改，網頁讀的回應格式也可能跟著變。
+- 修改現有應用時，每個 subagent 的 `current_code` 只有自己那部分的檔案，`manual_edits` 也只帶自己那部分的手動修改。
+- **約定比對**：發布前用文字比對兩邊和計畫是否一致：計畫的端點第一段路徑沒出現在 `handler.py`（`apiMissing`），或 `app.js` 呼叫了計畫裡沒有的 `api/<段>`（`unknownCall`）。只是提醒，不擋發布（比對文字可能誤判）。
+- 進度：背景工作 `GET /api/plans/<jobId>` 與輪次（`applying` 時）多一個 `subagents` 陣列：`{part, state: running|done|failed|skipped, seconds, inputTokens, outputTokens, model, files}`。套用的回應多 `subagents` 與 `contractGaps`。`GET /api/config` 多 `subagents`（布林值）。
+- token 用量照常逐次計入每月上限；兩個 subagent 各算一次呼叫。
+- 本機模型伺服器要能同時處理兩個請求才會變快（Ollama：`OLLAMA_NUM_PARALLEL`）；不行時設 `false` 回到單次呼叫。
+
 ## 產生的應用（固定範本，不由 AI 產生）
 
 寫進 GitHub repo 的 `apps/<appName>/`：
@@ -330,6 +348,7 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 | `LAOBAN_MODEL` | 模型 ID（Anthropic 模型 ID，或本機模型在端點上的名稱） |
 | `LAOBAN_AI_BASE_URL` | 選用。相容 Anthropic Messages API 的端點（例如 Mac 上的 Ollama），只寫 scheme、主機與 port；不設就是 Anthropic API |
 | `LAOBAN_AI_TIMEOUT_SECONDS` | 單次 AI 呼叫上限，30～1800，預設 300 |
+| `LAOBAN_AI_SUBAGENTS` | `true`（預設）：網頁與 API 由兩個 subagent 同時寫（見「分工 AI」）；`false`：一次呼叫寫四個檔。chart 的 `ai.subagents`（v0.1.24） |
 | `LAOBAN_TOKEN_CAP` | 每月 token 上限，預設 2,000,000；v0.1.19 起每個 UTC 月份的用量存在 `TokenUsage` 資源（`tokens-YYYY-MM`），重啟不歸零 |
 | `LAOBAN_GITHUB_REPO` | `<owner>/<repo>` |
 | `LAOBAN_GITHUB_TOKEN` | 從 Secret 注入 |

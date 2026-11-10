@@ -41,6 +41,11 @@ pub const MAX_ANNOTATION_VALUE: usize = 4096;
 pub const ENV_AI_BASE_URL: &str = "LAOBAN_AI_BASE_URL";
 /// Upper bound for one AI call, in seconds.
 pub const ENV_AI_TIMEOUT: &str = "LAOBAN_AI_TIMEOUT_SECONDS";
+/// `true` (the default): the code for a plan is written by two subagents at
+/// the same time, one for the web part and one for the API part, and a part
+/// a round does not touch is not written again. `false`: one AI call writes
+/// all four files, as before 0.1.24.
+pub const ENV_AI_SUBAGENTS: &str = "LAOBAN_AI_SUBAGENTS";
 /// Lower limits for rounds of 意見收斂 (chart `rounds.limits`). Each may
 /// only be lowered: a value above the built-in maximum is refused.
 pub const ENV_ROUND_OPINION_CHARS: &str = "LAOBAN_ROUND_MAX_OPINION_CHARS";
@@ -72,6 +77,8 @@ pub struct M0Settings {
     pub app_url: Option<AppUrl>,
     /// NetworkPolicies for each app (`LAOBAN_APP_NETWORK_POLICY`).
     pub app_network_policy: bool,
+    /// Code written by parallel subagents (`LAOBAN_AI_SUBAGENTS`).
+    pub ai_subagents: bool,
 }
 
 /// Where the generated apps are opened when they have their own host.
@@ -377,6 +384,11 @@ pub fn from_env_with(get: impl Fn(&str) -> Option<String>) -> Result<EnvConfig, 
         Some("true") => true,
         Some(_) => return Err(ConfigError::Invalid(ENV_APP_NETWORK_POLICY)),
     };
+    let ai_subagents = match value(ENV_AI_SUBAGENTS).as_deref() {
+        None | Some("true") => true,
+        Some("false") => false,
+        Some(_) => return Err(ConfigError::Invalid(ENV_AI_SUBAGENTS)),
+    };
 
     let mut round_limits = crate::rounds::Limits::default();
     for (var, slot) in [
@@ -407,6 +419,7 @@ pub fn from_env_with(get: impl Fn(&str) -> Option<String>) -> Result<EnvConfig, 
             ai_timeout_secs,
             app_url,
             app_network_policy,
+            ai_subagents,
         },
         ai: AiEndpoint { base_url },
         anthropic_api_key: key.map(Secret),

@@ -10,7 +10,7 @@ import {
 } from 'vue';
 import {
   getConfig, createPlan, applyPlan, restoreVersion, listBundles, getDeployment, resolveAppUrl, safeHttpsUrl,
-  aiRequestTimeoutMs, RequestError, ConfigResponse, PlanResponse, ApplyResponse, StoreLike
+  aiRequestTimeoutMs, RequestError, ConfigResponse, PlanResponse, ApplyResponse, StoreLike, SubagentRun, ContractGap
 } from '../utils/backend';
 import { bundleReadiness, Readiness } from '../utils/bundle';
 import { deploymentRolledOut, rolloutTargets } from '../utils/rollout';
@@ -19,7 +19,7 @@ import { BUNDLE_POLL_INTERVAL_MS, BUNDLE_POLL_TIMEOUT_MS, FLEET_WORKSPACE } from
 // Without a visible Fleet bundle for this long, the Deployments decide.
 const DEPLOYMENTS_AFTER_MS = 60 * 1000;
 
-import { TRANSLATED_ERRORS } from '../utils/errors';
+import { translatedError } from '../utils/errors';
 
 export type Phase = 'idle' | 'planning' | 'planned' | 'applying' | 'deploying' | 'ready' | 'timeout';
 
@@ -42,6 +42,8 @@ export interface DeployFlow {
   configError: Ref<string>;
   phase: Ref<Phase>;
   errorText: Ref<string>;
+  subagents: Ref<SubagentRun[]>;
+  contractGaps: Ref<ContractGap[]>;
   plan: Ref<PlanResponse | null>;
   applied: Ref<ApplyResponse | null>;
   readiness: Ref<Readiness | null>;
@@ -79,6 +81,9 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
   const configError = ref('');
   const phase = ref<Phase>('idle');
   const errorText = ref('');
+  // The subagents of the latest apply (empty: one AI call, or none yet).
+  const subagents = ref<SubagentRun[]>([]);
+  const contractGaps = ref<ContractGap[]>([]);
   const plan = ref<PlanResponse | null>(null);
   const applied = ref<ApplyResponse | null>(null);
   const readiness = ref<Readiness | null>(null);
@@ -121,8 +126,10 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
     }
     // The backend writes its messages in Chinese: these common ones are
     // shown in the page's language instead (report 21, N8).
-    if (e instanceof RequestError && TRANSLATED_ERRORS.includes(e.code)) {
-      return t(`laoban.errors.${ e.code }`);
+    const known = translatedError(t, e);
+
+    if (known) {
+      return known;
     }
     if (e instanceof RequestError && e.userMessage) {
       return e.userMessage;
@@ -324,9 +331,19 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
     }
     errorText.value = '';
     phase.value = 'applying';
+    subagents.value = [];
+    contractGaps.value = [];
     startElapsed();
     try {
-      applied.value = await applyPlan(store, plan.value.planId, aiRequestTimeoutMs(config.value));
+      applied.value = await applyPlan(store, plan.value.planId, aiRequestTimeoutMs(config.value), (view) => {
+        if (Array.isArray(view.subagents)) {
+          subagents.value = view.subagents;
+        }
+      });
+      if (Array.isArray(applied.value.subagents)) {
+        subagents.value = applied.value.subagents;
+      }
+      contractGaps.value = Array.isArray(applied.value.contractGaps) ? applied.value.contractGaps : [];
     } catch (e) {
       errorText.value = fail(e);
       planGone.value = e instanceof RequestError && (e.code === 'plan_not_found' || e.code === 'already_applied');
@@ -456,6 +473,8 @@ export function useDeployFlow(store: StoreLike, t: Translate, hooks: DeployFlowH
     configError,
     phase,
     errorText,
+    subagents,
+    contractGaps,
     plan,
     applied,
     readiness,

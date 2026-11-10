@@ -120,6 +120,11 @@ ai:
   # Upper bound for one AI call, 30 to 1800 (LAOBAN_AI_TIMEOUT_SECONDS).
   # Local models are slower; 900 is a reasonable value for them.
   timeoutSeconds: 300
+  # Write the code with two subagents at the same time, one for the web part
+  # and one for the API part (LAOBAN_AI_SUBAGENTS). Faster, and a round that
+  # only touches one part rewrites only that part. A local model server must
+  # accept two requests at once to gain from it (Ollama: OLLAMA_NUM_PARALLEL).
+  subagents: true
 
 # Anthropic API key, read from an existing Secret. Never put the key here.
 anthropic:

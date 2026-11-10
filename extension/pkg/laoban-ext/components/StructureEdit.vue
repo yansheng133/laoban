@@ -274,7 +274,7 @@ export default defineComponent({
         disabled
         :title="t('laoban.structure.unsupported')"
       >
-        {{ t(`laoban.structure.addKind.${ k }`) }}（{{ t('laoban.structure.unsupported') }}）
+        {{ t('laoban.common.withNote', { text: t(`laoban.structure.addKind.${ k }`), note: t('laoban.structure.unsupported') }) }}
       </button>
     </div>
   </details>

@@ -1029,7 +1029,7 @@ export default defineComponent({
         />
 
         <details class="laoban-detail-section">
-          <summary>{{ t('laoban.detail.currentSteps') }}（{{ currentSteps.length }}）</summary>
+          <summary>{{ t('laoban.detail.currentSteps') }}{{ t('laoban.common.paren', { text: currentSteps.length }) }}</summary>
           <ol>
             <li
               v-for="(step, i) in currentSteps"
@@ -1312,9 +1312,9 @@ export default defineComponent({
               @click="sideTab = st"
             >
               {{ t(`laoban.expand.tabs.${ st }`) }}<template v-if="st === 'changes' && view.diff">
-                （{{ changes.length + (view.files ? view.files.length : 0) }}）
+                {{ t('laoban.common.paren', { text: changes.length + (view.files ? view.files.length : 0) }) }}
               </template><template v-if="st === 'opinions' && roundState && roundActive">
-                （{{ roundState.opinions.length }}）
+                {{ t('laoban.common.paren', { text: roundState.opinions.length }) }}
               </template>
             </button>
           </div>
@@ -1454,7 +1454,7 @@ export default defineComponent({
             />
             <template v-if="drafts.length">
               <p class="laoban-hint">
-                {{ t('laoban.opinions.drafts', { count: drafts.length }) }}：{{ drafts.map((d) => d.targetName).join('、') }}
+                {{ t('laoban.common.labelValue', { label: t('laoban.opinions.drafts', { count: drafts.length }), value: drafts.map((d) => d.targetName).join(t('laoban.common.listSep')) }) }}
               </p>
               <button
                 v-if="roundState && roundState.state === 'collecting'"

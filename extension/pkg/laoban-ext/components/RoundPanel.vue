@@ -16,6 +16,7 @@ import {
   DEFAULT_LIMITS, RoundLimits, chars, roundSpace, textState
 } from '../utils/limits';
 import OpinionList from './OpinionList.vue';
+import SubagentPanel from './SubagentPanel.vue';
 import CharCounter from './CharCounter.vue';
 import { userLabel } from '../utils/users';
 import { formatDateTime, formatClock } from '../utils/time';
@@ -25,7 +26,7 @@ export const DEADLINES = [0, 10, 30, 60, 240, 1440];
 export default defineComponent({
   name: 'LaobanRoundPanel',
 
-  components: { OpinionList, CharCounter },
+  components: { OpinionList, CharCounter, SubagentPanel },
 
   props: {
     round: {
@@ -568,7 +569,7 @@ export default defineComponent({
           aria-hidden="true"
         />
         {{ minutes === 0 ? t('laoban.round.openNow') : t('laoban.round.open') }}<template v-if="count > 1">
-          （{{ t('laoban.opinions.count', { count }) }}）
+          {{ t('laoban.common.paren', { text: t('laoban.opinions.count', { count }) }) }}
         </template>
       </button>
       <p
@@ -600,7 +601,7 @@ export default defineComponent({
         <strong>{{ t(`laoban.round.states.${ state }`) }}</strong>
         <span class="text-muted">
           {{ t('laoban.round.startedBy', { by: who(round.initiator) }) }} ·
-          {{ t('laoban.round.scope', { scope: round.scope.map((s) => t(`laoban.round.scopes.${ s }`)).join('、') }) }}
+          {{ t('laoban.round.scope', { scope: round.scope.map((s) => t(`laoban.round.scopes.${ s }`)).join(t('laoban.common.listSep')) }) }}
         </span>
         <span
           v-if="state === 'collecting'"
@@ -1034,6 +1035,11 @@ export default defineComponent({
         />
         {{ t('laoban.round.applying', { seconds: willApply ? elapsed : stateSeconds }) }}
       </p>
+      <SubagentPanel
+        v-if="state === 'applying' && round && round.subagents"
+        :runs="round.subagents"
+        :elapsed="willApply ? elapsed : stateSeconds"
+      />
 
       <div
         v-if="state === 'failed'"

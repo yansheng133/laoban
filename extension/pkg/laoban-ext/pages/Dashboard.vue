@@ -14,6 +14,7 @@ import { useText } from '../composables/useText';
 import ArchitectureView from '../components/ArchitectureView.vue';
 import PlanResult from '../components/PlanResult.vue';
 import StatusBar from '../components/StatusBar.vue';
+import SubagentPanel from '../components/SubagentPanel.vue';
 import { useDeployFlow } from '../composables/useDeployFlow';
 import { APP_NAME_PATTERN } from '../config/backend';
 import { canChangeApps } from '../utils/backend';
@@ -25,7 +26,7 @@ export default defineComponent({
   name: 'LaobanDashboard',
 
   components: {
-    ArchitectureView, PlanResult, StatusBar, NavToggle
+    ArchitectureView, PlanResult, StatusBar, NavToggle, SubagentPanel
   },
 
   setup() {
@@ -103,6 +104,10 @@ export default defineComponent({
         <dd>{{ config.targetNamespace }}</dd>
         <dt>{{ t('laoban.dashboard.config.repo') }}</dt>
         <dd>{{ config.repo }}</dd>
+        <template v-if="typeof config.subagents === 'boolean'">
+          <dt>{{ t('laoban.dashboard.config.subagents') }}</dt>
+          <dd>{{ config.subagents ? t('laoban.dashboard.config.subagentsOn') : t('laoban.dashboard.config.subagentsOff') }}</dd>
+        </template>
         <dt>{{ t('laoban.dashboard.config.tokenBudget') }}</dt>
         <dd>{{ t('laoban.dashboard.config.tokenUsage', { used: formatNumber(config.tokenBudget && config.tokenBudget.used), cap: formatNumber(config.tokenBudget && config.tokenBudget.cap) }) }}</dd>
       </dl>
@@ -215,6 +220,12 @@ export default defineComponent({
             </router-link>
           </template>
         </PlanResult>
+        <SubagentPanel
+          v-if="plan && ['applying', 'deploying', 'ready', 'timeout'].includes(phase)"
+          :runs="subagents"
+          :gaps="contractGaps"
+          :elapsed="elapsed"
+        />
       </section>
 
       <section

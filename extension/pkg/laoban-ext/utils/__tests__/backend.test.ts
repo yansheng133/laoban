@@ -224,6 +224,21 @@ describe('apps and plan requests', () => {
     expect(calls[1].url).toBe(real(`/plans/${ id }`));
   });
 
+  it('reports each read of an apply job, with its subagents', async() => {
+    const id = 'j-0123456789abcdef';
+    const running = [{ part: 'web', state: 'running' }, { part: 'api', state: 'done', seconds: 12 }];
+
+    mockFetchSeq([
+      [200, { jobId: id, kind: 'apply', state: 'running' }],
+      [200, { jobId: id, kind: 'apply', state: 'running', subagents: running }],
+      [200, { jobId: id, kind: 'apply', state: 'done', result: { commit: 'c' } }],
+    ]);
+    const seen: unknown[] = [];
+
+    expect(await runJob(store, real('/plans/p-1/apply'), {}, 5000, 1, (v) => seen.push(v.subagents || null))).toEqual({ commit: 'c' });
+    expect(seen).toEqual([null, running, null]);
+  });
+
   it('a failed job throws the error the request would have thrown', async() => {
     mockFetchSeq([
       [200, { jobId: 'j-0123456789abcdef', state: 'running' }],

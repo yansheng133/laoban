@@ -138,6 +138,8 @@ spec:
             {{- end }}
             - name: LAOBAN_AI_TIMEOUT_SECONDS
               value: {{ $aiTimeout | toString | quote }}
+            - name: LAOBAN_AI_SUBAGENTS
+              value: {{ ternary "true" "false" (ne .Values.ai.subagents false) | quote }}
             - name: LAOBAN_MODEL
               value: {{ $model | quote }}
             # int64 first: Helm reads numbers as float64 and would print 2e+06.

@@ -192,7 +192,7 @@ export default defineComponent({
           {{ g.name }}
         </button>
         <span v-else>{{ t('laoban.opinions.general') }}</span>
-        <span class="text-muted">（{{ g.opinions.filter((o) => !o.withdrawn).length }}）</span>
+        <span class="text-muted">{{ t('laoban.common.paren', { text: g.opinions.filter((o) => !o.withdrawn).length }) }}</span>
       </h4>
       <ul>
         <li
@@ -292,7 +292,7 @@ export default defineComponent({
               :class="supportedByMe(o) ? 'role-primary' : 'role-secondary'"
               :aria-pressed="supportedByMe(o) ? 'true' : 'false'"
               :disabled="busy || !canDiscuss || o.by === me || !me"
-              :title="(o.supporters || []).map(who).join('、')"
+              :title="(o.supporters || []).map(who).join(t('laoban.common.listSep'))"
               @click="$emit('support', o.id)"
             >
               +1 {{ (o.supporters || []).length || '' }}
@@ -300,7 +300,7 @@ export default defineComponent({
             <span
               v-if="(o.supporters || []).length"
               class="text-muted laoban-opinion-supporters"
-            >{{ t('laoban.opinions.supportedBy', { names: (o.supporters || []).map(who).join('、') }) }}</span>
+            >{{ t('laoban.opinions.supportedBy', { names: (o.supporters || []).map(who).join(t('laoban.common.listSep')) }) }}</span>
             <button
               v-if="!readOnly || (o.replies || []).length"
               type="button"

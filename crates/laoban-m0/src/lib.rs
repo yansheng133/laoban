@@ -24,6 +24,7 @@ pub mod rounds;
 pub mod service;
 pub mod state;
 pub mod store;
+pub mod subagents;
 mod time;
 
 pub use config::{from_env_with, AiEndpoint, ConfigError, EnvConfig, M0Settings, Secret};

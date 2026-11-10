@@ -206,7 +206,7 @@ export default defineComponent({
       class="text-warning laoban-hint"
       role="status"
     >
-      {{ t('laoban.editor.blocked', { files: blockedFiles.map((f) => f.split('/').pop()).join('、') }) }}
+      {{ t('laoban.editor.blocked', { files: blockedFiles.map((f) => f.split('/').pop()).join(t('laoban.common.listSep')) }) }}
     </p>
     <p
       v-else

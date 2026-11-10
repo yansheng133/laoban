@@ -40,6 +40,7 @@ pub fn settings(token_cap: u64) -> M0Settings {
         ai_timeout_secs: 300,
         app_url: None,
         app_network_policy: false,
+        ai_subagents: false,
     }
 }
 
