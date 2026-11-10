@@ -25,7 +25,7 @@ use crate::rounds::Part;
 use crate::InvalidOutput;
 
 /// Shared by both subagents, after the general code rules.
-const SUBAGENT_COMMON: &str = r#"You are one of two subagents writing this application at the same time: one writes the web front end, the other writes the API. You do not see the other's code. The contract between the two is exactly the endpoints in approved_plan.components.api.endpoints (method and path): the front end calls only those endpoints, and the API implements all of them, with the JSON request and response bodies their purposes describe. Keep field names simple and predictable (lowercase, the words of the purpose) so both sides agree without seeing each other."#;
+const SUBAGENT_COMMON: &str = r#"You are one of two subagents writing this application at the same time: one writes the web front end, the other writes the API. You do not see the other's code. The contract between the two is exactly the endpoints in approved_plan.components.api.endpoints: the front end calls only those endpoints, and the API implements all of them. Each endpoint's "request" and "response" are JSON examples: send and return exactly those shapes and field names, nothing renamed or nested differently. Where an example is missing, follow these rules, which the other subagent follows too: a response is always a JSON object, never a bare list; a list goes under "items"; records have an "id" field; a request that refers to a record uses "<record>_id"; an error is a non-2xx status with {"error": message}."#;
 
 /// For the web subagent.
 pub const WEB_SUBAGENT_INSTRUCTIONS: &str = r#"Task: write the web front end for the approved application plan in the data block.
@@ -224,6 +224,8 @@ mod tests {
                     method: "GET".into(),
                     path: (*p).into(),
                     purpose: String::new(),
+                    request: String::new(),
+                    response: String::new(),
                 })
                 .collect(),
             notes: String::new(),

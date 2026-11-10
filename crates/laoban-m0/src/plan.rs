@@ -16,7 +16,8 @@ use crate::InvalidOutput;
 /// Response format appended to the system prompt for the plan call.
 pub const PLAN_INSTRUCTIONS: &str = r#"Task: plan a small web application from the user requirement in the data block. The application always has exactly two components: a static web front end (index.html, app.js, style.css) and a JSON HTTP API written as one Python module using only the standard library, keeping its data in memory. There is no database, queue or other component. Modules are named parts inside these fixed files, not files: name them by what they do (for example "orders" or "cart"), never with a file name such as server.py or app.js; the API code always lives in one file called handler.py.
 Respond with exactly one JSON object and nothing else (no Markdown fences), with these fields:
-{"appName": string matching ^[a-z][a-z0-9-]{1,30}$, "summary": string, "steps": [string], "components": {"web": {"modules": [{"name": string, "purpose": string}]}, "api": {"modules": [{"name": string, "purpose": string}], "endpoints": [{"method": "GET"|"POST"|"PUT"|"PATCH"|"DELETE", "path": string starting with "/" as the API module sees it, without any /api prefix (for example "/orders"), "purpose": string}]}}, "notes": string}
+{"appName": string matching ^[a-z][a-z0-9-]{1,30}$, "summary": string, "steps": [string], "components": {"web": {"modules": [{"name": string, "purpose": string}]}, "api": {"modules": [{"name": string, "purpose": string}], "endpoints": [{"method": "GET"|"POST"|"PUT"|"PATCH"|"DELETE", "path": string starting with "/" as the API module sees it, without any /api prefix (for example "/orders"), "purpose": string, "request": string, "response": string}]}}, "notes": string}
+For each endpoint, "request" is a compact JSON example of the request body ("" for none) and "response" a compact JSON example of the success response, with the exact field names, for example "request": "{\"item_id\": \"1\", \"quantity\": 2}" and "response": "{\"items\": [{\"id\": \"1\", \"name\": \"...\", \"price\": 30}]}". The web page and the API are written from these examples, so they must be complete and consistent across endpoints. A response is always a JSON object, never a bare list: a list goes under "items". Records have an "id" field; a request that refers to a record uses "<record>_id".
 Write summary, steps, purposes and notes in the same language as the user requirement (for a change, the same language as the change request or the opinions in it). Use at most 8 modules per component, at most 16 endpoints and at most 20 steps. Do not include positions or coordinates."#;
 
 /// Extra instructions for the plan call when an existing app is changed.
@@ -82,7 +83,30 @@ struct RawApi {
     #[serde(default)]
     modules: Vec<RawModule>,
     #[serde(default)]
-    endpoints: Vec<Endpoint>,
+    endpoints: Vec<RawEndpoint>,
+}
+
+/// An endpoint as the AI writes it: the request and response examples may
+/// come as text or as JSON values.
+#[derive(Debug, Clone, Deserialize)]
+struct RawEndpoint {
+    method: String,
+    path: String,
+    #[serde(default)]
+    purpose: String,
+    #[serde(default)]
+    request: Value,
+    #[serde(default)]
+    response: Value,
+}
+
+/// A request or response example as one line of text.
+fn shape_text(v: Value) -> String {
+    match v {
+        Value::Null => String::new(),
+        Value::String(s) => s,
+        other => other.to_string(),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -98,6 +122,14 @@ pub struct Endpoint {
     pub path: String,
     #[serde(default)]
     pub purpose: String,
+    /// JSON example of the request body; empty for none (or for plans made
+    /// before v0.1.24). With `response`, the contract the web part and the
+    /// API part are written from.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub request: String,
+    /// JSON example of the success response.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub response: String,
 }
 
 /// A validated plan.
@@ -195,7 +227,10 @@ fn check_modules(field: &str, raw: Vec<RawModule>) -> Result<Vec<Module>, Invali
         .collect()
 }
 
-fn check_endpoint(e: Endpoint) -> Result<Endpoint, InvalidOutput> {
+/// Longest request or response example.
+const MAX_SHAPE: usize = 1_000;
+
+fn check_endpoint(e: RawEndpoint) -> Result<Endpoint, InvalidOutput> {
     static PATH: OnceLock<Regex> = OnceLock::new();
     let path_re = PATH.get_or_init(|| Regex::new(r"^/[A-Za-z0-9/_.{}:-]{0,99}$").unwrap());
     let method = e.method.trim().to_ascii_uppercase();
@@ -210,6 +245,13 @@ fn check_endpoint(e: Endpoint) -> Result<Endpoint, InvalidOutput> {
         method,
         path,
         purpose: check_text("endpoint purpose", &e.purpose, MAX_TEXT, false)?,
+        request: check_text("endpoint request", &shape_text(e.request), MAX_SHAPE, true)?,
+        response: check_text(
+            "endpoint response",
+            &shape_text(e.response),
+            MAX_SHAPE,
+            true,
+        )?,
     })
 }
 
@@ -467,6 +509,50 @@ pub fn architecture(plan: &AppPlan, app: &str) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn with_endpoint(e: Value) -> String {
+        json!({"appName": "shop", "summary": "s", "steps": ["a"],
+               "components": {"web": {"modules": ["list"]}, "api": {"modules": ["orders"], "endpoints": [e]}}})
+        .to_string()
+    }
+
+    #[test]
+    fn endpoint_examples_are_kept_as_text_or_json() {
+        let p = parse_app_plan(&with_endpoint(
+            json!({"method": "POST", "path": "/cart/add",
+            "request": {"item_id": "1"}, "response": "{\"items\": []}"}),
+        ))
+        .unwrap();
+        assert_eq!(p.endpoints[0].request, r#"{"item_id":"1"}"#);
+        assert_eq!(p.endpoints[0].response, r#"{"items": []}"#);
+        // They reach the code calls with the plan.
+        let j = p.to_codegen_json("shop");
+        assert_eq!(
+            j["components"]["api"]["endpoints"][0]["request"],
+            r#"{"item_id":"1"}"#
+        );
+        // Missing: empty, and not written out.
+        let p = parse_app_plan(&with_endpoint(json!({"method": "GET", "path": "/menu"}))).unwrap();
+        assert!(p.endpoints[0].request.is_empty());
+        assert!(serde_json::to_value(&p.endpoints[0])
+            .unwrap()
+            .get("request")
+            .is_none());
+        // Too long is invalid output, like other fields.
+        let long = "x".repeat(MAX_SHAPE + 1);
+        assert!(parse_app_plan(&with_endpoint(
+            json!({"method": "GET", "path": "/m", "response": long})
+        ))
+        .is_err());
+    }
+
+    #[test]
+    fn plans_saved_before_examples_still_load() {
+        let old: Endpoint =
+            serde_json::from_value(json!({"method": "GET", "path": "/menu", "purpose": "p"}))
+                .unwrap();
+        assert_eq!((old.request.as_str(), old.response.as_str()), ("", ""));
+    }
 
     #[test]
     fn app_names() {
