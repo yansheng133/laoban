@@ -1098,7 +1098,14 @@ impl M0Service {
                     ],
                     max_tokens: Some(PLAN_MAX_TOKENS),
                 })?;
-                let plan = parse_app_plan(&completion.content).map_err(M0Error::AiInvalidOutput)?;
+                let mut plan =
+                    parse_app_plan(&completion.content).map_err(M0Error::AiInvalidOutput)?;
+                if round
+                    .as_ref()
+                    .is_some_and(|r| !r.scope.contains(&Part::Api))
+                {
+                    keep_api_out_of_scope(&current.plan, &mut plan);
+                }
                 // Positions follow renamed modules (shown in the plan and
                 // published on apply).
                 let layout = carry_layout(&current.plan, &plan, &base_app, &current.layout);
@@ -2582,7 +2589,7 @@ impl M0Service {
     /// The AI turns the round's opinions into one change plan, made from
     /// the app's latest commit; the round keeps what publishing it needs.
     fn converge(&self, app: &str, round_id: &str) {
-        let (request, overhead, label, initiator, start_commit) = {
+        let (request, overhead, label, initiator, start_commit, scope) = {
             let rs = self.rounds();
             match rs.get(app) {
                 Some(r) if r.id == round_id && r.state == State::Converging => (
@@ -2591,6 +2598,7 @@ impl M0Service {
                     r.opinion_list(),
                     r.initiator.clone(),
                     r.start_commit.clone(),
+                    r.scope.clone(),
                 ),
                 _ => return,
             }
@@ -2614,6 +2622,7 @@ impl M0Service {
                     label,
                     start,
                     base_commit: Some(base_commit.clone()),
+                    scope,
                 }),
                 // The round's text, its framing, and the plan steps the
                 // comments are on (not counted in the round's space).
@@ -3136,6 +3145,19 @@ fn changed_parts(old: &crate::plan::AppPlan, new: &crate::plan::AppPlan) -> Vec<
     parts
 }
 
+/// A round about the web part only, whose plan keeps the API's endpoints:
+/// the API part stays as it is. The AI tends to reword the API modules of
+/// apps made before modules were named by what they do (`note_api.py`
+/// becomes 「備忘事項」), which alone would widen the round to the API and
+/// rewrite code nobody asked to change (review M6, lab 2026-11-10). A
+/// change the API really needs shows in its endpoints, and widens the
+/// round as before.
+fn keep_api_out_of_scope(old: &crate::plan::AppPlan, new: &mut crate::plan::AppPlan) {
+    if new.api_modules != old.api_modules && same_endpoints(&old.endpoints, &new.endpoints) {
+        new.api_modules = old.api_modules.clone();
+    }
+}
+
 /// The same endpoints, where an example the old plan did not have yet (a
 /// plan made before v0.1.24) does not count as a change (review M6): the
 /// AI fills it in, and it would otherwise send every old app's web-only
@@ -3227,6 +3249,8 @@ struct RoundInput {
     start: Option<GeneratedFiles>,
     /// The app's commit the plan is made from.
     base_commit: Option<String>,
+    /// The parts the round was opened for (before the plan widens it).
+    scope: Vec<Part>,
 }
 
 fn unix(t: SystemTime) -> u64 {
