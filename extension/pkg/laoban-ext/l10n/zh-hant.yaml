@@ -54,6 +54,8 @@ laoban:
       arch: 架構圖
       code: 程式碼
   view3d:
+    edges:
+      memory: "記憶體"
     resetView: 重設視角
     palette: 3D 圖配色
     paletteNote: 只影響 3D 圖，記在這個瀏覽器。
@@ -64,6 +66,8 @@ laoban:
       sunset: 夕陽
       grape: 葡萄
   versions:
+    notes:
+      layout: "調整 3D 版面"
     title: "版本（{count}）"
     number: "第 {n} 版"
     current: 目前

@@ -8,6 +8,7 @@ import {
   defineComponent, ref, computed, PropType
 } from 'vue';
 import { useStore } from 'vuex';
+import { systemText } from '../utils/systemText';
 import { useText } from '../composables/useText';
 import { safeHttpsUrl, VersionEntry } from '../utils/backend';
 import { userLabel, withUserNames } from '../utils/users';
@@ -76,7 +77,7 @@ export default defineComponent({
 
     // "(u-abc12) …" in requests made by rounds: names where known (N41).
     function requestText(v: VersionEntry): string {
-      return withUserNames(store, v.request || '');
+      return withUserNames(store, systemText(t, v.request || ''));
     }
 
     return {

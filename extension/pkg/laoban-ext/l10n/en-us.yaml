@@ -54,6 +54,8 @@ laoban:
       arch: Architecture
       code: Code
   view3d:
+    edges:
+      memory: "memory"
     resetView: Reset view
     palette: 3D view colors
     paletteNote: Affects the 3D view only; remembered in this browser.
@@ -64,6 +66,8 @@ laoban:
       sunset: Sunset
       grape: Grape
   versions:
+    notes:
+      layout: "Rearranged the 3D layout"
     title: "Versions ({count})"
     number: "Version {n}"
     current: Current

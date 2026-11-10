@@ -56,6 +56,8 @@ laoban:
       arch: アーキテクチャ図
       code: コード
   view3d:
+    edges:
+      memory: "メモリ"
     resetView: 視点をリセット
     palette: 3D 図の配色
     paletteNote: 3D 図だけに適用され、このブラウザに保存されます。
@@ -66,6 +68,8 @@ laoban:
       sunset: 夕日
       grape: ぶどう
   versions:
+    notes:
+      layout: "3D レイアウトを調整"
     title: "バージョン（{count}）"
     number: "バージョン {n}"
     current: 現在
