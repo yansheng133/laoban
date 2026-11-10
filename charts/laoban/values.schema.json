@@ -246,6 +246,10 @@
         "timeoutSeconds": {
           "description": "Upper bound for one AI call, 30 to 1800 (LAOBAN_AI_TIMEOUT_SECONDS).",
           "type": "integer"
+        },
+        "subagents": {
+          "description": "Write the web and the API part with two subagents at the same time (LAOBAN_AI_SUBAGENTS). Default true.",
+          "type": "boolean"
         }
       }
     },
