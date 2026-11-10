@@ -17,7 +17,7 @@ laoban:
     loadFailed: 無法讀取應用清單，請稍後再試。
     legacy: 較早版本產生，沒有編輯紀錄，無法編輯。
     revisions: "共 {count} 個版本"
-    open: 打開
+    open: "開啟"
     edit: 編輯
     col:
       name: 名稱
@@ -54,6 +54,8 @@ laoban:
       arch: 架構圖
       code: 程式碼
   view3d:
+    edges:
+      memory: "記憶體"
     resetView: 重設視角
     palette: 3D 圖配色
     paletteNote: 只影響 3D 圖，記在這個瀏覽器。
@@ -64,6 +66,8 @@ laoban:
       sunset: 夕陽
       grape: 葡萄
   versions:
+    notes:
+      layout: "調整 3D 版面"
     title: "版本（{count}）"
     number: "第 {n} 版"
     current: 目前
@@ -142,7 +146,7 @@ laoban:
       skipped: 已略過
     skip: 略過
     confirm: 確認
-    object: 有意見
+    object: "有異議"
     objectPlaceholder: 哪裡不對？這段話會加進意見，10 分鐘後重新收斂。
     objectSend: 送出意見，重新收集
     applying: "AI 正在修改程式並寫進 GitHub（已 {seconds} 秒）…"
@@ -165,7 +169,7 @@ laoban:
     convergeNow: 立即收斂
     stepComments: "留言（{count}）"
     stepCommentPlaceholder: 對這一步的意見
-    stepCommentsHint: 對步驟的留言不影響確認；有人按「有意見」時，留言會一起交給 AI 重新收斂。
+    stepCommentsHint: "對步驟的留言不影響確認；有人按「有異議」時，留言會一起交給 AI 重新收斂。"
     failures:
       planTooLarge: AI 產生的修改計畫太大（超過 150 KB），請發起人縮小範圍或精簡意見後重新收斂。
       planMissing: 找不到這一輪的修改計畫，請發起人重新收斂。
@@ -185,11 +189,11 @@ laoban:
       supported: "附議意見 {opinion}"
       unsupported: "取消附議意見 {opinion}"
       replied: "回覆意見 {opinion}"
-      objected: "有意見，{minutes} 分鐘後重新收斂"
+      objected: "有異議，{minutes} 分鐘後重新收斂"
       converging: "AI 開始收斂 {count} 則意見"
       converged: 修改計畫已產生，等待確認
       failed: "失敗：{message}"
-      confirmed: 確認
+      confirmed: "已確認"
       skipped: "略過 {user} 的確認"
       applying: 全部確認，AI 開始修改程式
       done: 新版本已寫入 GitHub，等待 Fleet 部署
@@ -266,6 +270,30 @@ laoban:
     draftHint: "目前有 {count} 則草稿，到左邊的意見收斂一起送出。"
     sideTitle: 意見
     sideOpenHint: 關閉放大後，在左邊的意見收斂開一輪，草稿會一起送出。
+  common:
+    paren: "（{text}）"
+    listSep: "、"
+    withNote: "{text}（{note}）"
+    labelValue: "{label}：{value}"
+  subagents:
+    title: "分工 AI（subagent）"
+    hintBoth: "兩個 subagent 依同一份計畫，同時寫網頁和 API；計畫裡的 API 端點清單就是雙方的約定。"
+    hintOne: "只重寫這一輪要改的部分，另一部分維持原樣。"
+    part:
+      web: "網頁 subagent"
+      api: "API subagent"
+    state:
+      running: "撰寫中…（已 {seconds} 秒）"
+      done: "完成，花了 {seconds} 秒"
+      failed: "失敗（{seconds} 秒）"
+      skipped: "不需要重寫，維持原樣"
+    fixed: "和計畫比對後，修正過一次"
+    usage: "輸入 {input}、輸出 {output} 個 token"
+    gapsTitle: "網頁和 API 可能和計畫對不上："
+    gap:
+      apiMissing: "API 似乎沒有處理 {path}。"
+      unknownCall: "網頁呼叫了計畫裡沒有的 api{path}。"
+    gapsHint: "這項檢查只比對程式的文字，可能誤判；新版本已照常發布。應用有問題時，請開一輪意見收斂描述狀況。"
   errors:
     app_exists: "已經有同名的應用。要修改它，請在應用清單按「編輯」；要另外建立，請換一個名稱。"
     ai_invalid_output: "AI 回傳的內容格式不正確，沒有寫入任何東西。請再試一次，或換個說法。"
@@ -287,6 +315,19 @@ laoban:
     app_not_found: "找不到這個應用，可能已經被刪除。"
     version_not_found: "找不到這個版本。"
     round_active: "這個應用已經有一輪意見收斂正在進行。"
+    plan_store_failed: "計畫暫時無法開始部署，沒有任何變更，請稍後再試。"
+    internal: "laoban 後端發生錯誤。請再試一次；持續發生時，請管理者查看後端紀錄。"
+    round_scope: "進行中的意見收斂涵蓋這些檔案，結束前不能修改。"
+    merge_conflict: "這段期間別人也改了這個檔案，兩邊的修改衝突，沒有存檔。請重新讀取後再改一次。"
+    too_long: "內容太長，請精簡後再送出。"
+    round_full: "這一輪的意見已滿，請先收斂。附議不受影響。"
+    opinion_not_found: "找不到這則意見，可能已經撤回。"
+    invalid_files: "檔案沒有通過檢查（例如檔案太大，或 handler.py 沒有 handle 函式），沒有存檔。"
+    job_not_found: "找不到這項工作（後端可能重新啟動過）。請先看版本紀錄，需要時再試一次。"
+    rounds_unavailable: "意見收斂暫時無法使用：叢集裡沒有 laoban 的 Round 資源。請管理者先升級 laoban-crd chart。"
+    round_conflict: "別人在同一時間也改了這一輪，請再試一次。"
+    state_failed: "這一輪暫時無法存進叢集，請稍後再試。"
+    bad_request: "後端無法接受這個要求，請重新整理頁面後再試。"
   access:
     viewOnly: "你可以看應用，但不能新增或修改（你的角色是 laoban viewer）。需要修改請管理者給你 laoban user 角色。"
     viewOnlyRound: "你可以看這一輪的意見，但不能參與（你的角色是 laoban viewer）。需要參與請管理者給你 laoban user 角色。"
@@ -340,7 +381,7 @@ laoban:
     discard: 還原位置
     save: 儲存版面
   structure:
-    title: 改結構
+    title: "修改結構"
     hint: 這裡的變更會寫進左邊的「你的意見」，再開始一輪（或在收集意見時提出），由 AI 收斂成修改計畫，確認後才部署。
     nameRule: 只能用文字、數字與「.」「-」「_」，最多 40 個字。
     select: 模組
@@ -399,9 +440,12 @@ laoban:
     config:
       model: 模型
       targetNamespace: 部署目標
-      repo: 程式庫
+      repo: "儲存庫"
       tokenBudget: Token 用量
       tokenUsage: "{used} / {cap}"
+      subagents: "寫程式"
+      subagentsOn: "2 個 subagent 同時進行"
+      subagentsOff: "單次 AI 呼叫"
       unavailable: 無法讀取 laoban 後端設定。
     chat:
       title: 需求
@@ -421,9 +465,9 @@ laoban:
     result:
       viewApp: 到應用頁查看
       committed: 已寫進 GitHub：
-      openApp: 打開應用
+      openApp: "開啟應用"
       badAppUrl: 後端回傳的應用網址格式不正確，無法顯示連結。
-      sameOriginWarning: "這個應用跟 Rancher 在同一個網址下，打開時會帶著你的 Rancher 登入：應用頁面能用你的身分呼叫 Rancher API。只打開你信任的應用，並請管理者讓應用使用自己的網址（chart 設定 apps.url）。"
+      sameOriginWarning: "這個應用跟 Rancher 在同一個網址下，開啟時會帶著你的 Rancher 登入：應用頁面能用你的身分呼叫 Rancher API。只開啟你信任的應用，並請管理者讓應用使用自己的網址（chart 設定 apps.url）。"
     arch:
       title: 架構圖
       empty: 產生計畫後，這裡會顯示應用的 3D 架構圖。
@@ -443,12 +487,12 @@ laoban:
       planGone: "這份計畫已經不能部署（超過一小時已失效，或已經用過）。請重新產生計畫。"
       applying: "AI 正在產生程式並寫進 GitHub，通常需要 30～60 秒（已 {seconds} 秒）…"
       waitingBundle: "已寫進 GitHub，等待 Fleet 讀取這次變更（已 {seconds} 秒）…"
-      waitingPods: "已寫入。等待新版本的 Pod 啟動（已等 {seconds} 秒）…"
+      waitingPods: "已寫進 GitHub，等待新版本的 Pod 啟動（已 {seconds} 秒）…"
       deploying: "Fleet 部署中：{ready} / {desired} 就緒…"
       rollingOut: "Fleet 已套用，等新版本的 Pod 啟動（已 {seconds} 秒）…"
       bundleError: "Fleet 回報部署錯誤（{ready} / {desired} 就緒），仍持續確認中…"
-      ready: 部署完成，可以打開應用。
-      readyModified: "應用已部署並在執行，可以打開。但 Fleet 回報實際物件與 Git 內容不一致（Modified），細節請到 Continuous Delivery 的 {workspace} 工作區查看。"
+      ready: "部署完成，可以開啟應用。"
+      readyModified: "應用已部署並在執行，可以開啟。但 Fleet 回報實際物件與 Git 內容不一致（Modified），細節請到 Continuous Delivery 的 {workspace} 工作區查看。"
       timeout: "等了 {minutes} 分鐘仍未就緒，已停止確認。請到 Continuous Delivery 的 {workspace} 工作區查看 Bundle 狀態。"
       pollFailed: 這次無法讀取 Fleet 狀態，5 秒後重試。
     errors:

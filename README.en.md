@@ -37,6 +37,7 @@ laoban is a community open-source project and is **not covered by SUSE support**
 **Build a new app**
 - Enter a one-sentence request in **Overview**, and the AI returns a plan (summary, steps) and a 3D architecture diagram.
 - After you confirm, the AI writes the code (web page plus API), applies a fixed deployment template, commits it to GitHub, and Fleet deploys it. The page tracks the deployment status and gives you a link to the app when it is done.
+- The web page and the API are written **at the same time** by two subagents working from the same plan; the page shows each one's progress, time and tokens, and afterwards checks that the API calls in the web page match the plan. A round that only changes the web page rewrites only that half. Set the chart value `ai.subagents: false` to go back to one AI call.
 - Generated apps always have two components, a web page and an API, running on the SUSE BCI Python image.
 
 **Change it together: rounds of opinions**

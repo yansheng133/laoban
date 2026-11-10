@@ -20,6 +20,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import { useText } from '../composables/useText';
+import { systemText } from '../utils/systemText';
 import { useAppearance } from '../composables/useAppearance';
 import { PALETTES } from '../config/appearance';
 import { relatedNodes } from '../utils/layout';
@@ -394,7 +395,7 @@ export default defineComponent({
         tip.position.copy(curve.getPoint(0.75));
         world.add(tip);
         if (e.label) {
-          const lbl = makeLabel(e.label, `laoban-edge-label${ touches ? ' laoban-edge-selected' : selected ? ' laoban-faded' : '' }`);
+          const lbl = makeLabel(systemText(t, e.label), `laoban-edge-label${ touches ? ' laoban-edge-selected' : selected ? ' laoban-faded' : '' }`);
 
           lbl.position.copy(curve.getPoint(0.5));
           world.add(lbl);

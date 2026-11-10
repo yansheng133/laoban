@@ -18,7 +18,7 @@ use serde_json::{json, Value};
 use thiserror::Error;
 
 use crate::codegen::{
-    lost_edits, manual_edits, manual_edits_block, parse_generated, GeneratedFiles,
+    lost_edits, manual_edits, manual_edits_block, parse_generated, GeneratedFiles, ManualEdit,
     CODEGEN_INSTRUCTIONS, EDIT_CODEGEN_INSTRUCTIONS, MANUAL_EDITS_INSTRUCTIONS,
 };
 use crate::config::M0Settings;
@@ -33,6 +33,10 @@ use crate::render::{infra_files, render, rollout_hashes, RenderInput};
 use crate::rounds::{self, Limits, Part, PlanRecipe, Round, RoundError, RoundPlan, State, Text};
 use crate::state::{MemoryStore, StateError, StateStore};
 use crate::store::{BaseApp, PlanStore, StoreError, StoredPlan};
+use crate::subagents::{
+    assemble, contract_gaps, gaps_block, parse_part, SubagentRun, EDIT_SUBAGENT_INSTRUCTIONS,
+    FIX_SUBAGENT_INSTRUCTIONS,
+};
 use crate::trf;
 use crate::{time, InvalidOutput};
 
@@ -213,6 +217,8 @@ struct Job {
     /// Only this user can read it ("" when there is no verified user).
     user: String,
     kind: &'static str,
+    /// The app an apply job writes, for its subagents.
+    app: Option<String>,
     started: std::time::Instant,
     started_at: String,
     state: JobState,
@@ -652,6 +658,9 @@ pub struct M0Service {
     me: std::sync::OnceLock<std::sync::Weak<M0Service>>,
     /// Background plan / apply requests, by job ID.
     jobs: Mutex<HashMap<String, Job>>,
+    /// The subagents of the latest code writing, by app: shown with an
+    /// apply job and with a round that is applying.
+    subagent_runs: Mutex<HashMap<String, Vec<SubagentRun>>>,
     /// One lock per app: its versions are written one at a time, each
     /// checked against the version the previous one wrote (report 20, B11:
     /// two saves at once made the second fail as a GitHub problem).
@@ -714,6 +723,7 @@ impl M0Service {
             archive_retry: Mutex::new(HashMap::new()),
             me: std::sync::OnceLock::new(),
             jobs: Mutex::new(HashMap::new()),
+            subagent_runs: Mutex::new(HashMap::new()),
             app_locks: Mutex::new(HashMap::new()),
             commit_lock: Mutex::new(()),
             plans_restored: AtomicBool::new(false),
@@ -749,6 +759,7 @@ impl M0Service {
         &self,
         kind: &'static str,
         user: Option<&str>,
+        app: Option<String>,
         work: F,
     ) -> Result<Value, M0Error>
     where
@@ -774,6 +785,7 @@ impl M0Service {
                 Job {
                     user: user.clone(),
                     kind,
+                    app,
                     started: std::time::Instant::now(),
                     started_at: time::rfc3339(now),
                     state: JobState::Running,
@@ -819,6 +831,9 @@ impl M0Service {
             "startedAt": j.started_at,
             "elapsedSeconds": j.started.elapsed().as_secs(),
         });
+        if let Some(runs) = j.app.as_deref().and_then(|a| self.runs_of(a)) {
+            v["subagents"] = runs;
+        }
         match &j.state {
             JobState::Running => v["state"] = json!("running"),
             JobState::Done(result) => {
@@ -864,7 +879,7 @@ impl M0Service {
         }
         let body = body.clone();
         let owner = user.map(str::to_string);
-        self.start_job("plan", user, move |s| s.plan(&body, owner.as_deref()))
+        self.start_job("plan", user, None, move |s| s.plan(&body, owner.as_deref()))
     }
 
     /// `POST /api/apply` (or `.../plans/<id>/apply`) with `background`.
@@ -872,7 +887,7 @@ impl M0Service {
         // Answer now what the job would fail with: an expired or unknown
         // plan was accepted with 200 and failed later in the background,
         // leaving the page on "Plan ready" (report 24, N30).
-        {
+        let app = {
             let id = body.plan_id.trim();
             let mut store = self.lock_store();
             if !store.is_pending(id, Instant::now()) {
@@ -882,10 +897,13 @@ impl M0Service {
                     M0Error::PlanNotFound
                 });
             }
-        }
+            store.get(id).map(|p| p.app)
+        };
         let body = body.clone();
         let owner = user.map(str::to_string);
-        self.start_job("apply", user, move |s| s.apply(&body, owner.as_deref()))
+        self.start_job("apply", user, app, move |s| {
+            s.apply(&body, owner.as_deref())
+        })
     }
 
     /// Run a round's AI work in the background from now on (see `me`).
@@ -940,6 +958,7 @@ impl M0Service {
             "targetNamespace": self.settings.target_namespace,
             "repo": self.settings.repo(),
             "tokenBudget": { "cap": self.budget.cap(), "used": self.budget.used() },
+            "subagents": self.settings.ai_subagents,
             "aiTimeoutSeconds": self.settings.ai_timeout_secs,
             "roundLimits": self.round_limits,
             "roundsAvailable": self.rounds_ready(),
@@ -1320,7 +1339,7 @@ impl M0Service {
         let mut blocks = vec![UntrustedBlock {
             kind: "approved_plan",
             label: None,
-            content: plan_json,
+            content: plan_json.clone(),
         }];
         let mut instructions = CODEGEN_INSTRUCTIONS.to_string();
         // Hand edits made during a round, before its plan was made.
@@ -1347,14 +1366,33 @@ impl M0Service {
                 instructions.push_str(MANUAL_EDITS_INSTRUCTIONS);
             }
         }
-        let completion = self.orchestrator.complete(&CompletionRequest {
-            principal: PRINCIPAL.into(),
-            requested_model: None,
-            instructions,
-            blocks,
-            max_tokens: Some(CODEGEN_MAX_TOKENS),
-        })?;
-        let generated = parse_generated(&completion.content).map_err(M0Error::AiInvalidOutput)?;
+        let (generated, model, runs) = match self.subagent_parts(stored) {
+            Some(parts) => self.write_with_subagents(stored, &plan_json, &edits, &parts)?,
+            None => {
+                let completion = self.orchestrator.complete(&CompletionRequest {
+                    principal: PRINCIPAL.into(),
+                    requested_model: None,
+                    instructions,
+                    blocks,
+                    max_tokens: Some(CODEGEN_MAX_TOKENS),
+                })?;
+                let generated =
+                    parse_generated(&completion.content).map_err(M0Error::AiInvalidOutput)?;
+                (generated, completion.model, Vec::new())
+            }
+        };
+        let gaps = if runs.is_empty() {
+            Vec::new()
+        } else {
+            contract_gaps(&stored.plan, &generated)
+        };
+        if !gaps.is_empty() {
+            eprintln!(
+                "laoban: subagents of {}: {} contract gap(s) between web and API",
+                stored.app,
+                gaps.len()
+            );
+        }
         // From here on the app is read and written under its lock (not
         // during the AI call above, which can take minutes).
         let lock = self.app_lock(&stored.app);
@@ -1411,10 +1449,325 @@ impl M0Service {
             kind,
             request: masked_prompt,
             summary: masked_summary,
-            model: completion.model,
+            model,
             message,
             by: user.unwrap_or_default().to_string(),
         })
+        .map(|mut v| {
+            if !runs.is_empty() {
+                v["subagents"] = json!(runs);
+                v["contractGaps"] = json!(gaps);
+            }
+            v
+        })
+    }
+
+    /// Which parts subagents write for `stored`, or `None` for one call
+    /// writing all four files (subagents turned off).
+    ///
+    /// A new app and a change outside a round: both parts. A round: only
+    /// the web part when the round is about the web part alone (its scope,
+    /// already widened to what the plan changes); a round that touches the
+    /// API rewrites both parts, since a changed API can change the shapes
+    /// the web part reads.
+    fn subagent_parts(&self, stored: &StoredPlan) -> Option<Vec<Part>> {
+        if !self.settings.ai_subagents {
+            return None;
+        }
+        let all = vec![Part::Web, Part::Api];
+        // A round's plan always has a label (its opinions).
+        if stored.base.is_none() || stored.label.is_none() {
+            return Some(all);
+        }
+        let web_only = self
+            .rounds()
+            .get(&stored.app)
+            .filter(|r| r.state == State::Applying)
+            .is_some_and(|r| r.scope == [Part::Web]);
+        Some(if web_only { vec![Part::Web] } else { all })
+    }
+
+    /// The code of `stored` from one subagent per part in `parts`, all
+    /// running at the same time; parts not in `parts` keep the current
+    /// code. Fails with the first failure (the other answers are dropped:
+    /// nothing is published unless every subagent succeeded).
+    fn write_with_subagents(
+        &self,
+        stored: &StoredPlan,
+        plan_json: &str,
+        edits: &[ManualEdit],
+        parts: &[Part],
+    ) -> Result<(GeneratedFiles, String, Vec<SubagentRun>), M0Error> {
+        let app = stored.app.as_str();
+        let mut runs: Vec<SubagentRun> = [Part::Web, Part::Api]
+            .into_iter()
+            .map(|p| {
+                SubagentRun::new(
+                    p,
+                    if parts.contains(&p) {
+                        "running"
+                    } else {
+                        "skipped"
+                    },
+                )
+            })
+            .collect();
+        self.set_runs(app, &runs);
+        let mut requests = Vec::new();
+        for &part in parts {
+            requests.push((part, self.subagent_request(stored, plan_json, edits, part)?));
+        }
+        let started = Instant::now();
+        let mut answers = self.run_subagents(app, started, requests, false)?;
+        let model = answers.first().map(|a| a.2.clone()).unwrap_or_default();
+        let keep = stored.base.as_ref().map(|b| &b.files);
+        let take = |answers: &[(Part, Value, String)], p: Part| {
+            answers.iter().find(|a| a.0 == p).map(|a| a.1.clone())
+        };
+        let mut files = assemble(take(&answers, Part::Web), take(&answers, Part::Api), keep)
+            .map_err(M0Error::AiInvalidOutput)?;
+
+        // The two sides checked against the plan: a subagent whose part has
+        // gaps runs once more with them, starting from its first answer.
+        let gaps = contract_gaps(&stored.plan, &files);
+        let to_fix: Vec<Part> = parts
+            .iter()
+            .copied()
+            .filter(|p| gaps.iter().any(|g| g.part() == *p))
+            .collect();
+        if !to_fix.is_empty() {
+            let mut requests = Vec::new();
+            for &part in &to_fix {
+                let first = take(&answers, part).unwrap_or_default();
+                requests.push((part, self.fix_request(plan_json, part, &first, &gaps)?));
+                self.update_run(app, part, started, |run| {
+                    run.state = "running";
+                    run.fixed = true;
+                });
+            }
+            // A failed fix keeps the first answer: it was valid code, and
+            // the gaps are still shown with the version.
+            match self.run_subagents(app, started, requests, true) {
+                Ok(fixed) => {
+                    for a in fixed {
+                        answers.retain(|b| b.0 != a.0);
+                        answers.push(a);
+                    }
+                    match assemble(take(&answers, Part::Web), take(&answers, Part::Api), keep) {
+                        Ok(f) => files = f,
+                        Err(e) => eprintln!("laoban: subagent fix of {app} not used: {}", e.0),
+                    }
+                }
+                Err(e) => {
+                    log_failure("subagent fix", app, &e);
+                    for &part in &to_fix {
+                        self.update_run(app, part, started, |run| run.state = "done");
+                    }
+                }
+            }
+        }
+        if let Some(r) = self
+            .subagent_runs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(app)
+        {
+            runs = r.clone();
+        }
+        Ok((files, model, runs))
+    }
+
+    /// Run one subagent per request at the same time and read each answer
+    /// as its part. Returns (part, files of the part, model) for every
+    /// request, or the first failure. `again`: a fix, whose tokens add to
+    /// the first run's.
+    fn run_subagents(
+        &self,
+        app: &str,
+        started: Instant,
+        requests: Vec<(Part, CompletionRequest)>,
+        again: bool,
+    ) -> Result<Vec<(Part, Value, String)>, M0Error> {
+        let results: Vec<(Part, Result<laoban_ai::Completion, M0Error>)> =
+            std::thread::scope(|scope| {
+                let handles: Vec<_> = requests
+                    .into_iter()
+                    .map(|(part, req)| {
+                        let handle = scope.spawn(move || {
+                            let r = self.orchestrator.complete(&req).map_err(M0Error::from);
+                            self.update_run(app, part, started, |run| match &r {
+                                Ok(c) => {
+                                    run.state = "done";
+                                    if again {
+                                        run.input_tokens += c.input_tokens;
+                                        run.output_tokens += c.output_tokens;
+                                    } else {
+                                        run.input_tokens = c.input_tokens;
+                                        run.output_tokens = c.output_tokens;
+                                    }
+                                    run.model = c.model.clone();
+                                }
+                                Err(_) => run.state = "failed",
+                            });
+                            r
+                        });
+                        (part, handle)
+                    })
+                    .collect();
+                handles
+                    .into_iter()
+                    .map(|(part, h)| {
+                        let r = h.join().unwrap_or_else(|_| {
+                            Err(M0Error::Internal(format!(
+                                "{} subagent stopped",
+                                part.name()
+                            )))
+                        });
+                        (part, r)
+                    })
+                    .collect()
+            });
+        let mut out = Vec::new();
+        let mut first_error = None;
+        for (part, r) in results {
+            match r.and_then(|c| {
+                parse_part(&c.content, part)
+                    .map(|v| (v, c.model))
+                    .map_err(M0Error::AiInvalidOutput)
+            }) {
+                Ok((v, model)) => out.push((part, v, model)),
+                Err(e) => {
+                    self.update_run(app, part, started, |run| run.state = "failed");
+                    first_error.get_or_insert(e);
+                }
+            }
+        }
+        match first_error {
+            Some(e) => Err(e),
+            None => Ok(out),
+        }
+    }
+
+    /// The request of a subagent's fix: the plan, its first answer as the
+    /// current code, and the gaps found in its part.
+    fn fix_request(
+        &self,
+        plan_json: &str,
+        part: Part,
+        first: &Value,
+        gaps: &[crate::subagents::ContractGap],
+    ) -> Result<CompletionRequest, M0Error> {
+        let mut instructions = part.instructions();
+        instructions.push('\n');
+        instructions.push_str(FIX_SUBAGENT_INSTRUCTIONS);
+        Ok(CompletionRequest {
+            principal: PRINCIPAL.into(),
+            requested_model: None,
+            instructions,
+            blocks: vec![
+                UntrustedBlock {
+                    kind: "approved_plan",
+                    label: None,
+                    content: plan_json.to_string(),
+                },
+                UntrustedBlock {
+                    kind: "current_code",
+                    label: None,
+                    content: serde_json::to_string_pretty(&json!({ part.name(): first }))
+                        .map_err(|e| M0Error::Internal(e.to_string()))?,
+                },
+                UntrustedBlock {
+                    kind: "contract_gaps",
+                    label: None,
+                    content: gaps_block(gaps, part),
+                },
+            ],
+            max_tokens: Some(CODEGEN_MAX_TOKENS),
+        })
+    }
+
+    /// The request of one subagent: the plan, and for a change that part's
+    /// current files and the hand edits made to them.
+    fn subagent_request(
+        &self,
+        stored: &StoredPlan,
+        plan_json: &str,
+        edits: &[ManualEdit],
+        part: Part,
+    ) -> Result<CompletionRequest, M0Error> {
+        let mut instructions = part.instructions();
+        let mut blocks = vec![UntrustedBlock {
+            kind: "approved_plan",
+            label: None,
+            content: plan_json.to_string(),
+        }];
+        if let Some(base) = &stored.base {
+            blocks.push(UntrustedBlock {
+                kind: "current_code",
+                label: None,
+                content: serde_json::to_string_pretty(
+                    &json!({ part.name(): part.of(&base.files) }),
+                )
+                .map_err(|e| M0Error::Internal(e.to_string()))?,
+            });
+            instructions.push('\n');
+            instructions.push_str(EDIT_SUBAGENT_INSTRUCTIONS);
+            let mine: Vec<ManualEdit> = edits
+                .iter()
+                .filter(|e| part.files().contains(&e.path))
+                .cloned()
+                .collect();
+            if !mine.is_empty() {
+                blocks.push(UntrustedBlock {
+                    kind: "manual_edits",
+                    label: None,
+                    content: manual_edits_block(&mine),
+                });
+                instructions.push('\n');
+                instructions.push_str(MANUAL_EDITS_INSTRUCTIONS);
+            }
+        }
+        Ok(CompletionRequest {
+            principal: PRINCIPAL.into(),
+            requested_model: None,
+            instructions,
+            blocks,
+            max_tokens: Some(CODEGEN_MAX_TOKENS),
+        })
+    }
+
+    fn set_runs(&self, app: &str, runs: &[SubagentRun]) {
+        self.subagent_runs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(app.to_string(), runs.to_vec());
+    }
+
+    fn update_run(
+        &self,
+        app: &str,
+        part: Part,
+        started: Instant,
+        f: impl FnOnce(&mut SubagentRun),
+    ) {
+        let mut all = self.subagent_runs.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(run) = all
+            .get_mut(app)
+            .and_then(|runs| runs.iter_mut().find(|r| r.part == part.name()))
+        {
+            run.seconds = started.elapsed().as_secs();
+            f(run);
+        }
+    }
+
+    /// The subagents of `app`'s latest code writing, with the seconds of a
+    /// running one brought up to now by the page (it counts on its own).
+    fn runs_of(&self, app: &str) -> Option<Value> {
+        self.subagent_runs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(app)
+            .map(|runs| json!(runs))
     }
 
     /// Render, commit and describe one new version of `app`.
@@ -1595,10 +1948,17 @@ impl M0Service {
     }
 
     fn round_json(&self, app: &str, user: Option<&str>) -> Value {
-        self.rounds()
-            .get(app)
-            .map(|r| r.to_json_for(user))
-            .unwrap_or(Value::Null)
+        let (mut v, applying) = match self.rounds().get(app) {
+            Some(r) => (r.to_json_for(user), r.state == State::Applying),
+            None => return Value::Null,
+        };
+        // While the AI writes the code: what each subagent is doing.
+        if applying {
+            if let Some(runs) = self.runs_of(app) {
+                v["subagents"] = runs;
+            }
+        }
+        v
     }
 
     /// Changes outside a round wait while one runs on the app.

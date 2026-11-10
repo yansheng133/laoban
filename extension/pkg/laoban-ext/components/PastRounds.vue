@@ -171,7 +171,7 @@ export default defineComponent({
     data-testid="laoban-past-rounds"
     @toggle="onToggle"
   >
-    <summary>{{ t('laoban.pastRounds.title') }}<template v-if="loaded">（{{ entries.length }}{{ truncated ? '+' : '' }}）</template></summary>
+    <summary>{{ t('laoban.pastRounds.title') }}<template v-if="loaded">{{ t('laoban.common.paren', { text: `${ entries.length }${ truncated ? '+' : '' }` }) }}</template></summary>
     <p
       v-if="loading"
       class="text-muted"

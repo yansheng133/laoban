@@ -33,8 +33,33 @@ export interface PlanResponse {
   model?: string;
 }
 
+// One subagent of a code writing (backend LAOBAN_AI_SUBAGENTS): the web
+// part (index.html, app.js, style.css) or the API part (handler.py),
+// written at the same time from the same plan.
+export interface SubagentRun {
+  part: 'web' | 'api';
+  state: 'running' | 'done' | 'failed' | 'skipped';
+  // Whole seconds from start to finish; 0 while running (the page counts).
+  seconds: number;
+  inputTokens: number;
+  outputTokens: number;
+  model?: string;
+  files: string[];
+  // It ran a second time to fix what the contract check found.
+  fixed?: boolean;
+}
+
+// A place where the web and the API code seem to disagree with the plan.
+export interface ContractGap {
+  kind: 'apiMissing' | 'unknownCall';
+  path: string;
+}
+
 export interface ApplyResponse {
   mode?: 'create' | 'edit' | 'restore' | 'manual' | 'layout';
+  // Set when subagents wrote the code.
+  subagents?: SubagentRun[];
+  contractGaps?: ContractGap[];
   appName?: string;
   // Deployments to check after Fleet is ready (see utils/rollout.ts).
   rollout?: unknown;
@@ -112,6 +137,8 @@ export interface RoundView {
   messageCode?: string;
   messageArgs?: Record<string, string>;
   result: ApplyResponse | null;
+  // While the AI writes the code (applying): what each subagent is doing.
+  subagents?: SubagentRun[];
   log: { at: string; by: string; event: string; code?: string; args?: Record<string, string> }[];
   you: { user: string; isInitiator: boolean; mustConfirm: boolean; canAddOpinion: boolean; canDiscuss?: boolean; canComment?: boolean };
   // Size limits and what the round has used of them (the backend counts).
@@ -250,6 +277,8 @@ export interface ConfigResponse {
   targetNamespace: string;
   repo: string;
   tokenBudget: { cap: number; used: number };
+  // true: the code is written by a web and an API subagent at the same time.
+  subagents?: boolean;
   // Seconds the backend waits for one AI call (LAOBAN_AI_TIMEOUT_SECONDS).
   aiTimeoutSeconds?: number;
 }
@@ -655,8 +684,8 @@ export function createPlan(store: StoreLike, prompt: string, appName: string | u
   return runJob<PlanResponse>(store, backendUrl('/plans'), body, timeoutMs);
 }
 
-export function applyPlan(store: StoreLike, planId: string, timeoutMs: number): Promise<ApplyResponse> {
-  return runJob<ApplyResponse>(store, backendUrl(`/plans/${ encodeURIComponent(planId) }/apply`), {}, timeoutMs);
+export function applyPlan(store: StoreLike, planId: string, timeoutMs: number, onProgress?: (view: JobView) => void): Promise<ApplyResponse> {
+  return runJob<ApplyResponse>(store, backendUrl(`/plans/${ encodeURIComponent(planId) }/apply`), {}, timeoutMs, JOB_POLL_MS, onProgress);
 }
 
 // A background plan or apply (GET .../plans/<jobId>).
@@ -665,6 +694,8 @@ export interface JobView {
   kind: string;
   state: 'running' | 'done' | 'failed';
   elapsedSeconds?: number;
+  // An apply job: what each subagent is doing.
+  subagents?: SubagentRun[];
   result?: unknown;
   error?: { status?: number; code?: string; message?: string };
 }
@@ -684,7 +715,7 @@ function sleep(ms: number): Promise<void> {
  * request itself would have thrown. A backend that answers with the result
  * directly (no job) is taken as is.
  */
-export async function runJob<T>(store: StoreLike, url: string, body: Record<string, unknown>, timeoutMs: number, pollMs = JOB_POLL_MS): Promise<T> {
+export async function runJob<T>(store: StoreLike, url: string, body: Record<string, unknown>, timeoutMs: number, pollMs = JOB_POLL_MS, onProgress?: (view: JobView) => void): Promise<T> {
   const started = Date.now();
   const first = await requestJson<T | JobView>(store, url, { method: 'POST', body: { ...body, background: true } });
   const job = first as JobView;
@@ -697,6 +728,7 @@ export async function runJob<T>(store: StoreLike, url: string, body: Record<stri
   }
   let view: JobView = job;
 
+  onProgress?.(view);
   while (view.state === 'running') {
     if (Date.now() - started > timeoutMs) {
       throw new RequestError('timeout', null);
@@ -704,6 +736,7 @@ export async function runJob<T>(store: StoreLike, url: string, body: Record<stri
     await sleep(pollMs);
     try {
       view = await requestJson<JobView>(store, backendUrl(`/plans/${ job.jobId }`));
+      onProgress?.(view);
     } catch (e) {
       // A dropped poll is retried; the backend's own answer (the job is
       // gone, no permission) is final.
