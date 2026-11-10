@@ -273,12 +273,12 @@ Fleet（Rancher local 叢集）拉 GitHub → 部署到 rke2 / laoban-dev
 | 網頁 | `index.html`、`app.js`、`style.css` | `{"web": {…三個檔…}}` |
 | API | `handler.py` | `{"api": {"handler.py": "…"}}` |
 
-- 兩個 subagent 看不到彼此的程式。雙方的約定就是計畫裡的 `components.api.endpoints`（方法與路徑）：網頁只呼叫這些端點，API 全部實作。
+- 兩個 subagent 看不到彼此的程式。雙方的約定就是計畫裡的 `components.api.endpoints`：方法、路徑，以及計畫那一步寫好的 `request`（請求本體的 JSON 範例）與 `response`（成功回應的 JSON 範例）。網頁只呼叫這些端點、照範例送與讀；API 全部實作、照範例回。範例缺漏時的固定慣例：回應一律是物件、清單放在 `items`、記錄有 `id`、指向記錄用 `<記錄>_id`、錯誤是非 2xx 加 `{"error": …}`。（實驗室 t62-breakfast：只約定路徑時，API 回 `{"items": […]}`、網頁卻當陣列讀。）
 - 兩邊都完成後，把兩部分合成四個檔，再做跟單次呼叫**完全相同**的檢查（檔名、大小、`handle()`）。任何一個 subagent 失敗，整次都不發布，計畫可以再確認一次。
 - **只派需要的**：新應用、輪次以外的修改都派兩個。意見收斂的範圍（收斂時已依計畫的差異放寬）只有網頁時，只派網頁 subagent，`handler.py` 維持原樣；範圍包含 API 時兩個都派，因為 API 一改，網頁讀的回應格式也可能跟著變。
 - 修改現有應用時，每個 subagent 的 `current_code` 只有自己那部分的檔案，`manual_edits` 也只帶自己那部分的手動修改。
-- **約定比對**：發布前用文字比對兩邊和計畫是否一致：計畫的端點第一段路徑沒出現在 `handler.py`（`apiMissing`），或 `app.js` 呼叫了計畫裡沒有的 `api/<段>`（`unknownCall`）。只是提醒，不擋發布（比對文字可能誤判）。
-- 進度：背景工作 `GET /api/plans/<jobId>` 與輪次（`applying` 時）多一個 `subagents` 陣列：`{part, state: running|done|failed|skipped, seconds, inputTokens, outputTokens, model, files}`。套用的回應多 `subagents` 與 `contractGaps`。`GET /api/config` 多 `subagents`（布林值）。
+- **約定比對與修正**：兩邊寫完後用文字比對完整路徑：計畫的端點沒寫在 `handler.py` 裡（`apiMissing`；沒有參數的路徑要以字串出現，有參數的看固定開頭或各段），或 `app.js` 呼叫的 `api/…` 對不上計畫的任何端點（`unknownCall`；`{id}`、`${id}`、結尾加值都當參數）。有出入的那一邊**再跑一次**，帶著第一次的答案（`current_code`）與出入清單（`contract_gaps`），只修這些地方；最多一次。修正失敗就用第一次的答案發布。剩下的出入隨版本顯示，不擋發布（比對文字可能誤判）。卡片上標「和計畫比對後，修正過一次」，token 累加。（實驗室 t62-shop：API 漏了 `GET /cart`、網頁呼叫計畫裡沒有的 `/cart/update`，只比第一段時都沒抓到。）
+- 進度：背景工作 `GET /api/plans/<jobId>` 與輪次（`applying` 時）多一個 `subagents` 陣列：`{part, state: running|done|failed|skipped, seconds, inputTokens, outputTokens, model, files, fixed?}`。套用的回應多 `subagents` 與 `contractGaps`。`GET /api/config` 多 `subagents`（布林值）。
 - token 用量照常逐次計入每月上限；兩個 subagent 各算一次呼叫。
 - 本機模型伺服器要能同時處理兩個請求才會變快（Ollama：`OLLAMA_NUM_PARALLEL`）；不行時設 `false` 回到單次呼叫。
 

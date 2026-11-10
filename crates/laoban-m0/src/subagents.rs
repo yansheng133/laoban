@@ -126,6 +126,9 @@ pub struct SubagentRun {
     pub model: String,
     /// Files this subagent writes.
     pub files: Vec<&'static str>,
+    /// It ran a second time to fix what the check found.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub fixed: bool,
 }
 
 impl SubagentRun {
@@ -138,6 +141,7 @@ impl SubagentRun {
             output_tokens: 0,
             model: String::new(),
             files: part.files().to_vec(),
+            fixed: false,
         }
     }
 }
@@ -149,53 +153,101 @@ pub struct ContractGap {
     /// "apiMissing": a plan endpoint handler.py does not seem to handle.
     /// "unknownCall": app.js calls a path that is not in the plan.
     pub kind: &'static str,
-    /// The endpoint path, or the path app.js calls (`/<segment>`).
+    /// The endpoint path, or the path app.js calls (`/cart/update`).
     pub path: String,
 }
 
-/// First fixed segment of an endpoint path: `/orders/{id}` → `orders`.
-fn first_segment(path: &str) -> Option<&str> {
-    path.split('/')
-        .find(|s| !s.is_empty())
-        .filter(|s| !s.contains(['{', '<', ':', '*']))
+impl ContractGap {
+    /// The part whose subagent should fix it.
+    pub fn part(&self) -> Part {
+        if self.kind == "apiMissing" {
+            Part::Api
+        } else {
+            Part::Web
+        }
+    }
+}
+
+/// A path segment that stands for a value: `{id}`, `<id>`, `:id`, `*`, or
+/// on the app.js side a template value (`${id}`) or a value added after a
+/// trailing slash (`'api/orders/' + id`, seen as an empty segment).
+fn is_param(seg: &str) -> bool {
+    seg.is_empty() || seg.contains(['{', '<', ':', '*', '$'])
+}
+
+fn segments(path: &str) -> Vec<&str> {
+    path.trim_start_matches('/').split('/').collect()
+}
+
+/// Does an app.js call path match an endpoint path, segment by segment?
+fn path_matches(endpoint: &str, call: &str) -> bool {
+    let (e, c) = (segments(endpoint), segments(call));
+    e.len() == c.len()
+        && e.iter()
+            .zip(&c)
+            .all(|(a, b)| is_param(a) || is_param(b) || a == b)
+}
+
+/// Does handler.py appear to handle `path`? A path without values must be
+/// written out as a string ("/cart" or '/cart'); for a path with values,
+/// its fixed beginning ("/orders/") or every fixed segment as a string.
+fn handled(handler: &str, path: &str) -> bool {
+    let quoted =
+        |s: &str| handler.contains(&format!("\"{s}\"")) || handler.contains(&format!("'{s}'"));
+    let segs = segments(path);
+    if !segs.iter().any(|s| is_param(s)) {
+        return quoted(path) || quoted(path.trim_start_matches('/'));
+    }
+    let fixed: Vec<&str> = segs.iter().take_while(|s| !is_param(s)).copied().collect();
+    let prefix = format!("/{}/", fixed.join("/"));
+    handler.contains(&prefix) || segs.iter().filter(|s| !is_param(s)).all(|s| quoted(s))
 }
 
 /// Compare the code of both parts with the plan's endpoints. Reads code as
-/// text, so it only finds clear mismatches: an endpoint whose first path
-/// segment does not appear in handler.py at all, and an `api/<segment>`
-/// in app.js that no endpoint starts with.
+/// text, so it only finds clear mismatches: an endpoint path handler.py
+/// never writes out, and an `api/...` path app.js calls that matches no
+/// endpoint of the plan.
 pub fn contract_gaps(plan: &AppPlan, files: &GeneratedFiles) -> Vec<ContractGap> {
     static CALL: OnceLock<Regex> = OnceLock::new();
-    let call = CALL.get_or_init(|| Regex::new(r#"["'`]api/([A-Za-z0-9_-]+)"#).unwrap());
-    let segments: BTreeSet<&str> = plan
-        .endpoints
-        .iter()
-        .filter_map(|e| first_segment(&e.path))
-        .collect();
+    let call = CALL.get_or_init(|| Regex::new(r#"["'`]api/([A-Za-z0-9_./${}-]*)"#).unwrap());
     let mut gaps = BTreeSet::new();
     for e in &plan.endpoints {
-        if let Some(seg) = first_segment(&e.path) {
-            if !files.handler_py.contains(seg) {
-                gaps.insert(ContractGap {
-                    kind: "apiMissing",
-                    path: e.path.clone(),
-                });
-            }
+        if !handled(&files.handler_py, &e.path) {
+            gaps.insert(ContractGap {
+                kind: "apiMissing",
+                path: e.path.clone(),
+            });
         }
     }
-    // Only when the plan has fixed segments to compare with.
-    if !segments.is_empty() {
+    if !plan.endpoints.is_empty() {
         for c in call.captures_iter(&files.app_js) {
-            let seg = &c[1];
-            if !segments.contains(seg) {
+            // A template value ends where the regex stops: "orders/${" → "orders/".
+            let raw = c[1].split("${").next().unwrap_or_default();
+            let path = format!("/{}", raw.trim_end_matches('.'));
+            let path = if c[1].contains("${") && !path.ends_with('/') {
+                format!("{path}/")
+            } else {
+                path
+            };
+            if !plan.endpoints.iter().any(|e| path_matches(&e.path, &path)) {
                 gaps.insert(ContractGap {
                     kind: "unknownCall",
-                    path: format!("/{seg}"),
+                    path: path.trim_end_matches('/').to_string(),
                 });
             }
         }
     }
     gaps.into_iter().take(20).collect()
+}
+
+/// Told to a subagent that runs a second time because the check found
+/// gaps in its part; the data block contract_gaps lists them.
+pub const FIX_SUBAGENT_INSTRUCTIONS: &str = r#"Your first answer did not match the plan's endpoints; the data block contract_gaps lists where. "apiMissing": the API must handle that endpoint exactly as the plan writes it (method and path). "unknownCall": the web page calls a path that is not in the plan; call the plan's endpoint for it instead. The data block current_code holds your first answer: fix only these gaps, keep everything else, and return your part's files in full."#;
+
+/// The gaps of one part, as the data block of its fix.
+pub fn gaps_block(gaps: &[ContractGap], part: Part) -> String {
+    let mine: Vec<&ContractGap> = gaps.iter().filter(|g| g.part() == part).collect();
+    serde_json::to_string_pretty(&mine).unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -277,10 +329,10 @@ mod tests {
     fn contract_gaps_find_clear_mismatches_only() {
         let p = plan(&["/orders", "/orders/{id}", "/menu"]);
         let ok = files(
-            "fetch('api/orders'); fetch(`api/orders/${id}`); fetch(\"api/menu\")",
-            "def handle(m, path, b):\n    if path == '/orders': ...\n    if path == '/menu': ...",
+            "fetch('api/orders'); fetch(`api/orders/${id}`); fetch('api/orders/' + id); fetch(\"api/menu\")",
+            "def handle(m, path, b):\n    if path == '/orders': ...\n    if path.startswith('/orders/'): ...\n    if path == '/menu': ...",
         );
-        assert!(contract_gaps(&p, &ok).is_empty());
+        assert_eq!(contract_gaps(&p, &ok), vec![]);
         let bad = files(
             "fetch('api/orders'); fetch('api/cart')",
             "def handle(m, path, b):\n    if path == '/orders': ...",
@@ -293,16 +345,47 @@ mod tests {
                     path: "/menu".into()
                 },
                 ContractGap {
+                    kind: "apiMissing",
+                    path: "/orders/{id}".into()
+                },
+                ContractGap {
                     kind: "unknownCall",
                     path: "/cart".into()
                 },
             ]
         );
-        // A plan without fixed segments: nothing to compare app.js with.
-        assert!(contract_gaps(
-            &plan(&["/{x}"]),
-            &files("fetch('api/a')", "def handle(): pass")
-        )
-        .is_empty());
+        // A path with values may also be split into segments.
+        let split = files("", "parts = path.strip('/').split('/')\nif parts[0] == 'orders' and len(parts) == 2: ...\nif path == '/orders' or path == '/menu': ...");
+        assert_eq!(contract_gaps(&p, &split), vec![]);
+    }
+
+    /// Lab app t62-shop (2026-11-10): the API had /cart/add but not GET
+    /// /cart, and the web page called /cart/update, which the plan lacks.
+    /// The first-segment check missed both.
+    #[test]
+    fn contract_gaps_compare_whole_paths() {
+        let p = plan(&["/cart", "/cart/add"]);
+        let f = files(
+            "fetch('api/cart/add', {method: 'POST'}); fetch('api/cart/update', {method: 'PUT'})",
+            "def handle(method, path, body):\n    if method == 'POST' and path == '/cart/add': ...",
+        );
+        let gaps = contract_gaps(&p, &f);
+        assert_eq!(
+            gaps,
+            vec![
+                ContractGap {
+                    kind: "apiMissing",
+                    path: "/cart".into()
+                },
+                ContractGap {
+                    kind: "unknownCall",
+                    path: "/cart/update".into()
+                },
+            ]
+        );
+        assert_eq!(gaps[0].part(), Part::Api);
+        assert_eq!(gaps[1].part(), Part::Web);
+        assert!(gaps_block(&gaps, Part::Api).contains("/cart\""));
+        assert!(!gaps_block(&gaps, Part::Api).contains("update"));
     }
 }

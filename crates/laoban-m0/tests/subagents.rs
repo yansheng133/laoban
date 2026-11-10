@@ -41,6 +41,14 @@ fn api_only() -> String {
     json!({ "api": files_value()["api"] }).to_string()
 }
 
+/// The fixture's handler.py handles /menu only; the plan also lists
+/// /orders, so the check sends the API subagent back once. This is its
+/// fixed answer.
+fn api_fixed() -> String {
+    let handler = "def handle(method, path, body):\n    if path == \"/menu\":\n        return 200, {\"items\": []}\n    if path == \"/orders\":\n        return 200, {\"id\": \"1\"}\n    return 404, {\"error\": \"not found\"}\n";
+    json!({ "api": { "handler.py": handler } }).to_string()
+}
+
 /// The system prompt of each code call, sorted, so the order in which the
 /// two threads reached the mock does not matter.
 fn code_prompts(h: &Harness) -> Vec<String> {
@@ -58,28 +66,34 @@ fn a_new_app_is_written_by_a_web_and_an_api_subagent() {
     let provider = MockProvider::new()
         .then(ok(&plan_json()))
         .then(ok(&files_json()))
-        .then(ok(&files_json()));
+        .then(ok(&files_json()))
+        .then(ok(&api_fixed()));
     let h = harness_settings(provider, RefUpdate::Ok, on(), Vec::new(), Vec::new());
     let plan = h.service.plan(&plan_req(), None).unwrap();
     let applied = h.service.apply(&apply_req(&plan), None).unwrap();
 
-    assert_eq!(h.provider.call_count(), 3, "one plan call, two code calls");
-    let prompts = code_prompts(&h);
     assert_eq!(
-        prompts
+        h.provider.call_count(),
+        4,
+        "plan, two code calls, one API fix"
+    );
+    let first: Vec<String> = code_prompts(&h)
+        .into_iter()
+        .filter(|p| !p.contains("did not match the plan's endpoints"))
+        .collect();
+    assert_eq!(first.len(), 2);
+    assert_eq!(
+        first
             .iter()
             .filter(|p| p.contains("write the web front end"))
             .count(),
         1
     );
     assert_eq!(
-        prompts
-            .iter()
-            .filter(|p| p.contains("write the API"))
-            .count(),
+        first.iter().filter(|p| p.contains("write the API")).count(),
         1
     );
-    assert!(prompts
+    assert!(first
         .iter()
         .all(|p| p.contains("approved_plan.components.api.endpoints")));
 
@@ -88,29 +102,56 @@ fn a_new_app_is_written_by_a_web_and_an_api_subagent() {
     for (run, part) in runs.iter().zip(["web", "api"]) {
         assert_eq!(run["part"], part);
         assert_eq!(run["state"], "done");
-        assert_eq!(
-            (run["inputTokens"].as_u64(), run["outputTokens"].as_u64()),
-            (Some(120), Some(80))
-        );
         assert_eq!(run["model"], MODEL);
     }
     assert_eq!(
         runs[0]["files"],
         json!(["web/index.html", "web/app.js", "web/style.css"])
     );
-    // The fixture's handler.py has no /orders, which the plan lists.
-    assert_eq!(
-        applied["contractGaps"],
-        json!([{ "kind": "apiMissing", "path": "/orders" }])
+    // Web ran once; the API ran again to add /orders, and its tokens add up.
+    assert_eq!(runs[0]["outputTokens"].as_u64(), Some(80));
+    assert!(runs[0].get("fixed").is_none());
+    assert_eq!(runs[1]["outputTokens"].as_u64(), Some(160));
+    assert_eq!(runs[1]["fixed"], true);
+    assert_eq!(applied["contractGaps"], json!([]));
+    // The fix was told what is missing, with its first answer.
+    let fix = h.provider.received()[3].clone();
+    assert!(fix.system.contains("did not match the plan's endpoints"));
+    let msg = &fix.messages[0].content;
+    assert!(
+        msg.contains("apiMissing") && msg.contains("/orders") && msg.contains("def handle"),
+        "{msg}"
     );
 
-    // The published files are the two parts put together.
+    // The published files: the web part and the fixed API.
     let blobs = blob_contents(&h.github);
     let m = blobs
         .iter()
         .find_map(|b| meta::parse("breakfast", b).ok())
         .unwrap();
-    assert_eq!(m.files, parse_generated(&files_json()).unwrap());
+    assert_eq!(
+        m.files.app_js,
+        parse_generated(&files_json()).unwrap().app_js
+    );
+    assert!(m.files.handler_py.contains("\"/orders\""));
+}
+
+#[test]
+fn a_failed_fix_keeps_the_first_answer_and_shows_the_gap() {
+    let provider = MockProvider::new()
+        .then(ok(&plan_json()))
+        .then(ok(&files_json()))
+        .then(ok(&files_json()))
+        .then(ok("not json"));
+    let h = harness_settings(provider, RefUpdate::Ok, on(), Vec::new(), Vec::new());
+    let plan = h.service.plan(&plan_req(), None).unwrap();
+    let applied = h.service.apply(&apply_req(&plan), None).unwrap();
+    assert_eq!(applied["subagents"][1]["state"], "done");
+    assert_eq!(applied["subagents"][1]["fixed"], true);
+    assert_eq!(
+        applied["contractGaps"],
+        json!([{ "kind": "apiMissing", "path": "/orders" }])
+    );
 }
 
 #[test]
@@ -247,14 +288,15 @@ fn a_round_that_touches_the_api_rewrites_both_parts() {
     let provider = MockProvider::new()
         .then(ok(&plan_json()))
         .then(ok(&files_json()))
-        .then(ok(&files_json()));
+        .then(ok(&files_json()))
+        .then(ok(&api_fixed()));
     let h = harness_settings(provider, RefUpdate::Ok, on(), todo_app(), Vec::new());
     h.service
         .open_round("todo", &open("api"), Some("u-a"))
         .unwrap();
     let v = h.service.confirm_round("todo", Some("u-a")).unwrap();
     assert_eq!(v["round"]["state"], "done", "{v}");
-    assert_eq!(h.provider.call_count(), 3);
+    assert_eq!(h.provider.call_count(), 4);
     assert_eq!(v["applied"]["subagents"][0]["state"], "done");
     assert_eq!(v["applied"]["subagents"][1]["state"], "done");
 }

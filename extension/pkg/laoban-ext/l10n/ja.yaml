@@ -285,6 +285,7 @@ laoban:
       done: "完了（{seconds} 秒）"
       failed: "失敗（{seconds} 秒）"
       skipped: "書き直し不要（そのまま）"
+    fixed: "計画と照合し、1 回修正しました"
     usage: "入力 {input}・出力 {output} トークン"
     gapsTitle: "Web と API が計画と合っていない可能性があります："
     gap:

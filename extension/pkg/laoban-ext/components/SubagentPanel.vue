@@ -100,6 +100,12 @@ export default defineComponent({
           {{ stateText(r) }}
         </div>
         <div
+          v-if="r.fixed"
+          class="laoban-subagent-fixed text-muted"
+        >
+          {{ t('laoban.subagents.fixed') }}
+        </div>
+        <div
           v-if="r.state === 'done'"
           class="laoban-subagent-usage text-muted"
         >
@@ -182,6 +188,7 @@ export default defineComponent({
 }
 
 .laoban-subagent-files,
+.laoban-subagent-fixed,
 .laoban-subagent-usage {
   overflow-wrap: anywhere;
   font-size: 12px;

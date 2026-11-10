@@ -45,6 +45,8 @@ export interface SubagentRun {
   outputTokens: number;
   model?: string;
   files: string[];
+  // It ran a second time to fix what the contract check found.
+  fixed?: boolean;
 }
 
 // A place where the web and the API code seem to disagree with the plan.

@@ -283,6 +283,7 @@ laoban:
       done: "完成，花了 {seconds} 秒"
       failed: "失敗（{seconds} 秒）"
       skipped: "不需要重寫，維持原樣"
+    fixed: "和計畫比對後，修正過一次"
     usage: "輸入 {input}、輸出 {output} 個 token"
     gapsTitle: "網頁和 API 可能和計畫對不上："
     gap:

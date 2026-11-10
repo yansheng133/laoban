@@ -283,6 +283,7 @@ laoban:
       done: "Done in {seconds} s"
       failed: "Failed after {seconds} s"
       skipped: "Not needed: kept as it is"
+    fixed: "Checked against the plan and fixed once"
     usage: "{input} input / {output} output tokens"
     gapsTitle: "The web part and the API may not match the plan:"
     gap:
